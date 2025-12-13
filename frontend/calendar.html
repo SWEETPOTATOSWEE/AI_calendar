@@ -475,6 +475,36 @@
     }
     @keyframes spin{ to{ transform:rotate(360deg); } }
 
+    .scope-controls{
+      margin-top:10px;
+      padding:10px;
+      border:1px solid var(--border);
+      border-radius:12px;
+      background:#fffaf5;
+      display:none;
+    }
+    .scope-title{
+      font-size:12px;
+      font-weight:900;
+      color:#7a3a00;
+      margin-bottom:6px;
+    }
+    .scope-row{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      flex-wrap:wrap;
+    }
+    .scope-row input[type="date"]{
+      flex:1;
+      min-width:120px;
+      border:1px solid var(--border);
+      border-radius:10px;
+      padding:6px 8px;
+      font-size:13px;
+      font-weight:700;
+    }
+
     /* ===== Quick add ===== */
     /* ===== Selected date list ===== */
     #events-ul{list-style:none; padding:0; margin:0;}
@@ -599,6 +629,28 @@
       background: rgba(47,52,55,.14);
     }
 
+    .primary-btn{
+      height:38px;
+      padding:0 12px;
+      border-radius:12px;
+      border:1px solid var(--border);
+      background: rgba(47,52,55,.10);
+      color:var(--text);
+      font-weight:900;
+      cursor:pointer;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      margin-top:8px;
+      transition:background .2s ease, opacity .2s ease;
+    }
+    .primary-btn:hover{ background: rgba(47,52,55,.14); }
+    .primary-btn:disabled{
+      opacity:.45;
+      cursor:not-allowed;
+      background: rgba(47,52,55,.08);
+    }
+
     .cm-row{
       border:1px solid var(--border);
       border-radius:12px;
@@ -668,6 +720,107 @@
     }
     .cm-subitem:hover{ background:#f7f7f5; }
 
+    /* Recent modal */
+    #recent-overlay{
+      position:fixed;
+      inset:0;
+      background: rgba(0,0,0,.28);
+      display:none;
+      align-items:center;
+      justify-content:center;
+      padding:14px;
+      z-index:65;
+    }
+    #recent-modal{
+      width:min(560px, 100%);
+      background:#fff;
+      border:1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.18);
+      overflow:hidden;
+    }
+    .recent-head{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      padding:14px;
+      border-bottom:1px solid var(--border);
+    }
+    .recent-title{ font-weight:900; font-size:14px; }
+    .recent-body{
+      max-height:60vh;
+      overflow:auto;
+      padding:10px 14px;
+    }
+    .recent-item{
+      border:1px solid var(--border);
+      border-radius:12px;
+      padding:10px;
+      margin-bottom:8px;
+      display:flex;
+      align-items:flex-start;
+      gap:10px;
+      background:#fff;
+    }
+    .recent-item .badge{
+      background:#eaf2ff;
+      border-color:#d2e1ff;
+      color:#1d3360;
+    }
+    .recent-main{ flex:1; min-width:0; }
+    .recent-line1{
+      font-weight:900;
+      font-size:13px;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .recent-line2{
+      margin-top:3px;
+      color:var(--muted);
+      font-weight:800;
+      font-size:12px;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .recent-meta{
+      margin-top:4px;
+      color:var(--muted);
+      font-weight:700;
+      font-size:11px;
+    }
+    .recent-delete{
+      border:1px solid var(--border);
+      background:#fff;
+      border-radius:10px;
+      padding:6px 10px;
+      font-weight:900;
+      color:#8a1f1f;
+      cursor:pointer;
+      flex:0 0 auto;
+    }
+    .recent-delete:hover{
+      background:#fdf2f2;
+      border-color: rgba(239,68,68,.4);
+    }
+    .recent-foot{
+      padding:12px 14px;
+      border-top:1px solid var(--border);
+      display:flex;
+      justify-content:flex-end;
+    }
+    .recent-close{
+      border:1px solid var(--border);
+      border-radius:10px;
+      padding:9px 12px;
+      background:#fff;
+      font-weight:900;
+      cursor:pointer;
+    }
+    .recent-close:hover{ background:#f2f2f0; }
+
     @media (max-width: 980px){
       .app{ grid-template-columns: 1fr; }
       aside{ position:relative; top:auto; height:auto; }
@@ -697,6 +850,7 @@
         <button class="view-btn" type="button" data-cal-view="timeGridDay" id="cal-view-day">일</button>
       </div>
 
+      <button class="header-btn" id="recent-added-btn" type="button">최근 추가한 일정</button>
       <div class="header-actions">__HEADER_ACTIONS__</div>
     </div>
   </div>
@@ -764,6 +918,17 @@
         </div>
       </div>
 
+      <div class="scope-controls" id="delete-scope-controls">
+        <div class="scope-title">삭제 범위 (최대 1년)</div>
+        <div class="scope-row">
+          <input type="date" id="delete-scope-start" aria-label="삭제 범위 시작">
+          <span style="font-weight:900;">~</span>
+          <input type="date" id="delete-scope-end" aria-label="삭제 범위 종료">
+        </div>
+      </div>
+
+      <button type="button" class="primary-btn" id="undo-last-btn" disabled>되돌리기</button>
+
     </div>
 
   </aside>
@@ -791,6 +956,23 @@
   </div>
 </div>
 
+<!-- Recent Added Modal -->
+<div id="recent-overlay">
+  <div id="recent-modal" role="dialog" aria-modal="true">
+    <div class="recent-head">
+      <div>
+        <div class="recent-title">최근 추가한 일정</div>
+        <div class="recent-meta" id="recent-desc">최근 14일 저장</div>
+      </div>
+      <button class="recent-close" id="recent-close" type="button">닫기</button>
+    </div>
+    <div class="recent-body" id="recent-list"></div>
+    <div class="recent-foot">
+      <button class="recent-close" id="recent-cancel" type="button">닫기</button>
+    </div>
+  </div>
+</div>
+
 <script>
   const apiBase = "/api";
   let calendar = null;
@@ -799,6 +981,59 @@
   let nlpInputComposing = false;
 
   let confirmState = { mode: null, addItems: [], deleteGroups: [] };
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+  const APP_CONTEXT = window.__APP_CONTEXT__ || {};
+  const APP_MODE = APP_CONTEXT.mode || "local";
+  const IS_GOOGLE_MODE = APP_MODE === "google";
+  const undoStack = [];
+
+  function validateDateRange(start, end){
+    if(!start || !end){
+      return { ok:false, message:"시작·종료 날짜를 모두 선택해주세요." };
+    }
+    const startMs = Date.parse(start);
+    const endMs = Date.parse(end);
+    if(Number.isNaN(startMs) || Number.isNaN(endMs)){
+      return { ok:false, message:"날짜 형식이 잘못되었습니다." };
+    }
+    if(endMs < startMs){
+      return { ok:false, message:"종료 날짜가 시작 날짜보다 빠릅니다." };
+    }
+    const diffDays = Math.floor((endMs - startMs) / MS_PER_DAY);
+    if(diffDays > 365){
+      return { ok:false, message:"범위는 최대 1년까지만 설정할 수 있습니다." };
+    }
+    return { ok:true };
+  }
+
+  function getDeleteScopeOrAlert(){
+    const startInput = document.getElementById("delete-scope-start");
+    const endInput = document.getElementById("delete-scope-end");
+    const start = startInput?.value || "";
+    const end = endInput?.value || "";
+    const validation = validateDateRange(start, end);
+    if(!validation.ok){
+      alert(validation.message);
+      return null;
+    }
+    return { start, end };
+  }
+
+  function setDefaultDateRange(startId, endId, spanDays){
+    const startInput = document.getElementById(startId);
+    const endInput = document.getElementById(endId);
+    if(!startInput || !endInput) return;
+    if(startInput.value && endInput.value) return;
+    const startDate = new Date();
+    const endDate = new Date(startDate.getTime() + spanDays * MS_PER_DAY);
+    const fmt = (dt) => dt.toISOString().slice(0,10);
+    if(!startInput.value){
+      startInput.value = fmt(startDate);
+    }
+    if(!endInput.value){
+      endInput.value = fmt(endDate);
+    }
+  }
 
   function toDateStrLocal(d){
     const y = d.getFullYear();
@@ -847,6 +1082,23 @@
     });
   }
 
+  function formatCreatedAt(ts){
+    if(!ts) return "";
+    try{
+      const [d,t] = ts.split("T");
+      const [y,m,da] = d.split("-").map(x => parseInt(x,10));
+      const [hh,mm] = (t || "00:00").split(":").map(x => parseInt(x,10));
+      const dt = new Date(Date.UTC(y, (m||1)-1, da||1, hh||0, mm||0));
+      return new Intl.DateTimeFormat("ko-KR", {
+        month:"2-digit", day:"2-digit",
+        hour:"2-digit", minute:"2-digit",
+        hour12:false, timeZone:"Asia/Seoul"
+      }).format(dt);
+    }catch{
+      return ts;
+    }
+  }
+
   function setupShadowAutoGrow(textareaId){
     const ta = document.getElementById(textareaId);
     if(!ta) return;
@@ -892,12 +1144,145 @@
     window.addEventListener("resize", () => { computeBase(); resize(); });
   }
 
-  function fmtRange(start, end){
+  function toDateOnly(value){
+    if(!value || value.length < 10) return null;
+    return value.slice(0,10);
+  }
+
+  function addDaysToDateStr(dateStr, days){
+    if(!dateStr) return null;
+    const parts = dateStr.split("-").map(part => parseInt(part, 10));
+    if(parts.length !== 3 || parts.some(n => Number.isNaN(n))) return null;
+    const [y, m, d] = parts;
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    dt.setUTCDate(dt.getUTCDate() + days);
+    const yy = dt.getUTCFullYear();
+    const mm = String(dt.getUTCMonth() + 1).padStart(2,"0");
+    const dd = String(dt.getUTCDate()).padStart(2,"0");
+    return `${yy}-${mm}-${dd}`;
+  }
+
+  function eventCoversDate(ev, dateStr){
+    if(!ev || !dateStr) return false;
+    const startDate = toDateOnly(ev.start);
+    if(!startDate) return false;
+    let endDate = toDateOnly(ev.end);
+    if(!endDate || endDate < startDate){
+      endDate = startDate;
+    }
+    if((ev.allDay === true || ev.all_day === true) && ev.end && typeof ev.end === "string" && ev.end.endsWith("T00:00")){
+      const adjusted = addDaysToDateStr(endDate, -1);
+      if(adjusted) endDate = adjusted;
+    }
+    return dateStr >= startDate && dateStr <= endDate;
+  }
+
+  function isAllDayRange(start, end){
+    if(!start) return false;
+    const startDate = toDateOnly(start);
+    if(!startDate) return false;
+    const startTime = start.length >= 16 ? start.slice(11,16) : "00:00";
+    if(startTime !== "00:00") return false;
+    if(!end){
+      return true;
+    }
+    const endDate = toDateOnly(end);
+    if(!endDate) return true;
+    const endTime = end.length >= 16 ? end.slice(11,16) : "23:59";
+    if(endDate < startDate) return false;
+    if(endTime === "00:00"){
+      return endDate > startDate;
+    }
+    return endTime === "23:59" || endTime === "00:00";
+  }
+
+  function fmtRange(start, end, allDayOverride){
     if(!start) return "";
-    const d = start.slice(0,10);
+    const startDate = toDateOnly(start);
+    const isAllDay = (typeof allDayOverride === "boolean")
+      ? allDayOverride
+      : isAllDayRange(start, end);
+    if(isAllDay){
+      const endDate = toDateOnly(end);
+      if(endDate && startDate && endDate !== startDate){
+        return `${startDate}~${endDate} 하루종일`;
+      }
+      return `${startDate || ""} 하루종일`;
+    }
     const st = start.slice(11,16);
-    if(end) return `${d} ${st}–${end.slice(11,16)}`;
-    return `${d} ${st}`;
+    if(end) return `${startDate || ""} ${st}–${end.slice(11,16)}`;
+    return `${startDate || ""} ${st}`;
+  }
+
+  function formatEventMeta(ev){
+    if(!ev) return "";
+    const startStr = ev.start || "";
+    const endStr = ev.end || null;
+    const isAllDay = (ev.all_day === true) || isAllDayRange(startStr, endStr);
+    if(isAllDay){
+      const startDate = toDateOnly(startStr);
+      const endDate = toDateOnly(endStr);
+      let label = "하루종일";
+      if(startDate && endDate && startDate !== endDate){
+        label = `하루종일 · ${startDate}~${endDate}`;
+      }
+      return ev.location ? `${label} · ${ev.location}` : label;
+    }
+    const timePart = startStr.length >= 16 ? startStr.slice(11,16) : "";
+    const label = timePart ? `시작 ${timePart}` : "시간 없음";
+    return ev.location ? `${label} · ${ev.location}` : label;
+  }
+
+  async function deleteGoogleEventById(eventId){
+    if(!eventId) return;
+    await fetch(apiBase + "/google/events/" + encodeURIComponent(eventId), {
+      method:"DELETE"
+    });
+  }
+
+  function updateUndoButton(){
+    const btn = document.getElementById("undo-last-btn");
+    if(!btn) return;
+    const has = undoStack.length > 0;
+    btn.disabled = !has;
+    btn.textContent = has ? `되돌리기 (${undoStack.length})` : "되돌리기";
+  }
+
+  function recordUndoBatch(events){
+    if(!Array.isArray(events) || events.length === 0) return;
+    const batch = events
+      .map(ev => ({
+        localId: (typeof ev.id === "number" || /^\d+$/.test(String(ev.id || ""))) ? parseInt(ev.id, 10) : null,
+        googleId: ev.google_event_id || null
+      }))
+      .filter(item => item.localId || item.googleId);
+    if(!batch.length) return;
+    undoStack.push(batch);
+    updateUndoButton();
+  }
+
+  async function undoLastBatch(){
+    if(undoStack.length === 0) return;
+    const batch = undoStack.pop();
+    updateUndoButton();
+    const localIds = batch.map(item => item.localId).filter(id => Number.isFinite(id));
+    const googleIds = batch.map(item => item.googleId).filter(id => !!id);
+    try{
+      if(localIds.length){
+        await fetch(apiBase + "/delete-by-ids", {
+          method:"POST",
+          headers:{ "Content-Type":"application/json" },
+          body: JSON.stringify({ ids: localIds })
+        });
+      }
+      for(const gid of googleIds){
+        await deleteGoogleEventById(gid);
+      }
+      await refreshAll();
+    }catch(err){
+      console.error(err);
+      alert("되돌리기에 실패했습니다.");
+    }
   }
 
   async function loadEventListForDate(dateStr){
@@ -908,15 +1293,51 @@
     const countEl = document.getElementById("selected-count-label");
     ul.innerHTML = "";
 
-    const dayEvents = events.filter(ev => (ev.start || "").slice(0,10) === dateStr);
-    if(countEl) countEl.textContent = dayEvents.length ? `${dayEvents.length}개` : "없음";
+    const dayEvents = events
+      .filter(ev => eventCoversDate(ev, dateStr))
+      .map(ev => ({ ...ev, _source: "local" }));
 
-    if(dayEvents.length === 0){
+    let googleDayEvents = [];
+    if(IS_GOOGLE_MODE){
+      try{
+        const params = new URLSearchParams({ start_date: dateStr, end_date: dateStr });
+        const gres = await fetch(apiBase + "/google/events?" + params.toString());
+        if(gres.ok){
+          const gdata = await gres.json();
+          googleDayEvents = (Array.isArray(gdata) ? gdata : []).map(ev => ({
+            id: `google:${ev.id || ev.start || ev.html_link || Math.random()}`,
+            title: ev.title || "(제목 없음)",
+            start: ev.start,
+            end: ev.end,
+            location: ev.location,
+            all_day: ev.all_day,
+            _source: "google",
+            google_event_id: ev.id || ""
+          })).filter(ev => eventCoversDate(ev, dateStr));
+        }
+      }catch(err){
+        console.error(err);
+      }
+    }
+
+    const combined = [...dayEvents, ...googleDayEvents];
+
+    combined.sort((a, b) => {
+      const aStart = a.start || "";
+      const bStart = b.start || "";
+      if(aStart === bStart){
+        return (a.title || "").localeCompare(b.title || "");
+      }
+      return aStart.localeCompare(bStart);
+    });
+    if(countEl) countEl.textContent = combined.length ? `${combined.length}개` : "없음";
+
+    if(combined.length === 0){
       ul.innerHTML = "<li style='padding:10px 6px; color:var(--muted); font-weight:800;'>선택한 날짜에 일정이 없습니다.</li>";
       return;
     }
 
-    for(const ev of dayEvents){
+    for(const ev of combined){
       const li = document.createElement("li");
 
       const dot = document.createElement("div");
@@ -927,34 +1348,140 @@
 
       const title = document.createElement("div");
       title.className = "event-title";
-      title.textContent = ev.title;
+      const prefix = ev._source === "google" ? "[G] " : "";
+      title.textContent = prefix + (ev.title || "");
 
       const meta = document.createElement("div");
       meta.className = "event-meta";
-      const timePart = ev.start.slice(11,16);
-      meta.textContent = ev.location ? `시작 ${timePart} · ${ev.location}` : `시작 ${timePart}`;
+      meta.textContent = formatEventMeta(ev);
 
       info.appendChild(title);
       info.appendChild(meta);
 
+      li.appendChild(dot);
+      li.appendChild(info);
       const delBtn = document.createElement("button");
       delBtn.className = "delete-btn";
       delBtn.textContent = "삭제";
       delBtn.onclick = async () => {
-        await fetch(apiBase + "/events/" + ev.id, { method:"DELETE" });
+        if(ev._source === "google"){
+          await deleteGoogleEventById(ev.google_event_id || "");
+        }else{
+          await fetch(apiBase + "/events/" + ev.id, { method:"DELETE" });
+        }
         await refreshAll();
       };
-
-      li.appendChild(dot);
-      li.appendChild(info);
       li.appendChild(delBtn);
       ul.appendChild(li);
     }
   }
 
+  // Recent added modal
+  function closeRecentModal(){
+    document.getElementById("recent-overlay").style.display = "none";
+    const list = document.getElementById("recent-list");
+    if(list) list.innerHTML = "";
+  }
+
+  async function loadRecentList(){
+    const list = document.getElementById("recent-list");
+    if(!list) return;
+    list.innerHTML = "<div style='padding:10px; color:var(--muted); font-weight:800;'>불러오는 중...</div>";
+    try{
+      const res = await fetch(apiBase + "/recent-events");
+      if(!res.ok){
+        list.innerHTML = "<div style='padding:10px; color:var(--muted); font-weight:800;'>불러오기 실패</div>";
+        return;
+      }
+      const data = await res.json();
+      renderRecentList(Array.isArray(data) ? data : []);
+    }catch(err){
+      console.error(err);
+      list.innerHTML = "<div style='padding:10px; color:var(--muted); font-weight:800;'>불러오기 실패</div>";
+    }
+  }
+
+  async function openRecentModal(){
+    const overlay = document.getElementById("recent-overlay");
+    if(!overlay) return;
+    overlay.style.display = "flex";
+    await loadRecentList();
+  }
+
+  function refreshRecentIfOpen(){
+    const overlay = document.getElementById("recent-overlay");
+    if(overlay && overlay.style.display === "flex"){
+      loadRecentList();
+    }
+  }
+
+  function renderRecentList(items){
+    const list = document.getElementById("recent-list");
+    if(!list) return;
+    if(!items.length){
+      list.innerHTML = "<div style='padding:10px; color:var(--muted); font-weight:800;'>최근 14일 내 추가된 일정이 없습니다.</div>";
+      return;
+    }
+    list.innerHTML = "";
+    items.forEach((ev) => {
+      const source = ev.source || "local";
+      const row = document.createElement("div");
+      row.className = "recent-item";
+
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = (source === "google") ? "Google" : (ev.all_day ? "하루종일" : "일정");
+
+      const main = document.createElement("div");
+      main.className = "recent-main";
+
+      const l1 = document.createElement("div");
+      l1.className = "recent-line1";
+      l1.textContent = ev.title || "(제목 없음)";
+
+      const l2 = document.createElement("div");
+      l2.className = "recent-line2";
+      l2.textContent = fmtRange(ev.start, ev.end, ev.all_day) + (ev.location ? ` · ${ev.location}` : "");
+
+      const meta = document.createElement("div");
+      meta.className = "recent-meta";
+      meta.textContent = `추가: ${formatCreatedAt(ev.created_at || ev.created || "")}`;
+
+      main.appendChild(l1);
+      main.appendChild(l2);
+      main.appendChild(meta);
+
+      const del = document.createElement("button");
+      del.className = "recent-delete";
+      del.type = "button";
+      del.textContent = "삭제";
+      del.addEventListener("click", async () => {
+        if(!confirm("이 일정을 삭제할까요?")) return;
+        try{
+          if(source === "google"){
+            await deleteGoogleEventById(ev.google_event_id || ev.id);
+          }else{
+            await fetch(apiBase + "/events/" + ev.id, { method:"DELETE" });
+          }
+          await refreshAll();
+          await loadRecentList();
+        }catch(err){
+          console.error(err);
+          alert("삭제에 실패했습니다.");
+        }
+      });
+
+      row.appendChild(badge);
+      row.appendChild(main);
+      row.appendChild(del);
+      list.appendChild(row);
+    });
+  }
+
   async function refreshAll(){
     if(calendar) calendar.refetchEvents();
     if(selectedDateStr) await loadEventListForDate(selectedDateStr);
+    refreshRecentIfOpen();
   }
 
   async function createEvent(e){
@@ -972,11 +1499,19 @@
 
     const payload = { title, start, end: end || null, location: location || null };
 
-    await fetch(apiBase + "/events", {
+    const res = await fetch(apiBase + "/events", {
       method:"POST",
       headers:{ "Content-Type":"application/json" },
       body: JSON.stringify(payload)
     });
+
+    if(res.ok){
+      const created = await res.json();
+      recordUndoBatch([created]);
+    }else{
+      alert("일정 추가에 실패했습니다.");
+      return;
+    }
 
     document.getElementById("event-form").reset();
     await refreshAll();
@@ -985,6 +1520,7 @@
   function setUnifiedMode(isDelete){
     const btn = document.getElementById("nlp-action-btn");
     const loaderEl = document.querySelector("#nlp-unified-loader .loader");
+    const scopeControls = document.getElementById("delete-scope-controls");
     if(!btn) return;
 
     btn.classList.toggle("mode-delete", isDelete);
@@ -992,6 +1528,9 @@
 
     if(loaderEl){
       loaderEl.classList.toggle("is-delete", isDelete);
+    }
+    if(scopeControls){
+      scopeControls.style.display = isDelete ? "block" : "none";
     }
   }
 
@@ -1069,7 +1608,7 @@
       line2.className = "cm-line2";
 
       if(it.type === "single"){
-        line2.textContent = fmtRange(it.start, it.end) + (it.location ? ` · ${it.location}` : "");
+        line2.textContent = fmtRange(it.start, it.end, it.all_day) + (it.location ? ` · ${it.location}` : "");
         main.appendChild(line1);
         main.appendChild(line2);
         left.appendChild(cb);
@@ -1129,7 +1668,7 @@
 
         const oLine2 = document.createElement("div");
         oLine2.className = "cm-line2";
-        oLine2.textContent = fmtRange(occurrence.start, occurrence.end) + (occurrence.location ? ` · ${occurrence.location}` : "");
+        oLine2.textContent = fmtRange(occurrence.start, occurrence.end, occurrence.all_day) + (occurrence.location ? ` · ${occurrence.location}` : "");
 
         info.appendChild(oLine1);
         info.appendChild(oLine2);
@@ -1170,11 +1709,12 @@
     openConfirm();
   }
 
-  async function openDeleteConfirm(text){
+  async function openDeleteConfirm(text, scope){
+    if(!scope) return;
     const res = await fetch(apiBase + "/nlp-delete-preview", {
       method:"POST",
       headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ text })
+      body: JSON.stringify({ text, start_date: scope.start, end_date: scope.end })
     });
     if(!res.ok){
       alert("삭제할 일정을 찾지 못했습니다.");
@@ -1260,7 +1800,7 @@
 
         const l2 = document.createElement("div");
         l2.className = "cm-line2";
-        l2.textContent = fmtRange(it.start, it.end) + (it.location ? ` · ${it.location}` : "");
+        l2.textContent = fmtRange(it.start, it.end, it.all_day) + (it.location ? ` · ${it.location}` : "");
 
         meta.appendChild(l1);
         meta.appendChild(l2);
@@ -1316,7 +1856,9 @@
     setUnifiedBusy(true);
     try{
       if(isDelete){
-        await openDeleteConfirm(text);
+        const scope = getDeleteScopeOrAlert();
+        if(!scope) return;
+        await openDeleteConfirm(text, scope);
       }else{
         await openAddConfirm(text);
       }
@@ -1352,16 +1894,115 @@
       },
 
       events: async (info, success, failure) => {
-        try{
-          const res = await fetch(apiBase + "/events");
-          const data = await res.json();
-          success(data.map(ev => ({
+        const formatLocalEvent = (ev) => {
+          const rawStart = ev.start || "";
+          const rawEnd = ev.end || null;
+          const allDay = (ev.all_day === true) || isAllDayRange(rawStart, rawEnd);
+          if(allDay){
+            const startDateOnly = toDateOnly(rawStart) || toDateOnly(rawEnd) || "";
+            const inclusiveEnd = toDateOnly(rawEnd) || startDateOnly;
+            const exclusiveEnd = addDaysToDateStr(inclusiveEnd, 1) || addDaysToDateStr(startDateOnly, 1);
+            const startValue = startDateOnly || toDateStrLocal(new Date());
+            return {
+              id:String(ev.id),
+              title:ev.title,
+              start:startValue,
+              end:exclusiveEnd,
+              allDay:true,
+              extendedProps:{location: ev.location || "", allDay:true, source:"local"}
+            };
+          }
+          return {
             id:String(ev.id),
             title:ev.title,
-            start:ev.start,
-            end:ev.end || null,
-            extendedProps:{ location: ev.location || "" }
-          })));
+            start:rawStart,
+            end:rawEnd || null,
+            allDay:false,
+            extendedProps:{location: ev.location || "", allDay:false, source:"local"}
+          };
+        };
+
+        const formatGoogleEvent = (ev) => {
+          const rawStart = ev.start || "";
+          const rawEnd = ev.end || null;
+          const allDay = !!ev.all_day;
+          if(allDay){
+            const startDateOnly = toDateOnly(rawStart) || toDateOnly(rawEnd) || "";
+            const inclusiveEnd = toDateOnly(rawEnd) || startDateOnly;
+            const exclusiveEnd = addDaysToDateStr(inclusiveEnd, 1) || addDaysToDateStr(startDateOnly, 1);
+            return {
+              id:`google:${ev.id || rawStart}`,
+              title: ev.title || "(제목 없음)",
+              start:startDateOnly || rawStart,
+              end:exclusiveEnd,
+              allDay:true,
+              extendedProps:{
+                location: ev.location || "",
+                allDay:true,
+                source:"google",
+                googleId: ev.id || ""
+              }
+            };
+          }
+          return {
+            id:`google:${ev.id || rawStart}`,
+            title: ev.title || "(제목 없음)",
+            start:rawStart,
+            end:rawEnd || null,
+            allDay:false,
+            extendedProps:{
+              location: ev.location || "",
+              allDay:false,
+              source:"google",
+              googleId: ev.id || ""
+            }
+          };
+        };
+
+        try{
+          const showLocal = !IS_GOOGLE_MODE;
+          const showGoogle = IS_GOOGLE_MODE;
+          const promises = [];
+
+          if(showLocal){
+            promises.push(fetch(apiBase + "/events").then(async (res) => {
+              if(!res.ok) throw new Error("local events failed");
+              const data = await res.json();
+              return Array.isArray(data) ? data.map(formatLocalEvent) : [];
+            }));
+          }else{
+            promises.push(Promise.resolve([]));
+          }
+
+          let viewStart = info.start ? new Date(info.start) : new Date();
+          let viewEnd = info.end ? new Date(info.end) : new Date(viewStart);
+          viewEnd = new Date(viewEnd.getTime() - MS_PER_DAY);
+          if(viewEnd < viewStart){
+            viewEnd = new Date(viewStart);
+          }
+          const diffDays = Math.floor((viewEnd.getTime() - viewStart.getTime()) / MS_PER_DAY);
+          if(diffDays > 365){
+            viewEnd = new Date(viewStart.getTime() + 365 * MS_PER_DAY);
+          }
+          const fmtDate = (d) => d.toISOString().slice(0,10);
+
+          if(showGoogle){
+            const googleParams = new URLSearchParams({
+              start_date: fmtDate(viewStart),
+              end_date: fmtDate(viewEnd)
+            });
+            promises.push(fetch(apiBase + "/google/events?" + googleParams.toString()).then(
+                async (res) => {
+                  if(!res.ok) return [];
+                  const data = await res.json();
+                  return Array.isArray(data) ? data.map(formatGoogleEvent) : [];
+                }).catch(() => []));
+          }else{
+            promises.push(Promise.resolve([]));
+          }
+
+          const [localEvents, googleEvents] = await Promise.all(promises);
+          success([...(localEvents || []), ...(googleEvents || [])]);
         }catch(err){
           console.error(err);
           failure(err);
@@ -1371,10 +2012,6 @@
       dateClick: (info) => {
         setSelectedDate(info.dateStr);
         loadEventListForDate(selectedDateStr);
-
-        const startInput = document.getElementById("start");
-        startInput.value = info.dateStr + "T09:00";
-        startInput.focus();
       },
 
       eventClick: (info) => {
@@ -1432,6 +2069,19 @@
     toggle.addEventListener("change", () => setUnifiedMode(toggle.checked));
     actionBtn.addEventListener("click", runUnifiedNlpAction);
 
+    setDefaultDateRange("delete-scope-start", "delete-scope-end", 30);
+    updateUndoButton();
+    const undoBtn = document.getElementById("undo-last-btn");
+    if(undoBtn){
+      undoBtn.addEventListener("click", undoLastBatch);
+    }
+
+    const recentBtn = document.getElementById("recent-added-btn");
+    if(recentBtn){
+      recentBtn.style.display = "";
+      recentBtn.addEventListener("click", openRecentModal);
+    }
+
     const ta = document.getElementById("nlp-unified-text");
     if(ta){
       ta.addEventListener("compositionstart", () => { nlpInputComposing = true; });
@@ -1476,6 +2126,12 @@
     document.getElementById("confirm-cancel").addEventListener("click", closeConfirm);
     document.getElementById("confirm-overlay").addEventListener("click", (e) => {
       if(e.target && e.target.id === "confirm-overlay") closeConfirm();
+    });
+
+    document.getElementById("recent-close").addEventListener("click", closeRecentModal);
+    document.getElementById("recent-cancel").addEventListener("click", closeRecentModal);
+    document.getElementById("recent-overlay").addEventListener("click", (e) => {
+      if(e.target && e.target.id === "recent-overlay") closeRecentModal();
     });
 
     document.getElementById("confirm-ok").addEventListener("click", async () => {
@@ -1528,6 +2184,10 @@
         if(!res.ok){
           alert("일정 추가 적용에 실패했습니다.");
           return;
+        }
+        const created = await res.json();
+        if(Array.isArray(created)){
+          recordUndoBatch(created);
         }
 
         closeConfirm();
