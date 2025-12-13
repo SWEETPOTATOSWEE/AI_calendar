@@ -1,0 +1,57 @@
+diff --git a/main.py b/main.py
+--- a/main.py
++++ b/main.py
+@@
+   async function runUnifiedNlpAction(){
+     const input = document.getElementById("nlp-unified-text");
+     const toggle = document.getElementById("nlp-mode-toggle");
+-    const text = input?.value?.trim() ?? "";
++    const btn = document.getElementById("nlp-action-btn");
++    const loader = document.getElementById("nlp-unified-loader");
++    const loaderEl = document.querySelector("#nlp-unified-loader .loader");
++
++    const text = input?.value?.trim() ?? "";
+     if(!text){
+       alert("문장을 입력해주세요.");
+       return;
+     }
+ 
+     const isDelete = !!toggle?.checked;
+ 
+-    if(isDelete){
+-      await openDeleteConfirm(text);
+-    }else{
+-      await openAddConfirm(text);
+-    }
++    // ✅ 로더/버튼 상태 전환
++    if(loaderEl){
++      loaderEl.classList.toggle("is-delete", isDelete);
++    }
++    if(btn && loader){
++      btn.disabled = true;
++      btn.classList.remove("scale-1");
++      btn.classList.add("scale-0");
++
++      loader.classList.remove("scale-0");
++      loader.classList.add("scale-1");
++    }
++
++    try{
++      // ✅ 프리뷰/확인 모달(또는 프리뷰 API) 동안 로더 유지
++      if(isDelete){
++        await openDeleteConfirm(text);
++      }else{
++        await openAddConfirm(text);
++      }
++    }finally{
++      // ✅ 원복
++      if(btn && loader){
++        loader.classList.remove("scale-1");
++        loader.classList.add("scale-0");
++
++        btn.disabled = false;
++        btn.classList.remove("scale-0");
++        btn.classList.add("scale-1");
++      }
++    }
+   }
