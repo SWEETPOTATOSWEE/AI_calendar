@@ -1,0 +1,1578 @@
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>캘린더</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap"
+    rel="stylesheet"
+  >
+
+  <style>
+    :root{
+      --bg:#f7f7f5;
+      --card:#ffffff;
+      --text:#2f3437;
+      --muted:#6b6f73;
+      --border:#e7e7e4;
+
+      --primary:#2f6feb;
+      --danger:#ef4444;
+
+      --radius:14px;
+      --shadow:none;
+
+      --sidebar-w: 360px;
+      --ctl-h: 34px;
+    }
+
+    *{box-sizing:border-box;}
+    html, body{height:100%;}
+    body{
+      margin:0;
+      font-family:"Noto Sans KR", system-ui, -apple-system, "Segoe UI", sans-serif;
+      background:var(--bg);
+      color:var(--text);
+    }
+    input, textarea, button, select{ font-family:inherit; }
+
+    header{
+      position:sticky;
+      top:0;
+      z-index:30;
+      background:rgba(247,247,245,.92);
+      backdrop-filter:saturate(180%) blur(10px);
+      border-bottom:1px solid var(--border);
+    }
+
+    .topbar{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      padding:10px 14px;
+      gap:12px;
+      max-width: 1400px;
+      margin:0 auto;
+    }
+
+    .topbar-left{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      min-width: 0;
+    }
+
+    .brand{
+      font-weight:800;
+      letter-spacing:-0.2px;
+      padding:6px 10px;
+      border-radius:10px;
+      background:#fff;
+      border:1px solid var(--border);
+      flex:0 0 auto;
+    }
+
+    .divider{
+      width:1px;
+      height:18px;
+      background:var(--border);
+      flex:0 0 auto;
+    }
+
+    .nav-btn{
+      height:34px;
+      padding:0 10px;
+      border-radius:10px;
+      border:1px solid var(--border);
+      background:#fff;
+      color:var(--text);
+      font-weight:700;
+      cursor:pointer;
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      flex:0 0 auto;
+    }
+    .nav-btn:hover{background:#f2f2f0;}
+
+    .ym-label{
+      font-size:16px;
+      font-weight:800;
+      letter-spacing:-0.2px;
+      padding:0 4px;
+      white-space:nowrap;
+      flex:0 0 auto;
+    }
+
+    .topbar-right{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      flex:0 0 auto;
+    }
+
+    .view-switch{
+      display:flex;
+      align-items:center;
+      gap:6px;
+      padding:4px;
+      border-radius:12px;
+      border:1px solid var(--border);
+      background:#fff;
+    }
+    .view-btn{
+      height:30px;
+      padding:0 10px;
+      border-radius:10px;
+      border:0;
+      background:transparent;
+      color:var(--muted);
+      font-weight:800;
+      cursor:pointer;
+    }
+    .view-btn:hover{background:#f2f2f0; color:var(--text);}
+    .view-btn.active{
+      background:rgba(47,52,55,.10);
+      color:var(--text);
+    }
+
+    .header-actions{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      padding-left:4px;
+    }
+    .badge{
+      display:inline-flex;
+      align-items:center;
+      padding:.25rem .55rem;
+      border-radius:999px;
+      font-size:.78rem;
+      font-weight:800;
+      border:1px solid var(--border);
+      background:#fff;
+      color:var(--text);
+      white-space:nowrap;
+    }
+    .badge.linked{
+      background:#eaf6ee;
+      border-color:#c8e9d3;
+      color:#1f6f3d;
+    }
+    .badge.admin{
+      background:#fff3d8;
+      border-color:#ffe1a6;
+      color:#7a4b00;
+    }
+    .header-btn{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      padding:.32rem .62rem;
+      border-radius:10px;
+      border:1px solid var(--border);
+      background:#fff;
+      color:var(--text);
+      text-decoration:none;
+      font-size:.82rem;
+      font-weight:800;
+      white-space:nowrap;
+    }
+    .header-btn:hover{ background:#f2f2f0; }
+
+    /* ===== Layout: calendar left, utilities right ===== */
+    .app{
+      display:grid;
+      grid-template-columns: 1fr var(--sidebar-w);
+      gap:12px;
+      padding:12px;
+      max-width: 1400px;
+      margin:0 auto;
+      align-items:start;
+    }
+
+    main{min-width:0;}
+    aside{
+      position:sticky;
+      top:62px;
+      align-self:start;
+      height: calc(100vh - 74px);
+      overflow:auto;
+      padding-right:2px;
+    }
+
+    .panel{
+      background:var(--card);
+      border:1px solid var(--border);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+      padding:12px;
+      margin-bottom:12px;
+    }
+
+    .panel-title{
+      display:flex;
+      align-items:baseline;
+      justify-content:space-between;
+      gap:10px;
+      margin:0 0 10px;
+    }
+    .panel-title h2{
+      margin:0;
+      font-size:13px;
+      font-weight:900;
+      letter-spacing:-0.2px;
+      color:var(--text);
+    }
+    .panel-title .sub{
+      font-size:12px;
+      color:var(--muted);
+      font-weight:800;
+      white-space:nowrap;
+      display:flex;
+      align-items:center;
+      gap:6px;
+    }
+    .panel-title .sub-divider{
+      color:var(--border);
+      font-weight:900;
+    }
+    #selected-date-label{
+      display:inline-flex;
+      align-items:center;
+      padding:2px 10px;
+      border-radius:999px;
+      background:rgba(47,111,235,.15);
+      color:#1c3b7a;
+      font-weight:900;
+      letter-spacing:-0.2px;
+    }
+    #selected-count-label{
+      font-weight:900;
+      color:var(--text);
+    }
+
+    /* ===== Calendar ===== */
+    #calendar-container{
+      background:var(--card);
+      border:1px solid var(--border);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+      padding:10px;
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+    }
+    #calendar-container .calendar-events-panel{
+      margin:0;
+    }
+
+    #calendar .fc{
+      font-size:0.92rem;
+      color:var(--text);
+    }
+    #calendar .fc .fc-view-harness{
+      min-height:0 !important;
+    }
+    #calendar .fc-theme-standard td,
+    #calendar .fc-theme-standard th{
+      border-color:var(--border);
+    }
+    #calendar .fc-scrollgrid{ border:0; }
+    #calendar .fc-col-header-cell-cushion{
+      font-weight:900;
+      color:var(--muted);
+      padding:10px 6px;
+    }
+    #calendar .fc-daygrid-day-number{
+      font-weight:900;
+      color:var(--text);
+      padding:7px 8px;
+    }
+    #calendar .fc-day-today{
+      background: rgba(47,52,55,.04) !important;
+    }
+    #calendar .fc .fc-daygrid-event{
+      background:transparent;
+      border:0;
+      color:var(--text);
+      padding:2px 6px 2px 18px;
+      border-radius:8px;
+      position:relative;
+    }
+    #calendar .fc .fc-daygrid-event:hover{ background:#f2f2f0; }
+    #calendar .fc .fc-daygrid-event::before{
+      content:"";
+      width:6px;
+      height:6px;
+      border-radius:50%;
+      background:var(--primary);
+      position:absolute;
+      left:8px;
+      top:50%;
+      transform:translateY(-50%);
+      opacity:.9;
+    }
+    #calendar .fc .fc-daygrid-event .fc-event-title{ font-weight:900; }
+    #calendar .fc .fc-daygrid-more-link{
+      color:var(--muted);
+      font-weight:900;
+    }
+    #calendar .fc .fc-daygrid-more-link:hover{ color:var(--text); }
+
+    /* ✅ 선택 날짜 하이라이트 */
+    #calendar .fc-daygrid-day.selected-day{
+      background: rgba(47,111,235,.10) !important;
+    }
+    #calendar .fc-daygrid-day.selected-day .fc-daygrid-day-frame{
+      border-radius: 10px;
+      box-shadow: inset 0 0 0 2px rgba(47,111,235,.28);
+    }
+    #calendar .fc-daygrid-day.selected-day .fc-daygrid-day-number{
+      color:#1d3360 !important;
+      font-weight:900;
+    }
+    #calendar .fc-daygrid-day.selected-day .fc-daygrid-event{
+      background: rgba(47,111,235,.18);
+      color:#15233c;
+    }
+    #calendar .fc-daygrid-day.selected-day .fc-daygrid-event::before{
+      background:#1c3b7a;
+    }
+    #calendar .fc .selected-day-header{
+      background: rgba(47,111,235,.10);
+      color:#1d3360;
+      font-weight:900;
+    }
+    #calendar .fc .fc-timegrid-col.selected-day .fc-timegrid-col-frame{
+      background: rgba(47,111,235,.08);
+      box-shadow: inset 0 0 0 2px rgba(47,111,235,.2);
+    }
+    #calendar .fc .fc-timegrid-col.selected-day .fc-timegrid-event{
+      background: rgba(47,111,235,.2);
+      border-color: rgba(47,111,235,.3);
+      color:#15233c;
+    }
+
+    /* ===== NLP Composer ===== */
+    .composer textarea{
+      width:100%;
+      border:1px solid var(--border);
+      border-radius:12px;
+      padding:10px 10px 44px 10px;
+      font-size:14px;
+      line-height:1.45;
+      outline:none;
+      resize:none;
+      background:#fff;
+      color:var(--text);
+      min-height:56px;
+      height:56px;
+      overflow:hidden;
+      transition: height .18s cubic-bezier(.25,.8,.25,1);
+    }
+    .composer textarea:focus{ border-color: rgba(47,52,55,.35); }
+
+    .composer-controls{
+      position:relative;
+      margin-top:-40px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      padding:0 8px 6px;
+      pointer-events:none;
+    }
+    .composer-controls > *{ pointer-events:auto; }
+
+    .seg-toggle{
+      display:inline-flex;
+      align-items:center;
+      gap:0;
+      border:1px solid var(--border);
+      background:#fff;
+      border-radius:12px;
+      padding:3px;
+      height:32px;
+    }
+    .seg-toggle input{ display:none; }
+    .seg{
+      height:26px;
+      padding:0 10px;
+      border-radius:10px;
+      display:inline-flex;
+      align-items:center;
+      font-weight:900;
+      font-size:12px;
+      color:var(--muted);
+      cursor:pointer;
+      user-select:none;
+    }
+    #nlp-mode-toggle:not(:checked) ~ .seg.add{
+      background:rgba(47,52,55,.10);
+      color:var(--text);
+    }
+    #nlp-mode-toggle:checked ~ .seg.del{
+      background:rgba(239,68,68,.12);
+      color:#8a1f1f;
+    }
+
+    .inline-action{
+      position:relative;
+      width:var(--ctl-h);
+      height:var(--ctl-h);
+      flex:0 0 auto;
+    }
+    .inline-action > *{ position:absolute; inset:0; }
+
+    .Btn{
+      width:var(--ctl-h);
+      height:var(--ctl-h);
+      border-radius:10px;
+      border:1px solid var(--border);
+      background:#fff;
+      cursor:pointer;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      transition:transform .15s ease, background .15s ease, opacity .35s ease;
+    }
+    .Btn:hover{ background:#f2f2f0; }
+    .Btn:active{ transform:translateY(1px); }
+    .Btn.mode-delete{ border-color: rgba(239,68,68,.35); }
+
+    .Btn .sign svg{ width:16px; height:16px; }
+    .Btn .sign svg path{ fill: var(--text); }
+    .Btn.mode-delete .sign svg path{ fill: #8a1f1f; }
+
+    .scale-0{transform:scale(.95); opacity:0; pointer-events:none;}
+    .scale-1{transform:scale(1); opacity:1;}
+
+    .loader-wrapper{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      transition:opacity .35s ease, transform .35s ease;
+    }
+    .loader{
+      width:18px;
+      height:18px;
+      border-radius:50%;
+      border:2px solid rgba(47,52,55,.18);
+      border-top-color: rgba(47,52,55,.55);
+      animation:spin 0.9s linear infinite;
+    }
+    .loader.is-delete{
+      border-color: rgba(239,68,68,.18);
+      border-top-color: rgba(239,68,68,.6);
+    }
+    @keyframes spin{ to{ transform:rotate(360deg); } }
+
+    /* ===== Quick add ===== */
+    /* ===== Selected date list ===== */
+    #events-ul{list-style:none; padding:0; margin:0;}
+    #events-ul li{
+      padding:10px 6px;
+      border-bottom:1px solid var(--border);
+      display:flex;
+      align-items:center;
+      gap:10px;
+    }
+    .event-dot{
+      width:8px;
+      height:8px;
+      border-radius:50%;
+      background:var(--primary);
+      flex:0 0 auto;
+      margin-top:2px;
+    }
+    .event-info{flex:1; min-width:0;}
+    .event-title{
+      font-weight:900;
+      font-size:13px;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .event-meta{
+      color:var(--muted);
+      font-size:12px;
+      margin-top:2px;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .delete-btn{
+      border:1px solid var(--border);
+      background:#fff;
+      color:var(--muted);
+      font-weight:900;
+      border-radius:10px;
+      padding:7px 10px;
+      cursor:pointer;
+      flex:0 0 auto;
+    }
+    .delete-btn:hover{
+      border-color: rgba(239,68,68,.35);
+      color:#8a1f1f;
+      background: rgba(239,68,68,.06);
+    }
+
+    /* ===== Confirm Modal ===== */
+    #confirm-overlay{
+      position:fixed;
+      inset:0;
+      background: rgba(0,0,0,.28);
+      display:none;
+      align-items:center;
+      justify-content:center;
+      padding:14px;
+      z-index:60;
+    }
+    #confirm-modal{
+      width:min(560px, 100%);
+      background:#fff;
+      border:1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.18);
+      overflow:hidden;
+    }
+    .cm-head{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:12px;
+      padding:14px 14px 10px;
+      border-bottom:1px solid var(--border);
+    }
+    .cm-title{ font-weight:900; font-size:14px; }
+    .cm-desc{
+      margin-top:4px;
+      color:var(--muted);
+      font-weight:800;
+      font-size:12px;
+      line-height:1.4;
+    }
+    .cm-x{
+      border:1px solid var(--border);
+      background:#fff;
+      border-radius:10px;
+      width:34px;
+      height:34px;
+      cursor:pointer;
+      font-weight:900;
+    }
+    .cm-x:hover{ background:#f2f2f0; }
+    .cm-body{
+      padding:12px 14px;
+      max-height: 56vh;
+      overflow:auto;
+    }
+    .cm-foot{
+      display:flex;
+      justify-content:flex-end;
+      gap:10px;
+      padding:12px 14px;
+      border-top:1px solid var(--border);
+      background: #fafaf9;
+    }
+    .cm-btn{
+      border-radius:12px;
+      border:1px solid var(--border);
+      padding:10px 12px;
+      font-weight:900;
+      cursor:pointer;
+      background:#fff;
+    }
+    .cm-btn:hover{ background:#f2f2f0; }
+    .cm-btn.primary{
+      background: rgba(47,52,55,.10);
+    }
+    .cm-btn.primary:hover{
+      background: rgba(47,52,55,.14);
+    }
+
+    .cm-row{
+      border:1px solid var(--border);
+      border-radius:12px;
+      padding:10px 10px;
+      margin-bottom:8px;
+      background:#fff;
+    }
+    .cm-row-top{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:10px;
+    }
+    .cm-left{
+      display:flex;
+      gap:10px;
+      align-items:flex-start;
+      min-width:0;
+    }
+    .cm-check{ margin-top:2px; }
+    .cm-main{ min-width:0; }
+    .cm-line1{
+      font-weight:900;
+      font-size:13px;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .cm-line2{
+      margin-top:2px;
+      color:var(--muted);
+      font-weight:800;
+      font-size:12px;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .cm-mini{
+      margin-top:6px;
+      color:var(--muted);
+      font-weight:800;
+      font-size:12px;
+    }
+    .cm-toggle{
+      border:1px solid var(--border);
+      background:#fff;
+      border-radius:10px;
+      padding:6px 10px;
+      font-weight:900;
+      cursor:pointer;
+      color:var(--muted);
+      white-space:nowrap;
+    }
+    .cm-toggle:hover{ background:#f2f2f0; color:var(--text); }
+    .cm-sublist{
+      margin-top:10px;
+      padding-top:10px;
+      border-top:1px solid var(--border);
+      display:none;
+    }
+    .cm-subitem{
+      display:flex;
+      align-items:flex-start;
+      gap:10px;
+      padding:8px 6px;
+      border-radius:10px;
+    }
+    .cm-subitem:hover{ background:#f7f7f5; }
+
+    @media (max-width: 980px){
+      .app{ grid-template-columns: 1fr; }
+      aside{ position:relative; top:auto; height:auto; }
+      :root{ --sidebar-w: 1fr; }
+    }
+  </style>
+</head>
+
+<body>
+<header>
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="brand">Calendar</div>
+      <div class="divider"></div>
+
+      <button class="nav-btn" id="cal-prev" type="button" aria-label="이전"><span aria-hidden="true">←</span></button>
+      <button class="nav-btn" id="cal-today" type="button">오늘</button>
+      <button class="nav-btn" id="cal-next" type="button" aria-label="다음"><span aria-hidden="true">→</span></button>
+
+      <div class="ym-label" id="ym-label"></div>
+    </div>
+
+    <div class="topbar-right">
+      <div class="view-switch" role="tablist" aria-label="뷰 전환">
+        <button class="view-btn active" type="button" data-cal-view="dayGridMonth" id="cal-view-month">월</button>
+        <button class="view-btn" type="button" data-cal-view="timeGridWeek" id="cal-view-week">주</button>
+        <button class="view-btn" type="button" data-cal-view="timeGridDay" id="cal-view-day">일</button>
+      </div>
+
+      <div class="header-actions">__HEADER_ACTIONS__</div>
+    </div>
+  </div>
+</header>
+
+<div class="app">
+  <!-- Calendar LEFT -->
+  <main>
+    <div id="calendar-container">
+      <div id="calendar"></div>
+      <div class="panel calendar-events-panel" id="events-list">
+        <div class="panel-title">
+          <h2>선택한 날짜 일정</h2>
+          <div class="sub">
+            <span id="selected-date-label"></span>
+            <span class="sub-divider">·</span>
+            <span id="selected-count-label"></span>
+          </div>
+        </div>
+        <ul id="events-ul"></ul>
+      </div>
+    </div>
+  </main>
+
+  <!-- Utilities RIGHT -->
+  <aside id="sidebar">
+
+    <div class="panel composer">
+      <div class="panel-title">
+        <h2>자연어로 추가/삭제</h2>
+        <div class="sub">Enter 실행 · Shift+Enter 줄바꿈</div>
+      </div>
+
+      <textarea
+        id="nlp-unified-text"
+        placeholder="어떤 일정이든 입력하세요"
+        rows="1"
+      ></textarea>
+
+      <div class="composer-controls">
+        <label class="seg-toggle" title="추가/삭제 전환">
+          <input type="checkbox" id="nlp-mode-toggle"/>
+          <span class="seg add">추가</span>
+          <span class="seg del">삭제</span>
+        </label>
+
+        <div class="inline-action">
+          <button
+            type="button"
+            id="nlp-action-btn"
+            class="Btn mode-add scale-1"
+            aria-label="문장으로 일정 추가/삭제"
+            title="실행"
+          >
+            <div class="sign">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 5c.55 0 1 .45 1 1v5h5c.55 0 1 .45 1 1s-.45 1-1 1h-5v5c0 .55-.45 1-1 1s-1-.45-1-1v-5H6c-.55 0-1-.45-1-1s.45-1 1-1h5V6c0-.55.45-1 1-1z"/>
+              </svg>
+            </div>
+          </button>
+
+          <div class="loader-wrapper scale-0" id="nlp-unified-loader">
+            <div class="loader"></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </aside>
+</div>
+
+<!-- Confirm Modal -->
+<div id="confirm-overlay">
+  <div id="confirm-modal" role="dialog" aria-modal="true">
+    <div class="cm-head">
+      <div>
+        <div class="cm-title" id="confirm-title"></div>
+        <div class="cm-desc" id="confirm-desc"></div>
+      </div>
+      <button class="cm-x" id="confirm-close" type="button">✕</button>
+    </div>
+
+    <div class="cm-body">
+      <div id="confirm-list"></div>
+    </div>
+
+    <div class="cm-foot">
+      <button class="cm-btn" id="confirm-cancel" type="button">취소</button>
+      <button class="cm-btn primary" id="confirm-ok" type="button">적용</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const apiBase = "/api";
+  let calendar = null;
+
+  let selectedDateStr = null; // YYYY-MM-DD
+  let nlpInputComposing = false;
+
+  let confirmState = { mode: null, addItems: [], deleteGroups: [] };
+
+  function toDateStrLocal(d){
+    const y = d.getFullYear();
+    const m = String(d.getMonth()+1).padStart(2,"0");
+    const day = String(d.getDate()).padStart(2,"0");
+    return `${y}-${m}-${day}`;
+  }
+
+  function updateYearMonthLabel(date){
+    const ymLabel = document.getElementById("ym-label");
+    const y = date.getFullYear();
+    const m = date.getMonth() + 1;
+    ymLabel.textContent = `${y}년 ${m}월`;
+  }
+
+  function setActiveView(viewType){
+    document.querySelectorAll("[data-cal-view]").forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.calView === viewType);
+    });
+  }
+
+  function setSelectedDate(dateStr){
+    selectedDateStr = dateStr;
+    const el = document.getElementById("selected-date-label");
+    if(el) el.textContent = dateStr;
+    if(calendar){
+      syncSelectedDayHighlight();
+    }
+  }
+
+  function syncSelectedDayHighlight(){
+    const target = selectedDateStr;
+    if(!target){
+      return;
+    }
+    requestAnimationFrame(() => {
+      document.querySelectorAll("#calendar .fc-daygrid-day[data-date]").forEach(cell => {
+        cell.classList.toggle("selected-day", cell.getAttribute("data-date") === target);
+      });
+      document.querySelectorAll("#calendar .fc-col-header-cell[data-date]").forEach(cell => {
+        cell.classList.toggle("selected-day-header", cell.getAttribute("data-date") === target);
+      });
+      document.querySelectorAll("#calendar .fc-timegrid-col[data-date]").forEach(col => {
+        col.classList.toggle("selected-day", col.getAttribute("data-date") === target);
+      });
+    });
+  }
+
+  function setupShadowAutoGrow(textareaId){
+    const ta = document.getElementById(textareaId);
+    if(!ta) return;
+
+    let base = 56;
+    let rafId = null;
+
+    const computeBase = () => {
+      const prev = ta.value;
+      ta.value = "";
+      ta.style.height = "auto";
+      const measured = ta.scrollHeight;
+      base = Math.max(measured || 0, 56);
+      ta.value = prev;
+    };
+
+    const resize = () => {
+      const value = ta.value ?? "";
+      if(value.trim() === ""){
+        if(rafId) cancelAnimationFrame(rafId);
+        ta.style.height = base + "px";
+        return;
+      }
+
+      const startH = ta.getBoundingClientRect().height;
+      ta.style.height = "auto";
+      let target = ta.scrollHeight;
+
+      if(target <= base + 1){ target = base; }
+      ta.style.height = startH + "px";
+
+      if(rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => { ta.style.height = target + "px"; });
+    };
+
+    requestAnimationFrame(() => {
+      computeBase();
+      ta.style.height = base + "px";
+      resize();
+    });
+
+    ["input","focus","change"].forEach(evt => ta.addEventListener(evt, resize));
+    window.addEventListener("resize", () => { computeBase(); resize(); });
+  }
+
+  function fmtRange(start, end){
+    if(!start) return "";
+    const d = start.slice(0,10);
+    const st = start.slice(11,16);
+    if(end) return `${d} ${st}–${end.slice(11,16)}`;
+    return `${d} ${st}`;
+  }
+
+  async function loadEventListForDate(dateStr){
+    const res = await fetch(apiBase + "/events");
+    const events = await res.json();
+
+    const ul = document.getElementById("events-ul");
+    const countEl = document.getElementById("selected-count-label");
+    ul.innerHTML = "";
+
+    const dayEvents = events.filter(ev => (ev.start || "").slice(0,10) === dateStr);
+    if(countEl) countEl.textContent = dayEvents.length ? `${dayEvents.length}개` : "없음";
+
+    if(dayEvents.length === 0){
+      ul.innerHTML = "<li style='padding:10px 6px; color:var(--muted); font-weight:800;'>선택한 날짜에 일정이 없습니다.</li>";
+      return;
+    }
+
+    for(const ev of dayEvents){
+      const li = document.createElement("li");
+
+      const dot = document.createElement("div");
+      dot.className = "event-dot";
+
+      const info = document.createElement("div");
+      info.className = "event-info";
+
+      const title = document.createElement("div");
+      title.className = "event-title";
+      title.textContent = ev.title;
+
+      const meta = document.createElement("div");
+      meta.className = "event-meta";
+      const timePart = ev.start.slice(11,16);
+      meta.textContent = ev.location ? `시작 ${timePart} · ${ev.location}` : `시작 ${timePart}`;
+
+      info.appendChild(title);
+      info.appendChild(meta);
+
+      const delBtn = document.createElement("button");
+      delBtn.className = "delete-btn";
+      delBtn.textContent = "삭제";
+      delBtn.onclick = async () => {
+        await fetch(apiBase + "/events/" + ev.id, { method:"DELETE" });
+        await refreshAll();
+      };
+
+      li.appendChild(dot);
+      li.appendChild(info);
+      li.appendChild(delBtn);
+      ul.appendChild(li);
+    }
+  }
+
+  async function refreshAll(){
+    if(calendar) calendar.refetchEvents();
+    if(selectedDateStr) await loadEventListForDate(selectedDateStr);
+  }
+
+  async function createEvent(e){
+    e.preventDefault();
+
+    const title = document.getElementById("title").value.trim();
+    const start = document.getElementById("start").value;
+    const end = document.getElementById("end").value;
+    const location = document.getElementById("location").value.trim();
+
+    if(!title || !start){
+      alert("제목과 시작 시각은 필수입니다.");
+      return;
+    }
+
+    const payload = { title, start, end: end || null, location: location || null };
+
+    await fetch(apiBase + "/events", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    document.getElementById("event-form").reset();
+    await refreshAll();
+  }
+
+  function setUnifiedMode(isDelete){
+    const btn = document.getElementById("nlp-action-btn");
+    const loaderEl = document.querySelector("#nlp-unified-loader .loader");
+    if(!btn) return;
+
+    btn.classList.toggle("mode-delete", isDelete);
+    btn.classList.toggle("mode-add", !isDelete);
+
+    if(loaderEl){
+      loaderEl.classList.toggle("is-delete", isDelete);
+    }
+  }
+
+  function setUnifiedBusy(isBusy){
+    const btn = document.getElementById("nlp-action-btn");
+    const loaderWrap = document.getElementById("nlp-unified-loader");
+    if(!btn || !loaderWrap) return;
+
+    btn.disabled = !!isBusy;
+    btn.classList.toggle("scale-0", !!isBusy);
+    btn.classList.toggle("scale-1", !isBusy);
+    loaderWrap.classList.toggle("scale-1", !!isBusy);
+    loaderWrap.classList.toggle("scale-0", !isBusy);
+  }
+
+  // -------- Confirm Modal helpers --------
+  function openConfirm(){ document.getElementById("confirm-overlay").style.display = "flex"; }
+  function closeConfirm(){
+    document.getElementById("confirm-overlay").style.display = "none";
+    document.getElementById("confirm-list").innerHTML = "";
+    confirmState = { mode: null, addItems: [], deleteGroups: [] };
+  }
+
+  async function openAddConfirm(text){
+    const res = await fetch(apiBase + "/nlp-preview", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ text })
+    });
+    if(!res.ok){
+      alert("추가할 일정을 해석하지 못했습니다.");
+      return;
+    }
+    const data = await res.json();
+    const items = Array.isArray(data?.items) ? data.items : [];
+    if(items.length === 0){
+      alert("추가할 일정을 찾지 못했습니다.");
+      return;
+    }
+
+    confirmState.mode = "add";
+    confirmState.addItems = items;
+
+    document.getElementById("confirm-title").textContent = "이 일정을 추가할까요?";
+    document.getElementById("confirm-desc").textContent = "체크한 항목만 추가됩니다. 반복 일정은 묶어서 선택하거나 상세에서 일부만 고를 수 있습니다.";
+
+    const host = document.getElementById("confirm-list");
+    host.innerHTML = "";
+
+    items.forEach((it, idx) => {
+      const row = document.createElement("div");
+      row.className = "cm-row";
+
+      const top = document.createElement("div");
+      top.className = "cm-row-top";
+
+      const left = document.createElement("div");
+      left.className = "cm-left";
+
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = true;
+      cb.className = "cm-check";
+      cb.dataset.addIndex = String(idx);
+      cb.dataset.role = "add-top";
+
+      const main = document.createElement("div");
+      main.className = "cm-main";
+
+      const line1 = document.createElement("div");
+      line1.className = "cm-line1";
+      line1.textContent = it.title || "(제목 없음)";
+
+      const line2 = document.createElement("div");
+      line2.className = "cm-line2";
+
+      if(it.type === "single"){
+        line2.textContent = fmtRange(it.start, it.end) + (it.location ? ` · ${it.location}` : "");
+        main.appendChild(line1);
+        main.appendChild(line2);
+        left.appendChild(cb);
+        left.appendChild(main);
+        top.appendChild(left);
+        row.appendChild(top);
+        host.appendChild(row);
+        return;
+      }
+
+      const sd = it.start_date || "?";
+      const ed = it.end_date || "?";
+      const cnt = (typeof it.count === "number") ? it.count : 0;
+      const time = it.time ? it.time : "시간 없음";
+      line2.textContent = `반복: ${sd}~${ed} · ${time} · ${cnt}회` + (it.location ? ` · ${it.location}` : "");
+
+      if(Array.isArray(it.samples) && it.samples.length){
+        const mini = document.createElement("div");
+        mini.className = "cm-mini";
+        const s = it.samples.slice(0,3).map(x => (x || "").replace("T"," ")).join(" / ");
+        mini.textContent = `예: ${s}${(cnt > 3) ? " …" : ""}`;
+        main.appendChild(mini);
+      }
+
+      main.appendChild(line1);
+      main.appendChild(line2);
+
+      left.appendChild(cb);
+      left.appendChild(main);
+
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "cm-toggle";
+      toggle.textContent = "상세";
+
+      const sub = document.createElement("div");
+      sub.className = "cm-sublist";
+
+      const occ = Array.isArray(it.occurrences) ? it.occurrences : [];
+      occ.forEach((occurrence, occIdx) => {
+        const subItem = document.createElement("div");
+        subItem.className = "cm-subitem";
+
+        const occCb = document.createElement("input");
+        occCb.type = "checkbox";
+        occCb.checked = true;
+        occCb.dataset.role = "add-occurrence";
+        occCb.dataset.addIndex = String(idx);
+        occCb.dataset.addOccurrenceIndex = String(occIdx);
+
+        const info = document.createElement("div");
+        info.style.minWidth = "0";
+
+        const oLine1 = document.createElement("div");
+        oLine1.className = "cm-line1";
+        oLine1.textContent = occurrence.title || it.title || "";
+
+        const oLine2 = document.createElement("div");
+        oLine2.className = "cm-line2";
+        oLine2.textContent = fmtRange(occurrence.start, occurrence.end) + (occurrence.location ? ` · ${occurrence.location}` : "");
+
+        info.appendChild(oLine1);
+        info.appendChild(oLine2);
+
+        subItem.appendChild(occCb);
+        subItem.appendChild(info);
+        sub.appendChild(subItem);
+      });
+
+      cb.addEventListener("change", () => {
+        cb.indeterminate = false;
+        sub.querySelectorAll("input[type=checkbox][data-role='add-occurrence']").forEach(x => {
+          x.checked = cb.checked;
+        });
+      });
+
+      sub.addEventListener("change", () => {
+        const cbs = Array.from(sub.querySelectorAll("input[type=checkbox][data-role='add-occurrence']"));
+        const all = cbs.every(x => x.checked);
+        const any = cbs.some(x => x.checked);
+        cb.checked = any;
+        cb.indeterminate = any && !all;
+      });
+
+      toggle.addEventListener("click", () => {
+        const open = sub.style.display === "block";
+        sub.style.display = open ? "none" : "block";
+        toggle.textContent = open ? "상세" : "접기";
+      });
+
+      top.appendChild(left);
+      top.appendChild(toggle);
+      row.appendChild(top);
+      row.appendChild(sub);
+      host.appendChild(row);
+    });
+
+    openConfirm();
+  }
+
+  async function openDeleteConfirm(text){
+    const res = await fetch(apiBase + "/nlp-delete-preview", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ text })
+    });
+    if(!res.ok){
+      alert("삭제할 일정을 찾지 못했습니다.");
+      return;
+    }
+    const data = await res.json();
+    const groups = Array.isArray(data?.groups) ? data.groups : [];
+    if(groups.length === 0){
+      alert("삭제할 일정을 찾지 못했습니다.");
+      return;
+    }
+
+    confirmState.mode = "delete";
+    confirmState.deleteGroups = groups;
+
+    document.getElementById("confirm-title").textContent = "이 일정을 삭제할까요?";
+    document.getElementById("confirm-desc").textContent = "체크한 항목만 삭제됩니다. 반복 일정은 묶어서 선택할 수 있습니다.";
+
+    const host = document.getElementById("confirm-list");
+    host.innerHTML = "";
+
+    groups.forEach((g, gi) => {
+      const row = document.createElement("div");
+      row.className = "cm-row";
+
+      const top = document.createElement("div");
+      top.className = "cm-row-top";
+
+      const left = document.createElement("div");
+      left.className = "cm-left";
+
+      const gcb = document.createElement("input");
+      gcb.type = "checkbox";
+      gcb.checked = true;
+      gcb.className = "cm-check";
+      gcb.dataset.groupIndex = String(gi);
+
+      const main = document.createElement("div");
+      main.className = "cm-main";
+
+      const line1 = document.createElement("div");
+      line1.className = "cm-line1";
+      const kindLabel = (g.kind === "recurring") ? "반복" : "단일";
+      line1.textContent = `${kindLabel} · ${g.title || ""}`;
+
+      const line2 = document.createElement("div");
+      line2.className = "cm-line2";
+      const time = g.time ? g.time : "";
+      const loc = g.location ? g.location : "";
+      const cnt = (typeof g.count === "number") ? g.count : (Array.isArray(g.ids) ? g.ids.length : 0);
+      line2.textContent = `${time}${time && loc ? " · " : ""}${loc}${(time || loc) ? " · " : ""}${cnt}개`;
+
+      main.appendChild(line1);
+      main.appendChild(line2);
+
+      left.appendChild(gcb);
+      left.appendChild(main);
+
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "cm-toggle";
+      toggle.textContent = "상세";
+
+      const sub = document.createElement("div");
+      sub.className = "cm-sublist";
+
+      const items = Array.isArray(g.items) ? g.items : [];
+      items.forEach((it) => {
+        const si = document.createElement("div");
+        si.className = "cm-subitem";
+
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = true;
+        cb.dataset.deleteId = String(it.id);
+
+        const meta = document.createElement("div");
+        meta.style.minWidth = "0";
+
+        const l1 = document.createElement("div");
+        l1.className = "cm-line1";
+        l1.textContent = it.title || "";
+
+        const l2 = document.createElement("div");
+        l2.className = "cm-line2";
+        l2.textContent = fmtRange(it.start, it.end) + (it.location ? ` · ${it.location}` : "");
+
+        meta.appendChild(l1);
+        meta.appendChild(l2);
+
+        si.appendChild(cb);
+        si.appendChild(meta);
+        sub.appendChild(si);
+      });
+
+      gcb.addEventListener("change", () => {
+        sub.querySelectorAll("input[type=checkbox][data-delete-id]").forEach(x => {
+          x.checked = gcb.checked;
+          x.indeterminate = false;
+        });
+      });
+
+      sub.addEventListener("change", () => {
+        const cbs = Array.from(sub.querySelectorAll("input[type=checkbox][data-delete-id]"));
+        const all = cbs.every(x => x.checked);
+        const any = cbs.some(x => x.checked);
+        gcb.checked = any;
+        gcb.indeterminate = any && !all;
+      });
+
+      toggle.addEventListener("click", () => {
+        const open = sub.style.display === "block";
+        sub.style.display = open ? "none" : "block";
+        toggle.textContent = open ? "상세" : "접기";
+      });
+
+      top.appendChild(left);
+      top.appendChild(toggle);
+
+      row.appendChild(top);
+      row.appendChild(sub);
+      host.appendChild(row);
+    });
+
+    openConfirm();
+  }
+
+  // ✅ 실행 버튼/Enter: 바로 추가/삭제 X → 확인 모달 오픈
+  async function runUnifiedNlpAction(){
+    const input = document.getElementById("nlp-unified-text");
+    const toggle = document.getElementById("nlp-mode-toggle");
+    const text = input?.value?.trim() ?? "";
+    if(!text){
+      alert("문장을 입력해주세요.");
+      return;
+    }
+
+    const isDelete = !!toggle?.checked;
+    setUnifiedBusy(true);
+    try{
+      if(isDelete){
+        await openDeleteConfirm(text);
+      }else{
+        await openAddConfirm(text);
+      }
+    }catch(err){
+      console.error(err);
+      alert("실행 중 오류가 발생했습니다. 다시 시도해주세요.");
+    }finally{
+      setUnifiedBusy(false);
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    // Calendar init
+    const calendarEl = document.getElementById("calendar");
+    selectedDateStr = toDateStrLocal(new Date());
+    setSelectedDate(selectedDateStr);
+
+    calendar = new FullCalendar.Calendar(calendarEl, {
+      initialView:"dayGridMonth",
+      locale:"ko",
+      height:"auto",
+      headerToolbar:false,
+      fixedWeekCount:false,
+      dayMaxEventRows:4,
+
+      dayCellClassNames: (arg) => {
+        const ds = toDateStrLocal(arg.date);
+        return (ds === selectedDateStr) ? ["selected-day"] : [];
+      },
+      dayHeaderClassNames: (arg) => {
+        const ds = toDateStrLocal(arg.date);
+        return (ds === selectedDateStr) ? ["selected-day-header"] : [];
+      },
+
+      events: async (info, success, failure) => {
+        try{
+          const res = await fetch(apiBase + "/events");
+          const data = await res.json();
+          success(data.map(ev => ({
+            id:String(ev.id),
+            title:ev.title,
+            start:ev.start,
+            end:ev.end || null,
+            extendedProps:{ location: ev.location || "" }
+          })));
+        }catch(err){
+          console.error(err);
+          failure(err);
+        }
+      },
+
+      dateClick: (info) => {
+        setSelectedDate(info.dateStr);
+        loadEventListForDate(selectedDateStr);
+
+        const startInput = document.getElementById("start");
+        startInput.value = info.dateStr + "T09:00";
+        startInput.focus();
+      },
+
+      eventClick: (info) => {
+        const ev = info.event;
+        const startStr = ev.start ? ev.start.toLocaleString() : "";
+        const endStr = ev.end ? ev.end.toLocaleString() : "";
+        const loc = ev.extendedProps.location;
+        let msg = `제목: ${ev.title}\\n시작: ${startStr}`;
+        if(endStr) msg += `\\n종료: ${endStr}`;
+        if(loc) msg += `\\n장소: ${loc}`;
+        alert(msg);
+      },
+
+      datesSet: (info) => {
+        updateYearMonthLabel(info.view.calendar.getDate());
+        setActiveView(info.view.type);
+        syncSelectedDayHighlight();
+      }
+    });
+
+    calendar.render();
+    syncSelectedDayHighlight();
+    updateYearMonthLabel(calendar.getDate());
+    setActiveView(calendar.view.type);
+
+    // initial right list
+    loadEventListForDate(selectedDateStr);
+
+    // topbar controls
+    document.getElementById("cal-prev").addEventListener("click", () => calendar.prev());
+    document.getElementById("cal-next").addEventListener("click", () => calendar.next());
+    document.getElementById("cal-today").addEventListener("click", () => {
+      calendar.today();
+      const d = toDateStrLocal(new Date());
+      setSelectedDate(d);
+      loadEventListForDate(d);
+    });
+
+    document.querySelectorAll("[data-cal-view]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const view = btn.dataset.calView;
+        calendar.changeView(view);
+        setActiveView(view);
+      });
+    });
+
+    // quick add
+    // NLP auto-grow
+    setupShadowAutoGrow("nlp-unified-text");
+
+    const toggle = document.getElementById("nlp-mode-toggle");
+    const actionBtn = document.getElementById("nlp-action-btn");
+
+    setUnifiedMode(toggle.checked);
+    toggle.addEventListener("change", () => setUnifiedMode(toggle.checked));
+    actionBtn.addEventListener("click", runUnifiedNlpAction);
+
+    const ta = document.getElementById("nlp-unified-text");
+    if(ta){
+      ta.addEventListener("compositionstart", () => { nlpInputComposing = true; });
+      ta.addEventListener("compositionend", () => { nlpInputComposing = false; });
+      ta.addEventListener("blur", () => { nlpInputComposing = false; });
+
+      ta.addEventListener("keydown", (e) => {
+        if(e.key === "Enter" && !e.shiftKey){
+          if(e.isComposing || nlpInputComposing) return;
+          e.preventDefault();
+          runUnifiedNlpAction();
+        }
+      });
+    }
+
+    // pill placeholders
+    function setupPillPlaceholder(inputId){
+      const input = document.getElementById(inputId);
+      const wrap = input?.closest(".pill-field");
+      const ph = wrap?.querySelector(".pill-placeholder");
+      if(!input || !ph) return;
+
+      const update = () => {
+        if(input.value && input.value.trim() !== ""){
+          ph.classList.add("hidden");
+          input.classList.add("has-value");
+        }else{
+          ph.classList.remove("hidden");
+          input.classList.remove("has-value");
+        }
+      };
+      input.addEventListener("input", update);
+      input.addEventListener("change", update);
+      update();
+    }
+    setupPillPlaceholder("start");
+    setupPillPlaceholder("end");
+    setupPillPlaceholder("location");
+
+    // confirm modal bindings
+    document.getElementById("confirm-close").addEventListener("click", closeConfirm);
+    document.getElementById("confirm-cancel").addEventListener("click", closeConfirm);
+    document.getElementById("confirm-overlay").addEventListener("click", (e) => {
+      if(e.target && e.target.id === "confirm-overlay") closeConfirm();
+    });
+
+    document.getElementById("confirm-ok").addEventListener("click", async () => {
+      if(confirmState.mode === "add"){
+        const topChecks = Array.from(document.querySelectorAll("input[type=checkbox][data-role='add-top']"));
+        const chosenIdx = topChecks
+          .filter(x => x.checked)
+          .map(x => parseInt(x.dataset.addIndex, 10))
+          .filter(n => Number.isFinite(n));
+
+        const occSelected = {};
+        document.querySelectorAll("input[type=checkbox][data-role='add-occurrence']").forEach(el => {
+          const addIdx = parseInt(el.dataset.addIndex || "", 10);
+          const occIdx = parseInt(el.dataset.addOccurrenceIndex || "", 10);
+          if(!Number.isFinite(addIdx) || !Number.isFinite(occIdx)) return;
+          if(!occSelected[addIdx]) occSelected[addIdx] = [];
+          if(el.checked){
+            occSelected[addIdx].push(occIdx);
+          }
+        });
+
+        const selected = chosenIdx.map(idx => {
+          const base = confirmState.addItems[idx];
+          if(!base) return null;
+
+          if((base.type || "").toLowerCase() === "recurring"){
+            const occList = occSelected[idx];
+            if(Array.isArray(occList) && occList.length > 0){
+              return { ...base, selected_occurrence_indexes: occList };
+            }
+            if(occSelected[idx] === undefined){
+              return base;
+            }
+            return null;
+          }
+          return base;
+        }).filter(Boolean);
+
+        if(selected.length === 0){
+          alert("추가할 항목을 선택해주세요.");
+          return;
+        }
+
+        const res = await fetch(apiBase + "/nlp-apply-add", {
+          method:"POST",
+          headers:{ "Content-Type":"application/json" },
+          body: JSON.stringify({ items: selected })
+        });
+
+        if(!res.ok){
+          alert("일정 추가 적용에 실패했습니다.");
+          return;
+        }
+
+        closeConfirm();
+
+        const input = document.getElementById("nlp-unified-text");
+        input.value = "";
+        input.dispatchEvent(new Event("input"));
+
+        await refreshAll();
+        return;
+      }
+
+      if(confirmState.mode === "delete"){
+        const ids = Array.from(document.querySelectorAll("input[type=checkbox][data-delete-id]"))
+          .filter(x => x.checked)
+          .map(x => parseInt(x.dataset.deleteId, 10))
+          .filter(n => Number.isFinite(n));
+
+        if(ids.length === 0){
+          alert("삭제할 항목을 선택해주세요.");
+          return;
+        }
+
+        const res = await fetch(apiBase + "/delete-by-ids", {
+          method:"POST",
+          headers:{ "Content-Type":"application/json" },
+          body: JSON.stringify({ ids })
+        });
+
+        if(!res.ok){
+          alert("일정 삭제 적용에 실패했습니다.");
+          return;
+        }
+
+        closeConfirm();
+
+        const input = document.getElementById("nlp-unified-text");
+        input.value = "";
+        input.dispatchEvent(new Event("input"));
+
+        await refreshAll();
+        return;
+      }
+    });
+  });
+</script>
+</body>
+</html>
