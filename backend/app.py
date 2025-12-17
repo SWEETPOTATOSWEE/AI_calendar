@@ -109,14 +109,24 @@ class EventCreate(BaseModel):
   created_at: Optional[str] = None
 
 
+class EventUpdate(BaseModel):
+  title: Optional[str] = None
+  start: Optional[str] = None
+  end: Optional[str] = None
+  location: Optional[str] = None
+  all_day: Optional[bool] = None
+
+
 class NaturalText(BaseModel):
   text: str
+  images: Optional[List[str]] = None
 
 
 class NaturalTextWithScope(BaseModel):
   text: str
   start_date: Optional[str] = None
   end_date: Optional[str] = None
+  images: Optional[List[str]] = None
 
 
 class DeleteResult(BaseModel):
@@ -139,6 +149,23 @@ next_id: int = 1
 UNDO_RETENTION_DAYS = 14
 GOOGLE_RECENT_DAYS = 14
 MAX_SCOPE_DAYS = 365
+MAX_IMAGE_ATTACHMENTS = 5
+MAX_IMAGE_DATA_URL_CHARS = 4_500_000  # 약 3.4MB base64
+IMAGE_TOO_LARGE_MESSAGE = "첨부한 이미지가 너무 큽니다. 이미지는 약 3MB 이하로 축소해 주세요."
+
+USD_TO_KRW = 1450.0
+MODEL_PRICING = {
+    "gpt-5-nano": {
+        "input_per_m": 0.05,
+        "cached_input_per_m": 0.01,
+        "output_per_m": 0.4,
+    },
+    "gpt-5-mini": {
+        "input_per_m": 0.25,
+        "cached_input_per_m": 0.03,
+        "output_per_m": 2.0,
+    },
+}
 
 
 def _save_events_to_disk() -> None:
@@ -329,6 +356,33 @@ def is_all_day_span(start_iso: Optional[str],
   return False
 
 
+def _validate_image_payload(images: Optional[List[str]]) -> List[str]:
+  if not images:
+    return []
+
+  allowed_prefixes = (
+      "data:image/png;base64,",
+      "data:image/jpeg;base64,",
+      "data:image/webp;base64,",
+  )
+  cleaned: List[str] = []
+  for raw in images:
+    if not isinstance(raw, str):
+      continue
+    data = raw.strip()
+    if not data:
+      continue
+    if not any(data.startswith(prefix) for prefix in allowed_prefixes):
+      raise HTTPException(status_code=400,
+                          detail="이미지는 data:image/...;base64 형식이어야 합니다.")
+    if len(data) > MAX_IMAGE_DATA_URL_CHARS:
+      raise HTTPException(status_code=400, detail=IMAGE_TOO_LARGE_MESSAGE)
+    cleaned.append(data)
+    if len(cleaned) >= MAX_IMAGE_ATTACHMENTS:
+      break
+  return cleaned
+
+
 def _compute_all_day_bounds(start_iso: str,
                             end_iso: Optional[str]) -> Tuple[date, date]:
   start_date, _ = _split_iso_date_time(start_iso)
@@ -383,6 +437,42 @@ def _normalize_single_event_times(
   end_iso = _normalize_end_datetime(end_raw)
   all_day_flag = is_all_day_span(start_iso, end_iso)
   return (start_iso, end_iso, all_day_flag)
+
+
+def _coerce_patch_start(value: Any) -> Optional[str]:
+  if value is None:
+    return None
+  if not isinstance(value, str):
+    raise HTTPException(status_code=400, detail="시작 시각 형식이 잘못되었습니다.")
+  candidate = value.strip()
+  if not candidate:
+    return None
+  if not ISO_DATETIME_RE.match(candidate):
+    raise HTTPException(status_code=400, detail="시작 시각 형식이 잘못되었습니다.")
+  return candidate
+
+
+def _coerce_patch_end(value: Any) -> Optional[str]:
+  if value is None:
+    return None
+  if not isinstance(value, str):
+    raise HTTPException(status_code=400, detail="종료 시각 형식이 잘못되었습니다.")
+  candidate = value.strip()
+  if not candidate:
+    return None
+  normalized = _normalize_end_datetime(candidate)
+  if not normalized:
+    raise HTTPException(status_code=400, detail="종료 시각 형식이 잘못되었습니다.")
+  return normalized
+
+
+def _clean_optional_str(value: Any) -> Optional[str]:
+  if value is None:
+    return None
+  if not isinstance(value, str):
+    return None
+  trimmed = value.strip()
+  return trimmed or None
 
 
 def _parse_scope_dates(start_str: Optional[str],
@@ -507,6 +597,7 @@ EVENTS_SYSTEM_PROMPT_TEMPLATE = """너는 한국어 일정 문장을 구조화�
 - 단일+반복 혼합이면 둘 다 넣는다.
 - title에는 시간/장소를 넣지 않는다.
 - 상대 날짜는 기준 날짜로 계산
+- weekdays는 0=월요일, 6=일요일
 - 시간 정보가 없으면 recurring의 time과 duration_minutes는 null.
 - 사용자의 요청이 없다면 과거 이벤트는 생성하지 않음
 """
@@ -515,6 +606,111 @@ EVENTS_SYSTEM_PROMPT_TEMPLATE = """너는 한국어 일정 문장을 구조화�
 def build_events_system_prompt() -> str:
   today = datetime.now(SEOUL).date().isoformat()
   return EVENTS_SYSTEM_PROMPT_TEMPLATE.replace("{TODAY}", today)
+
+
+EVENTS_MULTIMODAL_PROMPT_TEMPLATE = """너는 한국어 일정 정보를 텍스트와 이미지에서 구조화하는 파서다. 반드시 JSON 한 개만 반환한다. 설명 금지.
+입력 특징:
+- 사용자가 항공권/티켓/메신저/시간표 등 캡처 이미지를 제공한다.
+- 검은 박스로 가린 영역이나 알아볼 수 없는 부분은 추측하지 말고 무시한다.
+- 텍스트 설명이 함께 있을 수 있으므로 반드시 모두 참고한다.
+
+기준 정보:
+- 기준 날짜: {TODAY}
+- 시간대: Asia/Seoul
+
+출력 스키마:
+{
+  "items": [
+    {
+      "type": "single",
+      "title": string,
+      "start": "YYYY-MM-DDTHH:MM",
+      "end": "YYYY-MM-DDTHH:MM" | null,
+      "location": string | null
+    },
+    {
+      "type": "recurring",
+      "title": string,
+      "start_date": "YYYY-MM-DD",
+      "end_date": "YYYY-MM-DD",
+      "weekdays": [0,1,2,3,4,5,6],
+      "time": "HH:MM" | null,
+      "duration_minutes": number | null,
+      "location": string | null
+    }
+  ]
+}
+
+규칙:
+- 여러 일정이면 single을 여러 개.
+- 반복이 있으면 recurring.
+- 단일+반복 혼합이면 둘 다 넣는다.
+- title에는 시간/장소를 넣지 않는다.
+- 상대 날짜는 기준 날짜로 계산
+- weekdays는 0=월요일, 6=일요일
+- 이미지 또는 텍스트에 정보가 없으면 null 처리
+- 가려진 구간이나 알아볼 수 없는 내용은 제외
+- 사용자의 요청이 없다면 과거 이벤트는 생성하지 않음
+"""
+
+
+def build_events_multimodal_prompt() -> str:
+  today = datetime.now(SEOUL).date().isoformat()
+  return EVENTS_MULTIMODAL_PROMPT_TEMPLATE.replace("{TODAY}", today)
+
+
+def _build_events_user_payload(text: str, has_images: bool) -> str:
+  lines = []
+  if text:
+    lines.append(f"문장: {text}")
+  else:
+    lines.append("문장: (제공되지 않음)")
+  if has_images:
+    lines.append("첨부 이미지를 참고해서 일정 정보를 추출해줘.")
+  return "\n".join(lines)
+
+
+def _get_detail_value(detail: Any, key: str) -> Optional[int]:
+  if detail is None:
+    return None
+  if isinstance(detail, dict):
+    value = detail.get(key)
+  else:
+    value = getattr(detail, key, None)
+  try:
+    return int(value)
+  except (TypeError, ValueError):
+    return None
+
+
+def _estimate_llm_cost(model_name: str, prompt_tokens: Optional[int],
+                       cached_prompt_tokens: Optional[int],
+                       completion_tokens: Optional[int]) -> Optional[Tuple[float,
+                                                                           float]]:
+  pricing = MODEL_PRICING.get(model_name)
+  if not pricing:
+    return None
+
+  prompt = max(int(prompt_tokens or 0), 0)
+  cached = max(int(cached_prompt_tokens or 0), 0)
+  cached = min(cached, prompt)
+  uncached = max(prompt - cached, 0)
+  completion = max(int(completion_tokens or 0), 0)
+
+  usd = ((uncached / 1_000_000) * pricing["input_per_m"] +
+         (cached / 1_000_000) * pricing["cached_input_per_m"] +
+         (completion / 1_000_000) * pricing["output_per_m"])
+  krw = usd * USD_TO_KRW
+  return usd, krw
+
+
+def _invoke_event_parser(kind: str, text: str,
+                         images: List[str]) -> Dict[str, Any]:
+  payload = _build_events_user_payload(text, bool(images))
+  if images:
+    return _chat_multimodal_json(kind, build_events_multimodal_prompt(),
+                                 payload, images)
+  return _chat_json(kind, build_events_system_prompt(), payload)
 
 
 def build_delete_system_prompt() -> str:
@@ -539,6 +735,7 @@ def _debug_print(
     raw_content: str,
     latency_ms: Optional[float] = None,
     usage: Optional[Dict[str, Any]] = None,
+    model_name: str = "",
 ) -> None:
   if not LLM_DEBUG or kind == "preview":
     return
@@ -556,7 +753,15 @@ def _debug_print(
     p = usage.get("prompt")
     c = usage.get("completion")
     t = usage.get("total")
-    _log_debug(f"[LLM DEBUG] usage: prompt={p}, completion={c}, total={t}")
+    cached_prompt = usage.get("cached_prompt")
+    _log_debug(
+        f"[LLM DEBUG] usage: prompt={p}, completion={c}, total={t}, cached_prompt={cached_prompt}"
+    )
+    cost = _estimate_llm_cost(model_name, p, cached_prompt, c)
+    if cost:
+      usd, krw = cost
+      _log_debug(
+          f"[LLM DEBUG] cost: ${usd:.6f} ≈ ₩{krw:,.0f} (model={model_name})")
 
 
 def _safe_json_loads(raw: str) -> Dict[str, Any]:
@@ -582,6 +787,11 @@ def _safe_json_loads(raw: str) -> Dict[str, Any]:
   return {}
 
 
+def _current_reference_line() -> str:
+  now = datetime.now(SEOUL)
+  return f"기준 시각: {now.strftime('%Y-%m-%d')} (Asia/Seoul)\n"
+
+
 def _chat_json(kind: str, system_prompt: str,
                user_text: str) -> Dict[str, Any]:
   """
@@ -591,9 +801,7 @@ def _chat_json(kind: str, system_prompt: str,
     """
   c = get_client()
 
-  now = datetime.now(SEOUL)
-  ref_line = f"기준 시각: {now.strftime('%Y-%m-%d')} (Asia/Seoul)\n"
-  input_text = ref_line + user_text
+  input_text = _current_reference_line() + user_text
 
   started = time.perf_counter()
   try:
@@ -621,14 +829,87 @@ def _chat_json(kind: str, system_prompt: str,
     usage_dict: Optional[Dict[str, Any]] = None
     usage_obj = getattr(completion, "usage", None)
     if usage_obj is not None:
+      prompt_details = getattr(usage_obj, "prompt_tokens_details", None)
+      cached_prompt = (_get_detail_value(prompt_details, "cached_tokens")
+                       or _get_detail_value(prompt_details,
+                                            "cached_prompt_tokens"))
       usage_dict = {
           "prompt": getattr(usage_obj, "prompt_tokens", None),
           "completion": getattr(usage_obj, "completion_tokens", None),
           "total": getattr(usage_obj, "total_tokens", None),
+          "cached_prompt": cached_prompt,
       }
 
     _debug_print(kind, user_text, system_prompt, raw_content, latency_ms,
-                 usage_dict)
+                 usage_dict, "gpt-5-nano")
+    return _safe_json_loads(raw_content)
+
+  except Exception as e:
+    _log_debug(f"[LLM DEBUG] exception: {repr(e)}")
+    raise
+
+
+def _chat_multimodal_json(kind: str,
+                          system_prompt: str,
+                          user_text: str,
+                          images: List[str]) -> Dict[str, Any]:
+  c = get_client()
+
+  user_parts: List[Dict[str, Any]] = [{
+      "type": "text",
+      "text": _current_reference_line() + user_text
+  }]
+
+  for img in images:
+    user_parts.append({
+        "type": "image_url",
+        "image_url": {
+            "url": img
+        }
+    })
+
+  started = time.perf_counter()
+  try:
+    completion = c.chat.completions.create(
+        model="gpt-5-mini",
+        messages=[
+            {
+                "role": "system",
+                "content": [{
+                    "type": "text",
+                    "text": system_prompt
+                }]
+            },
+            {
+                "role": "user",
+                "content": user_parts
+            },
+        ],
+        max_completion_tokens=10000,
+    )
+
+    latency_ms = (time.perf_counter() - started) * 1000.0
+
+    choice = completion.choices[0]
+    content = choice.message.content
+    raw_content = content if isinstance(content, str) else ""
+
+    usage_dict: Optional[Dict[str, Any]] = None
+    usage_obj = getattr(completion, "usage", None)
+    if usage_obj is not None:
+      prompt_details = getattr(usage_obj, "prompt_tokens_details", None)
+      cached_prompt = (_get_detail_value(prompt_details, "cached_tokens")
+                       or _get_detail_value(prompt_details,
+                                            "cached_prompt_tokens"))
+      usage_dict = {
+          "prompt": getattr(usage_obj, "prompt_tokens", None),
+          "completion": getattr(usage_obj, "completion_tokens", None),
+          "total": getattr(usage_obj, "total_tokens", None),
+          "cached_prompt": cached_prompt,
+      }
+
+    _debug_print(kind, user_text, system_prompt, raw_content, latency_ms,
+                 usage_dict, "gpt-5-mini")
     return _safe_json_loads(raw_content)
 
   except Exception as e:
@@ -878,6 +1159,65 @@ def gcal_create_single_event(title: str,
   except Exception as e:
     _log_debug(f"[GCAL] create single event error: {e}")
     return None
+
+
+def _build_gcal_event_body(title: Optional[str],
+                           start_iso: Optional[str],
+                           end_iso: Optional[str],
+                           location: Optional[str],
+                           all_day: Optional[bool]) -> Dict[str, Any]:
+  if not isinstance(start_iso, str) or not ISO_DATETIME_RE.match(start_iso):
+    raise ValueError("Invalid start time for Google Calendar update.")
+
+  use_all_day = bool(all_day)
+  if all_day is None:
+    use_all_day = is_all_day_span(start_iso, end_iso)
+
+  body: Dict[str, Any] = {}
+  if title is not None:
+    body["summary"] = title
+  if location is not None:
+    body["location"] = location
+
+  if use_all_day:
+    start_date, end_exclusive = _compute_all_day_bounds(start_iso, end_iso)
+    body["start"] = {"date": start_date.strftime("%Y-%m-%d")}
+    body["end"] = {"date": end_exclusive.strftime("%Y-%m-%d")}
+  else:
+    start_dt = datetime.strptime(start_iso,
+                                 "%Y-%m-%dT%H:%M").replace(tzinfo=SEOUL)
+    if end_iso:
+      end_dt = datetime.strptime(end_iso,
+                                 "%Y-%m-%dT%H:%M").replace(tzinfo=SEOUL)
+    else:
+      end_dt = start_dt + timedelta(hours=1)
+    body["start"] = {
+        "dateTime": start_dt.isoformat(),
+        "timeZone": "Asia/Seoul"
+    }
+    body["end"] = {
+        "dateTime": end_dt.isoformat(),
+        "timeZone": "Asia/Seoul"
+    }
+  return body
+
+
+def gcal_update_event(event_id: str,
+                      title: Optional[str],
+                      start_iso: Optional[str],
+                      end_iso: Optional[str],
+                      location: Optional[str],
+                      all_day: Optional[bool]) -> None:
+  if not event_id:
+    raise ValueError("event_id is empty")
+  if not is_gcal_configured():
+    raise RuntimeError("Google Calendar is not configured.")
+
+  service = get_gcal_service()
+  body = _build_gcal_event_body(title, start_iso, end_iso, location, all_day)
+  service.events().patch(calendarId=GOOGLE_CALENDAR_ID,
+                         eventId=event_id,
+                         body=body).execute()
 
 
 def gcal_create_recurring_event(item: Dict[str, Any]) -> Optional[str]:
@@ -1141,17 +1481,19 @@ def fetch_recent_google_events(days: int = GOOGLE_RECENT_DAYS) -> List[Dict[str,
 # -------------------------
 # 자연어 → 일정 생성(기존)
 # -------------------------
-def create_events_from_natural_text_core(text: str) -> List[Event]:
+def create_events_from_natural_text_core(text: str,
+                                         images: Optional[List[str]] = None) -> List[Event]:
+  images = images or []
   t = normalize_text(text)
-  if not t:
-    raise HTTPException(status_code=400, detail="Empty text")
+  if not t and not images:
+    raise HTTPException(status_code=400, detail="문장이나 이미지를 입력해주세요.")
 
   if client is None:
     raise HTTPException(
         status_code=500,
         detail="LLM client is not configured (OPENAI_API_KEY 미설정)")
 
-  data = _chat_json("preview", build_events_system_prompt(), f"문장: {t}")
+  data = _invoke_event_parser("preview", t, images)
   items = data.get("items")
   if not isinstance(items, list):
     raise HTTPException(status_code=502, detail="LLM 응답 형식 오류입니다.")
@@ -1257,17 +1599,20 @@ def create_events_from_natural_text_core(text: str) -> List[Event]:
 # -------------------------
 # NLP Preview (추가 미리보기)
 # -------------------------
-def preview_events_from_natural_text_core(text: str) -> Dict[str, Any]:
+def preview_events_from_natural_text_core(
+    text: str,
+    images: Optional[List[str]] = None) -> Dict[str, Any]:
+  images = images or []
   t = normalize_text(text)
-  if not t:
-    raise HTTPException(status_code=400, detail="Empty text")
+  if not t and not images:
+    raise HTTPException(status_code=400, detail="문장이나 이미지를 입력해주세요.")
 
   if client is None:
     raise HTTPException(
         status_code=500,
         detail="LLM client is not configured (OPENAI_API_KEY 미설정)")
 
-  data = _chat_json("parse", build_events_system_prompt(), f"문장: {t}")
+  data = _invoke_event_parser("parse", t, images)
   items = data.get("items")
   if not isinstance(items, list) or len(items) == 0:
     raise HTTPException(status_code=422, detail="미리보기를 만들 수 없습니다.")
@@ -1804,6 +2149,47 @@ def google_delete_event(event_id: str):
                         detail=f"Google event 삭제 실패: {exc}") from exc
 
 
+@app.patch("/api/google/events/{event_id}")
+def google_update_event_api(event_id: str, payload: EventUpdate):
+  if not event_id:
+    raise HTTPException(status_code=400, detail="event_id가 없습니다.")
+  if not is_gcal_configured():
+    raise HTTPException(status_code=400,
+                        detail="Google Calendar 연동이 설정되지 않았습니다.")
+
+  start_iso = _coerce_patch_start(payload.start)
+  if not start_iso:
+    raise HTTPException(status_code=400, detail="시작 시각은 필수입니다.")
+
+  end_iso = None
+  if payload.end is not None:
+    end_iso = _coerce_patch_end(payload.end)
+
+  title_value: Optional[str] = None
+  if payload.title is not None:
+    title_value = payload.title.strip()
+    if not title_value:
+      raise HTTPException(status_code=400, detail="제목을 비울 수 없습니다.")
+
+  location_value: Optional[str] = None
+  if payload.location is not None:
+    cleaned = _clean_optional_str(payload.location)
+    location_value = "" if cleaned is None else cleaned
+
+  all_day_flag = payload.all_day
+  if all_day_flag is None:
+    all_day_flag = is_all_day_span(start_iso, end_iso)
+
+  try:
+    gcal_update_event(event_id, title_value, start_iso, end_iso,
+                      location_value, bool(all_day_flag))
+  except Exception as exc:
+    raise HTTPException(status_code=502,
+                        detail=f"Google event 업데이트 실패: {exc}") from exc
+
+  return {"ok": True}
+
+
 @app.post("/api/events", response_model=Event)
 def create_event(event_in: EventCreate):
   google_event_id: Optional[str] = None
@@ -1836,10 +2222,64 @@ def delete_event(event_id: int):
   return {"ok": True}
 
 
+@app.patch("/api/events/{event_id}", response_model=Event)
+def update_event(event_id: int, payload: EventUpdate):
+  target = next((e for e in events if e.id == event_id), None)
+  if target is None:
+    raise HTTPException(status_code=404, detail="일정을 찾을 수 없습니다.")
+
+  new_title = target.title
+  if payload.title is not None:
+    new_title = payload.title.strip()
+    if not new_title:
+      raise HTTPException(status_code=400, detail="제목을 입력해 주세요.")
+
+  new_start = target.start
+  if payload.start is not None:
+    new_start = _coerce_patch_start(payload.start)
+    if not new_start:
+      raise HTTPException(status_code=400, detail="시작 시각 형식이 잘못되었습니다.")
+
+  new_end = target.end
+  if payload.end is not None:
+    new_end = _coerce_patch_end(payload.end)
+
+  location_provided = payload.location is not None
+  new_location = target.location
+  if location_provided:
+    new_location = _clean_optional_str(payload.location)
+
+  if not new_start:
+    raise HTTPException(status_code=400, detail="시작 시각을 설정할 수 없습니다.")
+
+  new_all_day = payload.all_day
+  if new_all_day is None:
+    new_all_day = is_all_day_span(new_start, new_end)
+
+  if target.google_event_id:
+    try:
+      gcal_location = None
+      if location_provided:
+        gcal_location = "" if new_location is None else new_location
+      gcal_update_event(target.google_event_id, new_title, new_start, new_end,
+                        gcal_location, bool(new_all_day))
+    except Exception as exc:
+      _log_debug(f"[GCAL] local event update failed: {exc}")
+
+  target.title = new_title
+  target.start = new_start
+  target.end = new_end
+  target.location = new_location
+  target.all_day = bool(new_all_day)
+  _save_events_to_disk()
+  return target
+
+
 @app.post("/api/nlp-events", response_model=List[Event])
 def create_events_from_natural_text(body: NaturalText):
   try:
-    return create_events_from_natural_text_core(body.text)
+    images = _validate_image_payload(body.images)
+    return create_events_from_natural_text_core(body.text, images)
   except HTTPException:
     raise
   except Exception as e:
@@ -1850,7 +2290,8 @@ def create_events_from_natural_text(body: NaturalText):
 @app.post("/api/nlp-event", response_model=Event)
 def create_event_from_natural_text_compat(body: NaturalText):
   try:
-    created = create_events_from_natural_text_core(body.text)
+    images = _validate_image_payload(body.images)
+    created = create_events_from_natural_text_core(body.text, images)
     return created[0]
   except HTTPException:
     raise
@@ -1862,7 +2303,8 @@ def create_event_from_natural_text_compat(body: NaturalText):
 @app.post("/api/nlp-preview")
 def nlp_preview(body: NaturalText):
   try:
-    return preview_events_from_natural_text_core(body.text)
+    images = _validate_image_payload(body.images)
+    return preview_events_from_natural_text_core(body.text, images)
   except HTTPException:
     raise
   except Exception as e:

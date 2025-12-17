@@ -266,9 +266,16 @@
       border-radius:var(--radius);
       box-shadow:var(--shadow);
       padding:10px;
+      position:relative;
+      overflow:hidden;
+    }
+    .calendar-main-content{
+      position:relative;
       display:flex;
       flex-direction:column;
       gap:12px;
+      min-height:100%;
+      transition:filter .4s ease;
     }
     #calendar-container .calendar-events-panel{
       margin:0;
@@ -360,6 +367,15 @@
       border-color: rgba(47,111,235,.3);
       color:#15233c;
     }
+
+    body.global-loading-active #calendar-container .calendar-main-content{
+      filter:blur(10px);
+      pointer-events:none;
+    }
+    body.global-loading-active #calendar-container #global-loading-overlay{
+      filter:none;
+    }
+
 
     /* ===== NLP Composer ===== */
     .composer textarea{
@@ -475,6 +491,163 @@
     }
     @keyframes spin{ to{ transform:rotate(360deg); } }
 
+    .attachment-bar{
+      margin-top:12px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+    }
+    .attach-btn{
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      height:32px;
+      padding:0 12px;
+      border-radius:10px;
+      border:1px solid var(--border);
+      background:#fff;
+      font-weight:800;
+      color:var(--text);
+      cursor:pointer;
+      font-size:13px;
+    }
+    .attach-btn svg{
+      width:16px;
+      height:16px;
+      fill:currentColor;
+    }
+    .attach-btn:hover{ background:#f2f2f0; }
+    .attach-hint{
+      font-size:12px;
+      color:var(--muted);
+    }
+    .image-attachments{
+      margin-top:10px;
+      display:flex;
+      flex-wrap:wrap;
+      gap:10px;
+    }
+    .image-chip{
+      width:92px;
+      border:1px solid var(--border);
+      border-radius:12px;
+      background:#fff;
+      padding:6px;
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+    }
+    .image-chip img{
+      width:100%;
+      height:60px;
+      object-fit:cover;
+      border-radius:8px;
+      border:1px solid rgba(0,0,0,.05);
+    }
+    .image-chip-actions{
+      display:flex;
+      gap:4px;
+    }
+    .image-chip-actions button{
+      flex:1 1 auto;
+      border:1px solid var(--border);
+      border-radius:8px;
+      background:#fff;
+      font-size:11px;
+      font-weight:700;
+      cursor:pointer;
+      padding:2px 0;
+    }
+    .image-chip-actions button:hover{
+      background:#f2f2f0;
+    }
+
+    #image-editor-overlay{
+      position:fixed;
+      inset:0;
+      z-index:2000;
+      background:rgba(15,18,20,.65);
+      display:none;
+      align-items:center;
+      justify-content:center;
+      padding:24px;
+    }
+    #image-editor-overlay.active{ display:flex; }
+    .image-editor-modal{
+      background:#fff;
+      border-radius:16px;
+      width:min(920px, 96vw);
+      max-height:90vh;
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+      padding:16px;
+    }
+    .image-editor-head{
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+    }
+    .image-editor-title{
+      font-size:18px;
+      font-weight:800;
+    }
+    .image-editor-meta{
+      font-size:13px;
+      color:var(--muted);
+    }
+    .image-editor-canvas{
+      border:1px solid var(--border);
+      border-radius:14px;
+      background:#f9f9f7;
+      padding:12px;
+      overflow:auto;
+      flex:1 1 auto;
+    }
+    .image-editor-canvas-inner{
+      position:relative;
+      display:inline-block;
+    }
+    #image-editor-canvas,
+    #image-editor-selection{
+      display:block;
+      max-width:100%;
+      border-radius:10px;
+    }
+    #image-editor-selection{
+      position:absolute;
+      left:0;
+      top:0;
+      pointer-events:auto;
+      cursor:crosshair;
+      touch-action:none;
+    }
+    .image-editor-foot{
+      display:flex;
+      align-items:center;
+      gap:10px;
+    }
+    .image-editor-foot .spacer{
+      flex:1 1 auto;
+    }
+    .image-editor-foot button{
+      border-radius:10px;
+      border:1px solid var(--border);
+      background:#fff;
+      font-weight:800;
+      padding:6px 14px;
+      cursor:pointer;
+    }
+    .image-editor-foot button.primary{
+      background:var(--text);
+      border-color:var(--text);
+      color:#fff;
+    }
+    .image-editor-foot button:hover:not(.primary){
+      background:#f2f2f0;
+    }
+
     .scope-controls{
       margin-top:10px;
       padding:10px;
@@ -507,17 +680,18 @@
 
     /* ===== Quick add ===== */
     /* ===== Selected date list ===== */
-    #events-ul{list-style:none; padding:0; margin:0;}
-    #events-ul li{
-      padding:10px 6px;
-      border-bottom:1px solid var(--border);
-      display:flex;
-      align-items:center;
-      gap:10px;
-    }
-    .event-dot{
-      width:8px;
-      height:8px;
+  #events-ul{list-style:none; padding:0; margin:0;}
+  #events-ul li{
+    padding:10px 6px;
+    border-bottom:1px solid var(--border);
+    display:flex;
+    align-items:center;
+    gap:10px;
+    cursor:pointer;
+  }
+  .event-dot{
+    width:8px;
+    height:8px;
       border-radius:50%;
       background:var(--primary);
       flex:0 0 auto;
@@ -539,21 +713,26 @@
       overflow:hidden;
       text-overflow:ellipsis;
     }
-    .delete-btn{
-      border:1px solid var(--border);
-      background:#fff;
-      color:var(--muted);
-      font-weight:900;
+  .delete-btn{
+    border:1px solid var(--border);
+    background:#fff;
+    color:var(--muted);
+    font-weight:900;
       border-radius:10px;
       padding:7px 10px;
       cursor:pointer;
       flex:0 0 auto;
     }
-    .delete-btn:hover{
-      border-color: rgba(239,68,68,.35);
-      color:#8a1f1f;
-      background: rgba(239,68,68,.06);
-    }
+  .delete-btn:hover{
+    border-color: rgba(239,68,68,.35);
+    color:#8a1f1f;
+    background: rgba(239,68,68,.06);
+  }
+  .fc-event,
+  .fc-daygrid-event,
+  .fc-timegrid-event{
+    cursor:pointer;
+  }
 
     /* ===== Confirm Modal ===== */
     #confirm-overlay{
@@ -688,6 +867,12 @@
       overflow:hidden;
       text-overflow:ellipsis;
     }
+    .cm-line-location{
+      margin-top:4px;
+      font-size:12px;
+      font-weight:800;
+      color:var(--muted);
+    }
     .cm-mini{
       margin-top:6px;
       color:var(--muted);
@@ -718,7 +903,169 @@
       padding:8px 6px;
       border-radius:10px;
     }
-    .cm-subitem:hover{ background:#f7f7f5; }
+  .cm-subitem:hover{ background:#f7f7f5; }
+
+  .cm-editable{
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    cursor:pointer;
+    font-weight:900;
+  }
+  .cm-editable.editing{
+    cursor:text;
+  }
+  .cm-editable input{
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:4px 6px;
+    font-size:13px;
+    font-weight:800;
+    width:160px;
+  }
+  .cm-edit-icon{
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    width:18px;
+    height:18px;
+    border:0;
+    background:transparent;
+    padding:0;
+  }
+  .cm-edit-icon svg{
+    width:14px;
+    height:14px;
+    fill:var(--muted);
+  }
+  .cm-editable:hover .cm-edit-icon svg{
+    fill:var(--text);
+  }
+
+  #global-loading-overlay{
+    position:absolute;
+    inset:0;
+    background:rgba(0,0,0,.25);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    z-index:20;
+    opacity:0;
+    pointer-events:none;
+    transition:opacity .2s ease;
+  }
+  #global-loading-overlay.active{
+    opacity:1;
+    pointer-events:auto;
+  }
+  .global-loading-box{
+    background:#fff;
+    color:var(--text);
+    padding:18px 22px;
+    border-radius:14px;
+    border:1px solid var(--border);
+    box-shadow:0 8px 20px rgba(0,0,0,.12);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    margin:0 auto;
+    min-width:200px;
+    text-align:center;
+    font-weight:800;
+  }
+  .global-loading-text{
+    font-size:14px;
+    line-height:1.4;
+  }
+
+  #event-modal-overlay{
+    position:fixed;
+    inset:0;
+    background:rgba(0,0,0,.35);
+    display:none;
+    align-items:center;
+    justify-content:center;
+    padding:14px;
+    z-index:70;
+  }
+  #event-modal-overlay.active{ display:flex; }
+  #event-modal{
+    width:min(520px, 96vw);
+    background:#fff;
+    border:1px solid var(--border);
+    border-radius:16px;
+    padding:16px;
+    display:flex;
+    flex-direction:column;
+    gap:16px;
+  }
+  .event-modal-head{
+    display:flex;
+    align-items:flex-start;
+    justify-content:space-between;
+    gap:10px;
+  }
+  .event-modal-title{
+    font-size:18px;
+    font-weight:900;
+    margin-bottom:4px;
+  }
+  .event-modal-head button{
+    border:0;
+    background:transparent;
+    cursor:pointer;
+    font-size:20px;
+  }
+  .event-modal-body{
+    display:flex;
+    flex-direction:column;
+    gap:12px;
+  }
+  .event-field{
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+  }
+  .event-field label{
+    font-size:12px;
+    font-weight:800;
+    color:var(--muted);
+  }
+  .event-field input,
+  .event-field textarea,
+  .event-field select{
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:8px;
+    font-size:14px;
+    font-family:inherit;
+  }
+  .event-field-row{
+    display:flex;
+    gap:8px;
+    flex-wrap:wrap;
+  }
+  .event-modal-foot{
+    display:flex;
+    justify-content:flex-end;
+    gap:10px;
+  }
+  .event-modal-foot button{
+    border-radius:10px;
+    border:1px solid var(--border);
+    background:#fff;
+    font-weight:800;
+    padding:6px 12px;
+    cursor:pointer;
+  }
+  .event-modal-foot button.primary{
+    background:var(--text);
+    color:#fff;
+    border-color:var(--text);
+  }
+  .event-modal-foot button:hover:not(.primary){
+    background:#f2f2f0;
+  }
 
     /* Recent modal */
     #recent-overlay{
@@ -860,17 +1207,24 @@
   <!-- Calendar LEFT -->
   <main>
     <div id="calendar-container">
-      <div id="calendar"></div>
-      <div class="panel calendar-events-panel" id="events-list">
-        <div class="panel-title">
-          <h2>선택한 날짜 일정</h2>
-          <div class="sub">
-            <span id="selected-date-label"></span>
-            <span class="sub-divider">·</span>
-            <span id="selected-count-label"></span>
+      <div class="calendar-main-content">
+        <div id="calendar"></div>
+        <div class="panel calendar-events-panel" id="events-list">
+          <div class="panel-title">
+            <h2>선택한 날짜 일정</h2>
+            <div class="sub">
+              <span id="selected-date-label"></span>
+              <span class="sub-divider">·</span>
+              <span id="selected-count-label"></span>
+            </div>
           </div>
+          <ul id="events-ul"></ul>
         </div>
-        <ul id="events-ul"></ul>
+      </div>
+      <div id="global-loading-overlay" aria-hidden="true">
+        <div class="global-loading-box">
+          <div class="global-loading-text">불러오는 중..</div>
+        </div>
       </div>
     </div>
   </main>
@@ -918,6 +1272,18 @@
         </div>
       </div>
 
+      <div class="attachment-bar">
+        <button type="button" class="attach-btn" id="nlp-attach-btn">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M16.5 6.5v8.25a4.25 4.25 0 0 1-8.5 0V5a2.5 2.5 0 0 1 5 0v8a.75.75 0 0 1-1.5 0V6.5H10V13a2.5 2.5 0 0 0 5 0V5a4 4 0 0 0-8 0v9.75a5.75 5.75 0 0 0 11.5 0V6.5h-2z"/>
+          </svg>
+          이미지 첨부
+        </button>
+        <div class="attach-hint">최대 5장 · 민감한 영역은 직접 가리고 업로드</div>
+        <input type="file" id="nlp-image-input" accept="image/*" multiple hidden>
+      </div>
+      <div class="image-attachments" id="nlp-image-attachments"></div>
+
       <div class="scope-controls" id="delete-scope-controls">
         <div class="scope-title">삭제 범위 (최대 1년)</div>
         <div class="scope-row">
@@ -956,6 +1322,50 @@
   </div>
 </div>
 
+<div id="event-modal-overlay">
+  <div id="event-modal" role="dialog" aria-modal="true">
+    <div class="event-modal-head">
+      <div>
+        <div class="event-modal-title" id="event-modal-title"></div>
+        <div class="event-modal-sub" id="event-modal-sub"></div>
+      </div>
+      <button type="button" id="event-modal-close" aria-label="닫기">✕</button>
+    </div>
+    <div class="event-modal-body">
+      <div class="event-field">
+        <label for="event-modal-input-title">제목</label>
+        <input type="text" id="event-modal-input-title" />
+      </div>
+      <div class="event-field">
+        <label>시작</label>
+        <div class="event-field-row">
+          <input type="date" id="event-modal-input-start-date" />
+          <input type="time" id="event-modal-input-start-time" />
+        </div>
+      </div>
+      <div class="event-field">
+        <label>종료</label>
+        <div class="event-field-row">
+          <input type="date" id="event-modal-input-end-date" />
+          <input type="time" id="event-modal-input-end-time" />
+        </div>
+      </div>
+      <div class="event-field">
+        <label for="event-modal-input-location">장소</label>
+        <input type="text" id="event-modal-input-location" />
+      </div>
+      <div class="event-field">
+        <label for="event-modal-input-notes">메모</label>
+        <textarea id="event-modal-input-notes" rows="2" placeholder="참고사항을 기록하세요"></textarea>
+      </div>
+    </div>
+    <div class="event-modal-foot">
+      <button type="button" id="event-modal-cancel">취소</button>
+      <button type="button" class="primary" id="event-modal-save">저장</button>
+    </div>
+  </div>
+</div>
+
 <!-- Recent Added Modal -->
 <div id="recent-overlay">
   <div id="recent-modal" role="dialog" aria-modal="true">
@@ -973,6 +1383,27 @@
   </div>
 </div>
 
+<div id="image-editor-overlay" aria-hidden="true">
+  <div class="image-editor-modal" role="dialog" aria-modal="true">
+    <div class="image-editor-head">
+      <div class="image-editor-title">이미지 가리기</div>
+      <div class="image-editor-meta">드래그해서 검은 박스를 그려 민감한 정보를 가릴 수 있습니다.</div>
+    </div>
+    <div class="image-editor-canvas">
+      <div class="image-editor-canvas-inner">
+        <canvas id="image-editor-canvas"></canvas>
+        <canvas id="image-editor-selection"></canvas>
+      </div>
+    </div>
+    <div class="image-editor-foot">
+      <button type="button" id="image-editor-undo">되돌리기</button>
+      <div class="spacer"></div>
+      <button type="button" id="image-editor-cancel">취소</button>
+      <button type="button" class="primary" id="image-editor-apply">적용</button>
+    </div>
+  </div>
+</div>
+
 <script>
   const apiBase = "/api";
   let calendar = null;
@@ -986,6 +1417,30 @@
   const APP_MODE = APP_CONTEXT.mode || "local";
   const IS_GOOGLE_MODE = APP_MODE === "google";
   const undoStack = [];
+  const MAX_IMAGE_ATTACHMENTS = 5;
+  const MAX_IMAGE_DIMENSION = 1600;
+  const MAX_IMAGE_BYTES = 2.5 * 1024 * 1024;
+  const nlpImageAttachments = [];
+  let imageAttachmentSeq = 1;
+  let imageEditorCanvas = null;
+  let imageEditorCtx = null;
+  let imageEditorOverlay = null;
+  let imageEditorSelection = null;
+  let imageEditorSelectionCtx = null;
+  let imageEditorUndoStack = [];
+  const imageEditorState = {
+    attachmentId: null,
+    drawing: false,
+    startX: 0,
+    startY: 0,
+    pointerId: null
+  };
+  let currentEventModalContext = null;
+  const googleEventCache = {};
+  const googleEventFetches = {};
+  let googleCacheDirty = false;
+  let googleCacheGeneration = 0;
+  let googleGlobalLoaderDepth = 0;
 
   function validateDateRange(start, end){
     if(!start || !end){
@@ -1162,19 +1617,34 @@
     return `${yy}-${mm}-${dd}`;
   }
 
-  function eventCoversDate(ev, dateStr){
-    if(!ev || !dateStr) return false;
-    const startDate = toDateOnly(ev.start);
-    if(!startDate) return false;
-    let endDate = toDateOnly(ev.end);
-    if(!endDate || endDate < startDate){
-      endDate = startDate;
-    }
+  function getEventDateSpan(ev){
+    if(!ev) return null;
+    const startDate = toDateOnly(ev.start) || toDateOnly(ev.end);
+    if(!startDate) return null;
+    let endDate = toDateOnly(ev.end) || startDate;
     if((ev.allDay === true || ev.all_day === true) && ev.end && typeof ev.end === "string" && ev.end.endsWith("T00:00")){
       const adjusted = addDaysToDateStr(endDate, -1);
       if(adjusted) endDate = adjusted;
     }
-    return dateStr >= startDate && dateStr <= endDate;
+    if(endDate < startDate){
+      endDate = startDate;
+    }
+    return { start: startDate, end: endDate };
+  }
+
+  function eventCoversDate(ev, dateStr){
+    if(!ev || !dateStr) return false;
+    const span = getEventDateSpan(ev);
+    if(!span) return false;
+    return dateStr >= span.start && dateStr <= span.end;
+  }
+
+  function eventIntersectsRange(ev, startDateStr, endDateStr){
+    const span = getEventDateSpan(ev);
+    if(!span || !startDateStr || !endDateStr) return false;
+    if(span.end < startDateStr) return false;
+    if(span.start > endDateStr) return false;
+    return true;
   }
 
   function isAllDayRange(start, end){
@@ -1233,11 +1703,163 @@
     return ev.location ? `${label} · ${ev.location}` : label;
   }
 
+  function closeEventModal(){
+    const overlay = document.getElementById("event-modal-overlay");
+    if(!overlay) return;
+    overlay.classList.remove("active");
+    overlay.style.display = "none";
+    currentEventModalContext = null;
+  }
+
+  function openEventModal(eventInfo){
+    const overlay = document.getElementById("event-modal-overlay");
+    if(!overlay) return;
+    const titleEl = document.getElementById("event-modal-title");
+    const subEl = document.getElementById("event-modal-sub");
+    const titleInput = document.getElementById("event-modal-input-title");
+    const startDateInput = document.getElementById("event-modal-input-start-date");
+    const startTimeInput = document.getElementById("event-modal-input-start-time");
+    const endDateInput = document.getElementById("event-modal-input-end-date");
+    const endTimeInput = document.getElementById("event-modal-input-end-time");
+    const locationInput = document.getElementById("event-modal-input-location");
+    const notesInput = document.getElementById("event-modal-input-notes");
+    if(!titleInput || !startDateInput || !startTimeInput || !endDateInput || !endTimeInput || !locationInput || !notesInput){
+      return;
+    }
+
+    const toLocalDate = (value) => {
+      if(!value) return "";
+      const dt = new Date(value);
+      if(Number.isNaN(dt.getTime())){
+        return (value || "").slice(0, 10);
+      }
+      const offset = dt.getTimezoneOffset();
+      const adjusted = new Date(dt.getTime() - offset * 60 * 1000);
+      return adjusted.toISOString().slice(0, 10);
+    };
+
+    const toLocalTime = (value) => {
+      if(!value) return "";
+      const dt = new Date(value);
+      if(Number.isNaN(dt.getTime())) return "";
+      return dt.toTimeString().slice(0, 5);
+    };
+
+    titleEl.textContent = eventInfo.title || "(제목 없음)";
+    subEl.textContent = (eventInfo.source === "google") ? "Google 일정" : "내 일정";
+    titleInput.value = eventInfo.title || "";
+    startDateInput.value = toLocalDate(eventInfo.start);
+    startTimeInput.value = eventInfo.allDay ? "" : toLocalTime(eventInfo.start);
+    endDateInput.value = toLocalDate(eventInfo.end);
+    endTimeInput.value = eventInfo.allDay ? "" : toLocalTime(eventInfo.end);
+    locationInput.value = eventInfo.location || "";
+    notesInput.value = eventInfo.notes || "";
+
+    const numericId = parseInt(eventInfo.id, 10);
+    currentEventModalContext = {
+      source: eventInfo.source || "local",
+      localId: (eventInfo.source === "google") ? null : (Number.isFinite(numericId) ? numericId : null),
+      googleId: eventInfo.googleId || null
+    };
+
+    overlay.style.display = "flex";
+    requestAnimationFrame(() => overlay.classList.add("active"));
+  }
+
+  async function saveEventModal(){
+    if(!currentEventModalContext) return;
+    const titleInput = document.getElementById("event-modal-input-title");
+    const startDateInput = document.getElementById("event-modal-input-start-date");
+    const startTimeInput = document.getElementById("event-modal-input-start-time");
+    const endDateInput = document.getElementById("event-modal-input-end-date");
+    const endTimeInput = document.getElementById("event-modal-input-end-time");
+    const locationInput = document.getElementById("event-modal-input-location");
+    const notesInput = document.getElementById("event-modal-input-notes");
+    if(!titleInput || !startDateInput || !startTimeInput || !endDateInput || !endTimeInput || !locationInput || !notesInput){
+      return;
+    }
+
+    const title = titleInput.value.trim();
+    const startDate = startDateInput.value;
+    const startTime = startTimeInput.value;
+    const endDate = endDateInput.value;
+    const endTime = endTimeInput.value;
+    const locationValue = locationInput.value.trim();
+
+    if(!title){
+      alert("제목을 입력해주세요.");
+      return;
+    }
+    if(!startDate){
+      alert("시작 날짜를 입력해주세요.");
+      return;
+    }
+
+    const combineDateTime = (dateVal, timeVal) => {
+      if(!dateVal) return "";
+      if(!timeVal) return `${dateVal}T00:00`;
+      return `${dateVal}T${timeVal}`;
+    };
+
+    const payload = {
+      title,
+      start: combineDateTime(startDate, startTime),
+      end: endDate ? combineDateTime(endDate, endTime || "00:00") : null,
+      location: locationValue || null,
+      all_day: !startTime && !endTime
+    };
+
+    if(payload.end){
+      const startMs = Date.parse(payload.start);
+      const endMs = Date.parse(payload.end);
+      if(!Number.isNaN(startMs) && !Number.isNaN(endMs) && endMs < startMs){
+        alert("종료 시각이 시작 시각보다 빠릅니다.");
+        return;
+      }
+    }
+
+    const headers = { "Content-Type": "application/json" };
+    let touchedGoogleEvent = false;
+    try{
+      if(currentEventModalContext.source === "google"){
+        const googleId = currentEventModalContext.googleId || "";
+        if(googleId){
+          await fetch(`/api/google/events/${encodeURIComponent(googleId)}`, {
+            method:"PATCH",
+            headers,
+            body: JSON.stringify(payload)
+          });
+          touchedGoogleEvent = true;
+        }
+      }else{
+        const localId = currentEventModalContext.localId;
+        if(localId){
+          await fetch(`/api/events/${localId}`, {
+            method:"PATCH",
+            headers,
+            body: JSON.stringify(payload)
+          });
+        }
+      }
+      if(touchedGoogleEvent){
+        markGoogleCacheDirty();
+      }
+      closeEventModal();
+      await refreshAll();
+    }catch(err){
+      console.error(err);
+      alert("일정 수정에 실패했습니다.");
+    }
+  }
+
   async function deleteGoogleEventById(eventId){
     if(!eventId) return;
-    await fetch(apiBase + "/google/events/" + encodeURIComponent(eventId), {
+    const res = await fetch(apiBase + "/google/events/" + encodeURIComponent(eventId), {
       method:"DELETE"
     });
+    if(res.ok){
+      markGoogleCacheDirty();
+    }
   }
 
   function updateUndoButton(){
@@ -1300,21 +1922,9 @@
     let googleDayEvents = [];
     if(IS_GOOGLE_MODE){
       try{
-        const params = new URLSearchParams({ start_date: dateStr, end_date: dateStr });
-        const gres = await fetch(apiBase + "/google/events?" + params.toString());
-        if(gres.ok){
-          const gdata = await gres.json();
-          googleDayEvents = (Array.isArray(gdata) ? gdata : []).map(ev => ({
-            id: `google:${ev.id || ev.start || ev.html_link || Math.random()}`,
-            title: ev.title || "(제목 없음)",
-            start: ev.start,
-            end: ev.end,
-            location: ev.location,
-            all_day: ev.all_day,
-            _source: "google",
-            google_event_id: ev.id || ""
-          })).filter(ev => eventCoversDate(ev, dateStr));
-        }
+        await ensureGoogleEventsForDate(dateStr);
+        googleDayEvents = collectGoogleEventsForDate(dateStr)
+          .map(ev => ({ ...ev, _source: "google" }));
       }catch(err){
         console.error(err);
       }
@@ -1339,6 +1949,19 @@
 
     for(const ev of combined){
       const li = document.createElement("li");
+      li.addEventListener("click", () => {
+        openEventModal({
+          id: ev.id,
+          title: ev.title,
+          start: ev.start,
+          end: ev.end,
+          location: ev.location,
+          notes: "",
+          source: ev._source || "local",
+          googleId: ev.google_event_id || ev.id,
+          allDay: ev.all_day
+        });
+      });
 
       const dot = document.createElement("div");
       dot.className = "event-dot";
@@ -1348,8 +1971,7 @@
 
       const title = document.createElement("div");
       title.className = "event-title";
-      const prefix = ev._source === "google" ? "[G] " : "";
-      title.textContent = prefix + (ev.title || "");
+      title.textContent = ev.title || "";
 
       const meta = document.createElement("div");
       meta.className = "event-meta";
@@ -1363,14 +1985,15 @@
       const delBtn = document.createElement("button");
       delBtn.className = "delete-btn";
       delBtn.textContent = "삭제";
-      delBtn.onclick = async () => {
+      delBtn.addEventListener("click", async (event) => {
+        event.stopPropagation();
         if(ev._source === "google"){
           await deleteGoogleEventById(ev.google_event_id || "");
         }else{
           await fetch(apiBase + "/events/" + ev.id, { method:"DELETE" });
         }
         await refreshAll();
-      };
+      });
       li.appendChild(delBtn);
       ul.appendChild(li);
     }
@@ -1479,6 +2102,10 @@
   }
 
   async function refreshAll(){
+    if(IS_GOOGLE_MODE && googleCacheDirty){
+      clearGoogleEventCache();
+      googleCacheDirty = false;
+    }
     if(calendar) calendar.refetchEvents();
     if(selectedDateStr) await loadEventListForDate(selectedDateStr);
     refreshRecentIfOpen();
@@ -1546,6 +2173,518 @@
     loaderWrap.classList.toggle("scale-0", !isBusy);
   }
 
+  function setGlobalLoadingOverlayVisible(visible, message){
+    const overlay = document.getElementById("global-loading-overlay");
+    if(!overlay) return;
+    if(message){
+      const textEl = overlay.querySelector(".global-loading-text");
+      if(textEl) textEl.textContent = message;
+    }
+    overlay.classList.toggle("active", !!visible);
+    if(document && document.body){
+      document.body.classList.toggle("global-loading-active", !!visible);
+    }
+  }
+
+  function pushGlobalLoading(message){
+    googleGlobalLoaderDepth += 1;
+    setGlobalLoadingOverlayVisible(true, message || "불러오는 중..");
+  }
+
+  function popGlobalLoading(){
+    googleGlobalLoaderDepth = Math.max(googleGlobalLoaderDepth - 1, 0);
+    if(googleGlobalLoaderDepth === 0){
+      setGlobalLoadingOverlayVisible(false);
+    }
+  }
+
+  function markGoogleCacheDirty(){
+    if(!IS_GOOGLE_MODE) return;
+    googleCacheDirty = true;
+  }
+
+  function clearGoogleEventCache(){
+    googleCacheGeneration += 1;
+    Object.keys(googleEventCache).forEach((key) => delete googleEventCache[key]);
+    Object.keys(googleEventFetches).forEach((key) => delete googleEventFetches[key]);
+  }
+
+  function normalizeGoogleEvent(ev){
+    if(!ev) return null;
+    let start = ev.start || "";
+    const end = ev.end || null;
+    if(!start && end){
+      start = end;
+    }
+    if(!start) return null;
+    const unique = ev.id || start || end || ev.html_link || `${Date.now()}-${Math.random()}`;
+    return {
+      id:`google:${unique}`,
+      google_event_id: ev.id || "",
+      title: ev.title || "(제목 없음)",
+      start,
+      end,
+      location: ev.location || "",
+      all_day: !!ev.all_day,
+      source:"google"
+    };
+  }
+
+  function getYearFromDateStr(value){
+    if(!value || value.length < 4) return null;
+    const num = parseInt(value.slice(0,4), 10);
+    return Number.isFinite(num) ? num : null;
+  }
+
+  async function ensureGoogleEventsForYear(year){
+    if(!IS_GOOGLE_MODE || !Number.isFinite(year)) return [];
+    if(Array.isArray(googleEventCache[year])) return googleEventCache[year];
+    if(googleEventFetches[year]) return googleEventFetches[year];
+
+    const generationAtStart = googleCacheGeneration;
+    const message = "불러오는 중..";
+    const promise = (async () => {
+      pushGlobalLoading(message);
+      try{
+        const params = new URLSearchParams({
+          start_date: `${year}-01-01`,
+          end_date: `${year}-12-31`
+        });
+        const res = await fetch(apiBase + "/google/events?" + params.toString());
+        if(!res.ok){
+          throw new Error("Google 일정 불러오기 실패");
+        }
+        const raw = await res.json();
+        const normalized = (Array.isArray(raw) ? raw : []).map(normalizeGoogleEvent).filter(Boolean);
+        if(generationAtStart === googleCacheGeneration){
+          googleEventCache[year] = normalized;
+        }
+        return normalized;
+      }finally{
+        popGlobalLoading();
+        delete googleEventFetches[year];
+      }
+    })().catch((err) => {
+      console.error(err);
+      throw err;
+    });
+
+    googleEventFetches[year] = promise;
+    return promise;
+  }
+
+  async function ensureGoogleEventsForYears(years){
+    if(!IS_GOOGLE_MODE) return;
+    const uniqueYears = Array.from(new Set((years || []).filter((y) => Number.isFinite(y))));
+    if(!uniqueYears.length) return;
+    await Promise.all(uniqueYears.map((year) => ensureGoogleEventsForYear(year)));
+  }
+
+  async function ensureGoogleEventsForDate(dateStr){
+    if(!IS_GOOGLE_MODE || !dateStr) return;
+    const year = getYearFromDateStr(dateStr);
+    if(Number.isFinite(year)){
+      await ensureGoogleEventsForYear(year);
+    }
+  }
+
+  function collectGoogleEventsForDate(dateStr){
+    if(!IS_GOOGLE_MODE || !dateStr) return [];
+    const results = [];
+    Object.values(googleEventCache).forEach((bucket) => {
+      if(!Array.isArray(bucket)) return;
+      bucket.forEach((ev) => {
+        if(eventCoversDate(ev, dateStr)){
+          results.push(ev);
+        }
+      });
+    });
+    return results;
+  }
+
+  function collectGoogleEventsBetween(startDateStr, endDateStr){
+    if(!IS_GOOGLE_MODE || !startDateStr || !endDateStr) return [];
+    const results = [];
+    Object.values(googleEventCache).forEach((bucket) => {
+      if(!Array.isArray(bucket)) return;
+      bucket.forEach((ev) => {
+        if(eventIntersectsRange(ev, startDateStr, endDateStr)){
+          results.push(ev);
+        }
+      });
+    });
+    return results;
+  }
+
+  // -------- Image attachment helpers --------
+  function estimateDataUrlBytes(dataUrl){
+    if(typeof dataUrl !== "string") return 0;
+    const commaIdx = dataUrl.indexOf(",");
+    const b64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
+    return Math.ceil((b64.length * 3) / 4);
+  }
+
+  function clampDimensions(width, height, maxDim){
+    if(width <= maxDim && height <= maxDim){
+      return { width, height };
+    }
+    const scale = Math.min(maxDim / width, maxDim / height);
+    return {
+      width: Math.max(1, Math.round(width * scale)),
+      height: Math.max(1, Math.round(height * scale))
+    };
+  }
+
+  function readFileAsDataURL(file){
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function loadImageElement(src){
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = src;
+    });
+  }
+
+  async function compressImageFile(file){
+    const base64 = await readFileAsDataURL(file);
+    const img = await loadImageElement(base64);
+    const { width, height } = clampDimensions(img.width, img.height, MAX_IMAGE_DIMENSION);
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, width, height);
+    ctx.drawImage(img, 0, 0, width, height);
+
+    let quality = 0.92;
+    let dataUrl = canvas.toDataURL("image/jpeg", quality);
+    let attempts = 0;
+    while(estimateDataUrlBytes(dataUrl) > MAX_IMAGE_BYTES && attempts < 5){
+      quality = Math.max(0.5, quality - 0.1);
+      dataUrl = canvas.toDataURL("image/jpeg", quality);
+      attempts += 1;
+    }
+    if(estimateDataUrlBytes(dataUrl) > MAX_IMAGE_BYTES){
+      throw new Error("이미지 용량 초과");
+    }
+    return dataUrl;
+  }
+
+  async function handleImageFiles(fileList){
+    if(!fileList) return;
+    const files = Array.from(fileList);
+    if(nlpImageAttachments.length >= MAX_IMAGE_ATTACHMENTS){
+      alert(`이미지는 최대 ${MAX_IMAGE_ATTACHMENTS}장까지만 첨부할 수 있습니다.`);
+      return;
+    }
+    for(const file of files){
+      if(nlpImageAttachments.length >= MAX_IMAGE_ATTACHMENTS){
+        alert(`이미지는 최대 ${MAX_IMAGE_ATTACHMENTS}장까지만 첨부할 수 있습니다.`);
+        break;
+      }
+      if(!file.type.startsWith("image/")) continue;
+      try{
+        const dataUrl = await compressImageFile(file);
+        nlpImageAttachments.push({
+          id: imageAttachmentSeq++,
+          name: file.name || `image-${imageAttachmentSeq}`,
+          dataUrl
+        });
+      }catch(err){
+        console.error(err);
+        alert("이미지를 처리하지 못했습니다. 해상도를 줄이거나 다른 이미지를 사용해주세요.");
+      }
+    }
+    renderNlpImageAttachments();
+  }
+
+  function renderNlpImageAttachments(){
+    const host = document.getElementById("nlp-image-attachments");
+    if(!host) return;
+    host.innerHTML = "";
+    nlpImageAttachments.forEach((att) => {
+      const chip = document.createElement("div");
+      chip.className = "image-chip";
+
+      const img = document.createElement("img");
+      img.src = att.dataUrl;
+      img.alt = att.name || "attachment";
+      chip.appendChild(img);
+
+      const actions = document.createElement("div");
+      actions.className = "image-chip-actions";
+
+      const maskBtn = document.createElement("button");
+      maskBtn.type = "button";
+      maskBtn.textContent = "가리기";
+      maskBtn.addEventListener("click", () => openImageEditor(att.id));
+      actions.appendChild(maskBtn);
+
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.textContent = "삭제";
+      removeBtn.addEventListener("click", () => removeImageAttachment(att.id));
+      actions.appendChild(removeBtn);
+
+      chip.appendChild(actions);
+      host.appendChild(chip);
+    });
+  }
+
+  function removeImageAttachment(id){
+    const idx = nlpImageAttachments.findIndex(att => att.id === id);
+    if(idx >= 0){
+      nlpImageAttachments.splice(idx, 1);
+      renderNlpImageAttachments();
+    }
+  }
+
+  function getNlpImagePayload(){
+    return nlpImageAttachments.map(att => att.dataUrl);
+  }
+
+  function resetNlpComposerInputs(){
+    const input = document.getElementById("nlp-unified-text");
+    if(input){
+      input.value = "";
+      input.dispatchEvent(new Event("input"));
+    }
+    nlpImageAttachments.length = 0;
+    renderNlpImageAttachments();
+  }
+
+  function openImageEditor(attachmentId){
+    const target = nlpImageAttachments.find(att => att.id === attachmentId);
+    if(!target || !imageEditorOverlay || !imageEditorCanvas || !imageEditorCtx){
+      return;
+    }
+    imageEditorState.attachmentId = attachmentId;
+    imageEditorState.drawing = false;
+    imageEditorState.pointerId = null;
+    setEditorCanvasFromDataUrl(target.dataUrl, true).then(() => {
+      imageEditorOverlay.classList.add("active");
+    }).catch(() => {
+      alert("이미지 편집 도중 오류가 발생했습니다.");
+      imageEditorState.attachmentId = null;
+    });
+  }
+
+  function closeImageEditor(){
+    if(imageEditorOverlay){
+      imageEditorOverlay.classList.remove("active");
+    }
+    imageEditorState.attachmentId = null;
+    imageEditorState.drawing = false;
+    imageEditorState.pointerId = null;
+    if(imageEditorSelectionCtx && imageEditorSelection){
+      imageEditorSelectionCtx.clearRect(0, 0, imageEditorSelection.width, imageEditorSelection.height);
+    }
+  }
+
+  function setEditorCanvasFromDataUrl(dataUrl, resetUndo){
+    if(!imageEditorCanvas || !imageEditorCtx) return Promise.reject(new Error("canvas missing"));
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const { width, height } = clampDimensions(img.width, img.height, MAX_IMAGE_DIMENSION);
+        imageEditorCanvas.width = width;
+        imageEditorCanvas.height = height;
+        if(imageEditorSelection){
+          imageEditorSelection.width = width;
+          imageEditorSelection.height = height;
+        }
+        imageEditorCtx.clearRect(0, 0, width, height);
+        imageEditorCtx.drawImage(img, 0, 0, width, height);
+        if(imageEditorSelectionCtx){
+          imageEditorSelectionCtx.clearRect(0, 0, width, height);
+        }
+        if(resetUndo){
+          imageEditorUndoStack = [imageEditorCanvas.toDataURL("image/png")];
+        }
+        resolve();
+      };
+      img.onerror = reject;
+      img.src = dataUrl;
+    });
+  }
+
+  function pushEditorSnapshot(){
+    if(!imageEditorCanvas) return;
+    const snapshot = imageEditorCanvas.toDataURL("image/png");
+    imageEditorUndoStack.push(snapshot);
+    if(imageEditorUndoStack.length > 10){
+      imageEditorUndoStack.shift();
+    }
+  }
+
+  function undoImageEditor(){
+    if(imageEditorUndoStack.length <= 1) return;
+    imageEditorUndoStack.pop();
+    const previous = imageEditorUndoStack[imageEditorUndoStack.length - 1];
+    setEditorCanvasFromDataUrl(previous, false);
+  }
+
+  function getEditorPointerPosition(evt){
+    if(!imageEditorSelection) return { x: 0, y: 0 };
+    const rect = imageEditorSelection.getBoundingClientRect();
+    const scaleX = imageEditorSelection.width / rect.width;
+    const scaleY = imageEditorSelection.height / rect.height;
+    return {
+      x: (evt.clientX - rect.left) * scaleX,
+      y: (evt.clientY - rect.top) * scaleY
+    };
+  }
+
+  function clearSelectionOverlay(){
+    if(imageEditorSelectionCtx && imageEditorSelection){
+      imageEditorSelectionCtx.clearRect(0, 0, imageEditorSelection.width, imageEditorSelection.height);
+    }
+  }
+
+  function drawSelectionPreview(x1, y1, x2, y2){
+    if(!imageEditorSelectionCtx) return;
+    clearSelectionOverlay();
+    const x = Math.min(x1, x2);
+    const y = Math.min(y1, y2);
+    const w = Math.abs(x2 - x1);
+    const h = Math.abs(y2 - y1);
+    if(w < 4 || h < 4) return;
+    imageEditorSelectionCtx.fillStyle = "rgba(0,0,0,0.35)";
+    imageEditorSelectionCtx.fillRect(x, y, w, h);
+    imageEditorSelectionCtx.strokeStyle = "rgba(0,0,0,0.8)";
+    imageEditorSelectionCtx.lineWidth = 2;
+    imageEditorSelectionCtx.strokeRect(x + 1, y + 1, Math.max(0, w - 2), Math.max(0, h - 2));
+  }
+
+  function commitBlackout(x1, y1, x2, y2){
+    if(!imageEditorCanvas || !imageEditorCtx) return;
+    const w = Math.abs(x2 - x1);
+    const h = Math.abs(y2 - y1);
+    if(w < 4 || h < 4) return;
+    const x = Math.max(0, Math.min(x1, x2));
+    const y = Math.max(0, Math.min(y1, y2));
+    imageEditorCtx.fillStyle = "#000000";
+    imageEditorCtx.globalAlpha = 1;
+    imageEditorCtx.fillRect(x, y, w, h);
+    pushEditorSnapshot();
+  }
+
+  function imageEditorPointerDown(evt){
+    if(!imageEditorSelection) return;
+    evt.preventDefault();
+    const { x, y } = getEditorPointerPosition(evt);
+    imageEditorState.drawing = true;
+    imageEditorState.pointerId = evt.pointerId;
+    imageEditorState.startX = x;
+    imageEditorState.startY = y;
+    imageEditorSelection.setPointerCapture?.(evt.pointerId);
+  }
+
+  function imageEditorPointerMove(evt){
+    if(!imageEditorState.drawing || imageEditorState.pointerId !== evt.pointerId) return;
+    evt.preventDefault();
+    const { x, y } = getEditorPointerPosition(evt);
+    drawSelectionPreview(imageEditorState.startX, imageEditorState.startY, x, y);
+  }
+
+  function imageEditorPointerUp(evt){
+    if(!imageEditorState.drawing || imageEditorState.pointerId !== evt.pointerId) return;
+    evt.preventDefault();
+    const { x, y } = getEditorPointerPosition(evt);
+    commitBlackout(imageEditorState.startX, imageEditorState.startY, x, y);
+    clearSelectionOverlay();
+    imageEditorState.drawing = false;
+    imageEditorState.pointerId = null;
+    imageEditorSelection?.releasePointerCapture?.(evt.pointerId);
+  }
+
+  function imageEditorPointerCancel(evt){
+    if(imageEditorState.pointerId !== evt.pointerId) return;
+    clearSelectionOverlay();
+    imageEditorState.drawing = false;
+    imageEditorState.pointerId = null;
+    imageEditorSelection?.releasePointerCapture?.(evt.pointerId);
+  }
+
+  function applyImageEditorEdits(){
+    if(imageEditorState.attachmentId == null || !imageEditorCanvas){
+      closeImageEditor();
+      return;
+    }
+    let quality = 0.9;
+    let dataUrl = imageEditorCanvas.toDataURL("image/jpeg", quality);
+    let attempts = 0;
+    while(estimateDataUrlBytes(dataUrl) > MAX_IMAGE_BYTES && attempts < 4){
+      quality = Math.max(0.5, quality - 0.1);
+      dataUrl = imageEditorCanvas.toDataURL("image/jpeg", quality);
+      attempts += 1;
+    }
+    if(estimateDataUrlBytes(dataUrl) > MAX_IMAGE_BYTES){
+      alert("편집 결과 이미지가 너무 큽니다. 가린 영역을 줄이거나 이미지를 축소해주세요.");
+      return;
+    }
+    const target = nlpImageAttachments.find(att => att.id === imageEditorState.attachmentId);
+    if(target){
+      target.dataUrl = dataUrl;
+      renderNlpImageAttachments();
+    }
+    closeImageEditor();
+  }
+
+  function setupImageComposer(){
+    const attachBtn = document.getElementById("nlp-attach-btn");
+    const fileInput = document.getElementById("nlp-image-input");
+    imageEditorOverlay = document.getElementById("image-editor-overlay");
+    imageEditorCanvas = document.getElementById("image-editor-canvas");
+    imageEditorCtx = imageEditorCanvas?.getContext("2d") || null;
+    imageEditorSelection = document.getElementById("image-editor-selection");
+    imageEditorSelectionCtx = imageEditorSelection?.getContext("2d") || null;
+
+    attachBtn?.addEventListener("click", () => fileInput?.click());
+    fileInput?.addEventListener("change", async (event) => {
+      await handleImageFiles(event.target.files);
+      event.target.value = "";
+    });
+
+    document.getElementById("image-editor-cancel")?.addEventListener("click", closeImageEditor);
+    document.getElementById("image-editor-apply")?.addEventListener("click", applyImageEditorEdits);
+    document.getElementById("image-editor-undo")?.addEventListener("click", undoImageEditor);
+    imageEditorOverlay?.addEventListener("click", (event) => {
+      if(event.target === imageEditorOverlay){
+        closeImageEditor();
+      }
+    });
+
+    imageEditorSelection?.addEventListener("pointerdown", imageEditorPointerDown, { passive: false });
+    imageEditorSelection?.addEventListener("pointermove", imageEditorPointerMove, { passive: false });
+    imageEditorSelection?.addEventListener("pointerup", imageEditorPointerUp, { passive: false });
+    imageEditorSelection?.addEventListener("pointercancel", imageEditorPointerCancel, { passive: false });
+    imageEditorSelection?.addEventListener("pointerleave", imageEditorPointerCancel, { passive: false });
+
+    renderNlpImageAttachments();
+  }
+
+  function setupEventModalControls(){
+    const overlay = document.getElementById("event-modal-overlay");
+    if(!overlay) return;
+    document.getElementById("event-modal-close")?.addEventListener("click", closeEventModal);
+    document.getElementById("event-modal-cancel")?.addEventListener("click", closeEventModal);
+    document.getElementById("event-modal-save")?.addEventListener("click", saveEventModal);
+    overlay.addEventListener("click", (event) => {
+      if(event.target === overlay){
+        closeEventModal();
+      }
+    });
+  }
+
   // -------- Confirm Modal helpers --------
   function openConfirm(){ document.getElementById("confirm-overlay").style.display = "flex"; }
   function closeConfirm(){
@@ -1554,11 +2693,15 @@
     confirmState = { mode: null, addItems: [], deleteGroups: [] };
   }
 
-  async function openAddConfirm(text){
+  async function openAddConfirm(text, imagePayload = []){
+    const payload = { text };
+    if(Array.isArray(imagePayload) && imagePayload.length){
+      payload.images = imagePayload;
+    }
     const res = await fetch(apiBase + "/nlp-preview", {
       method:"POST",
       headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ text })
+      body: JSON.stringify(payload)
     });
     if(!res.ok){
       alert("추가할 일정을 해석하지 못했습니다.");
@@ -1579,6 +2722,74 @@
 
     const host = document.getElementById("confirm-list");
     host.innerHTML = "";
+
+    const createEditableLabel = (initial, placeholder, onCommit) => {
+      let currentValue = initial || "";
+      const wrapper = document.createElement("div");
+      wrapper.className = "cm-editable";
+      let label = document.createElement("span");
+      label.textContent = currentValue || placeholder;
+      const iconBtn = document.createElement("button");
+      iconBtn.type = "button";
+      iconBtn.className = "cm-edit-icon";
+      iconBtn.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zm2.92.83h-.67v-.67l8.5-8.5.67.67-8.5 8.5zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>`;
+
+      const applyLabel = (value) => {
+        currentValue = value || "";
+        if(label) label.textContent = currentValue || placeholder;
+      };
+
+      const enterEdit = () => {
+        if(wrapper.classList.contains("editing")) return;
+        wrapper.classList.add("editing");
+        const input = document.createElement("input");
+        input.type = "text";
+        input.value = currentValue || "";
+        wrapper.insertBefore(input, iconBtn);
+        if(label) label.remove();
+        iconBtn.style.visibility = "hidden";
+        input.focus();
+
+        const finish = (apply) => {
+          if(apply){
+            const nextValue = input.value.trim();
+            currentValue = nextValue;
+            onCommit(nextValue);
+          }
+          input.remove();
+          label = document.createElement("span");
+          label.textContent = currentValue || placeholder;
+          wrapper.insertBefore(label, iconBtn);
+          iconBtn.style.visibility = "";
+          wrapper.classList.remove("editing");
+        };
+
+        input.addEventListener("blur", () => finish(true));
+        input.addEventListener("keydown", (e) => {
+          if(e.key === "Enter"){
+            e.preventDefault();
+            finish(true);
+          }else if(e.key === "Escape"){
+            e.preventDefault();
+            finish(false);
+          }
+        });
+      };
+
+      wrapper.appendChild(label);
+      wrapper.appendChild(iconBtn);
+      wrapper.addEventListener("click", enterEdit);
+      iconBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        enterEdit();
+      });
+
+      return {
+        wrapper,
+        updateLabel: applyLabel
+      };
+    };
 
     items.forEach((it, idx) => {
       const row = document.createElement("div");
@@ -1602,14 +2813,34 @@
 
       const line1 = document.createElement("div");
       line1.className = "cm-line1";
-      line1.textContent = it.title || "(제목 없음)";
 
       const line2 = document.createElement("div");
       line2.className = "cm-line2";
 
+      const locationLine = document.createElement("div");
+      locationLine.className = "cm-line-location";
+
       if(it.type === "single"){
-        line2.textContent = fmtRange(it.start, it.end, it.all_day) + (it.location ? ` · ${it.location}` : "");
+        const titleEditable = createEditableLabel(it.title || "", "(제목 없음)", (val) => {
+          it.title = val || "";
+          updateSingleMeta();
+        });
+        const locationEditable = createEditableLabel(it.location || "", "(장소 없음)", (val) => {
+          it.location = (val && val.trim()) || null;
+          updateSingleMeta();
+        });
+
+        const updateSingleMeta = () => {
+          titleEditable.updateLabel(it.title || "");
+          locationEditable.updateLabel(it.location || "");
+          line2.textContent = fmtRange(it.start, it.end, it.all_day);
+        };
+        updateSingleMeta();
+
+        line1.appendChild(titleEditable.wrapper);
+        locationLine.appendChild(locationEditable.wrapper);
         main.appendChild(line1);
+        main.appendChild(locationLine);
         main.appendChild(line2);
         left.appendChild(cb);
         left.appendChild(main);
@@ -1623,7 +2854,29 @@
       const ed = it.end_date || "?";
       const cnt = (typeof it.count === "number") ? it.count : 0;
       const time = it.time ? it.time : "시간 없음";
-      line2.textContent = `반복: ${sd}~${ed} · ${time} · ${cnt}회` + (it.location ? ` · ${it.location}` : "");
+
+      const recurTitleEditable = createEditableLabel(it.title || "", "(제목 없음)", (val) => {
+        it.title = val || "";
+        updateRecurringMeta();
+      });
+      const recurLocationEditable = createEditableLabel(it.location || "", "(장소 없음)", (val) => {
+        it.location = (val && val.trim()) || null;
+        updateRecurringMeta();
+      });
+
+      const updateRecurringMeta = () => {
+        recurTitleEditable.updateLabel(it.title || "");
+        recurLocationEditable.updateLabel(it.location || "");
+        line2.textContent = `반복: ${sd}~${ed} · ${time} · ${cnt}회`;
+      };
+      updateRecurringMeta();
+
+      line1.appendChild(recurTitleEditable.wrapper);
+      locationLine.appendChild(recurLocationEditable.wrapper);
+
+      main.appendChild(line1);
+      main.appendChild(locationLine);
+      main.appendChild(line2);
 
       if(Array.isArray(it.samples) && it.samples.length){
         const mini = document.createElement("div");
@@ -1632,9 +2885,6 @@
         mini.textContent = `예: ${s}${(cnt > 3) ? " …" : ""}`;
         main.appendChild(mini);
       }
-
-      main.appendChild(line1);
-      main.appendChild(line2);
 
       left.appendChild(cb);
       left.appendChild(main);
@@ -1847,12 +3097,19 @@
     const input = document.getElementById("nlp-unified-text");
     const toggle = document.getElementById("nlp-mode-toggle");
     const text = input?.value?.trim() ?? "";
-    if(!text){
-      alert("문장을 입력해주세요.");
+    const imagePayload = getNlpImagePayload();
+
+    const isDelete = !!toggle?.checked;
+    if(isDelete){
+      if(!text){
+        alert("삭제할 문장을 입력해주세요.");
+        return;
+      }
+    }else if(!text && imagePayload.length === 0){
+      alert("문장이나 이미지를 입력해주세요.");
       return;
     }
 
-    const isDelete = !!toggle?.checked;
     setUnifiedBusy(true);
     try{
       if(isDelete){
@@ -1860,7 +3117,7 @@
         if(!scope) return;
         await openDeleteConfirm(text, scope);
       }else{
-        await openAddConfirm(text);
+        await openAddConfirm(text, imagePayload);
       }
     }catch(err){
       console.error(err);
@@ -1931,7 +3188,7 @@
             const inclusiveEnd = toDateOnly(rawEnd) || startDateOnly;
             const exclusiveEnd = addDaysToDateStr(inclusiveEnd, 1) || addDaysToDateStr(startDateOnly, 1);
             return {
-              id:`google:${ev.id || rawStart}`,
+              id:ev.id,
               title: ev.title || "(제목 없음)",
               start:startDateOnly || rawStart,
               end:exclusiveEnd,
@@ -1940,12 +3197,12 @@
                 location: ev.location || "",
                 allDay:true,
                 source:"google",
-                googleId: ev.id || ""
+                googleId: ev.google_event_id || ""
               }
             };
           }
           return {
-            id:`google:${ev.id || rawStart}`,
+            id:ev.id,
             title: ev.title || "(제목 없음)",
             start:rawStart,
             end:rawEnd || null,
@@ -1954,7 +3211,7 @@
               location: ev.location || "",
               allDay:false,
               source:"google",
-              googleId: ev.id || ""
+              googleId: ev.google_event_id || ""
             }
           };
         };
@@ -1962,46 +3219,43 @@
         try{
           const showLocal = !IS_GOOGLE_MODE;
           const showGoogle = IS_GOOGLE_MODE;
-          const promises = [];
+          let localEvents = [];
 
           if(showLocal){
-            promises.push(fetch(apiBase + "/events").then(async (res) => {
-              if(!res.ok) throw new Error("local events failed");
-              const data = await res.json();
-              return Array.isArray(data) ? data.map(formatLocalEvent) : [];
-            }));
-          }else{
-            promises.push(Promise.resolve([]));
+            const res = await fetch(apiBase + "/events");
+            if(!res.ok){
+              throw new Error("local events failed");
+            }
+            const data = await res.json();
+            localEvents = Array.isArray(data) ? data.map(formatLocalEvent) : [];
           }
 
-          let viewStart = info.start ? new Date(info.start) : new Date();
-          let viewEnd = info.end ? new Date(info.end) : new Date(viewStart);
-          viewEnd = new Date(viewEnd.getTime() - MS_PER_DAY);
-          if(viewEnd < viewStart){
-            viewEnd = new Date(viewStart);
-          }
-          const diffDays = Math.floor((viewEnd.getTime() - viewStart.getTime()) / MS_PER_DAY);
-          if(diffDays > 365){
-            viewEnd = new Date(viewStart.getTime() + 365 * MS_PER_DAY);
-          }
-          const fmtDate = (d) => d.toISOString().slice(0,10);
-
+          let googleEvents = [];
           if(showGoogle){
-            const googleParams = new URLSearchParams({
-              start_date: fmtDate(viewStart),
-              end_date: fmtDate(viewEnd)
-            });
-            promises.push(fetch(apiBase + "/google/events?" + googleParams.toString()).then(
-                async (res) => {
-                  if(!res.ok) return [];
-                  const data = await res.json();
-                  return Array.isArray(data) ? data.map(formatGoogleEvent) : [];
-                }).catch(() => []));
-          }else{
-            promises.push(Promise.resolve([]));
+            let viewStart = info.start ? new Date(info.start) : new Date();
+            let viewEnd = info.end ? new Date(info.end) : new Date(viewStart);
+            viewEnd = new Date(viewEnd.getTime() - MS_PER_DAY);
+            if(viewEnd < viewStart){
+              viewEnd = new Date(viewStart);
+            }
+            const diffDays = Math.floor((viewEnd.getTime() - viewStart.getTime()) / MS_PER_DAY);
+            if(diffDays > 365){
+              viewEnd = new Date(viewStart.getTime() + 365 * MS_PER_DAY);
+            }
+            const fmtDate = (d) => d.toISOString().slice(0,10);
+            const viewStartStr = fmtDate(viewStart);
+            const viewEndStr = fmtDate(viewEnd);
+            const years = [];
+            const startYear = viewStart.getFullYear();
+            const endYear = viewEnd.getFullYear();
+            for(let y = startYear; y <= endYear; y += 1){
+              years.push(y);
+            }
+            await ensureGoogleEventsForYears(years);
+            const cachedRange = collectGoogleEventsBetween(viewStartStr, viewEndStr);
+            googleEvents = cachedRange.map(formatGoogleEvent);
           }
 
-          const [localEvents, googleEvents] = await Promise.all(promises);
           success([...(localEvents || []), ...(googleEvents || [])]);
         }catch(err){
           console.error(err);
@@ -2016,13 +3270,17 @@
 
       eventClick: (info) => {
         const ev = info.event;
-        const startStr = ev.start ? ev.start.toLocaleString() : "";
-        const endStr = ev.end ? ev.end.toLocaleString() : "";
-        const loc = ev.extendedProps.location;
-        let msg = `제목: ${ev.title}\\n시작: ${startStr}`;
-        if(endStr) msg += `\\n종료: ${endStr}`;
-        if(loc) msg += `\\n장소: ${loc}`;
-        alert(msg);
+        openEventModal({
+          id: ev.id,
+          title: ev.title,
+          start: ev.start ? ev.start.toISOString() : "",
+          end: ev.end ? ev.end.toISOString() : "",
+          location: ev.extendedProps.location,
+          notes: "",
+          source: ev.extendedProps.source || "local",
+          googleId: ev.extendedProps.googleId || null,
+          allDay: ev.allDay
+        });
       },
 
       datesSet: (info) => {
@@ -2061,6 +3319,8 @@
     // quick add
     // NLP auto-grow
     setupShadowAutoGrow("nlp-unified-text");
+    setupImageComposer();
+    setupEventModalControls();
 
     const toggle = document.getElementById("nlp-mode-toggle");
     const actionBtn = document.getElementById("nlp-action-btn");
@@ -2191,11 +3451,7 @@
         }
 
         closeConfirm();
-
-        const input = document.getElementById("nlp-unified-text");
-        input.value = "";
-        input.dispatchEvent(new Event("input"));
-
+        resetNlpComposerInputs();
         await refreshAll();
         return;
       }
@@ -2223,11 +3479,7 @@
         }
 
         closeConfirm();
-
-        const input = document.getElementById("nlp-unified-text");
-        input.value = "";
-        input.dispatchEvent(new Event("input"));
-
+        resetNlpComposerInputs();
         await refreshAll();
         return;
       }
