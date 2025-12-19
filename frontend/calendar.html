@@ -678,6 +678,76 @@
       font-weight:700;
     }
 
+    .reasoning-controls{
+      margin-top:10px;
+      padding:10px;
+      border:1px dashed var(--border);
+      border-radius:12px;
+      background:#f0f4ff;
+      display:none;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+    }
+    .reasoning-controls label{
+      font-size:12px;
+      font-weight:900;
+      color:#1c3b7a;
+    }
+    .reasoning-controls select{
+      border:1px solid var(--border);
+      border-radius:10px;
+      padding:6px 10px;
+      font-size:13px;
+      font-weight:700;
+      background:#fff;
+      min-width:120px;
+    }
+
+    .rec-end-box{
+      margin-top:10px;
+      padding:10px;
+      border:1px dashed var(--border);
+      border-radius:12px;
+      background:#fffdf5;
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+    }
+    .rec-end-box h3{
+      margin:0;
+      font-size:12px;
+      font-weight:900;
+      color:#7a3a00;
+    }
+    .rec-end-options{
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+    }
+    .rec-end-option{
+      display:flex;
+      align-items:center;
+      gap:4px;
+      font-size:12px;
+      font-weight:800;
+      color:#4a3b21;
+    }
+    .rec-end-extra{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+    }
+    .rec-end-extra input[type="date"],
+    .rec-end-extra input[type="number"]{
+      border:1px solid var(--border);
+      border-radius:8px;
+      padding:4px 8px;
+      font-size:12px;
+      font-weight:800;
+      min-width:140px;
+    }
+
     /* ===== Quick add ===== */
     /* ===== Selected date list ===== */
   #events-ul{list-style:none; padding:0; margin:0;}
@@ -1293,6 +1363,15 @@
         </div>
       </div>
 
+      <div class="reasoning-controls" id="reasoning-effort-control">
+        <label for="reasoning-effort-select">추론 강도</label>
+        <select id="reasoning-effort-select">
+          <option value="low">낮음</option>
+          <option value="medium">보통</option>
+          <option value="high">높음</option>
+        </select>
+      </div>
+
       <button type="button" class="primary-btn" id="undo-last-btn" disabled>되돌리기</button>
 
     </div>
@@ -1416,6 +1495,11 @@
   const APP_CONTEXT = window.__APP_CONTEXT__ || {};
   const APP_MODE = APP_CONTEXT.mode || "local";
   const IS_GOOGLE_MODE = APP_MODE === "google";
+  const IS_ADMIN = !!APP_CONTEXT.admin;
+  const REASONING_EFFORT_KEY = "calendar_reasoning_effort";
+  const ALLOWED_REASONING_EFFORTS = ["low","medium","high"];
+  const DEFAULT_REASONING_EFFORT = "low";
+  let reasoningEffortValue = DEFAULT_REASONING_EFFORT;
   const undoStack = [];
   const MAX_IMAGE_ATTACHMENTS = 5;
   const MAX_IMAGE_DIMENSION = 1600;
@@ -1441,6 +1525,77 @@
   let googleCacheDirty = false;
   let googleCacheGeneration = 0;
   let googleGlobalLoaderDepth = 0;
+  const recurrenceEndSelections = new Map();
+  const localEventsCache = { start: null, end: null, items: [] };
+  let localCacheDirty = true;
+  let localCachePromise = null;
+  let initialListLoaded = false;
+
+  function buildEventsFetchUrl(startDate, endDate){
+    const params = new URLSearchParams();
+    if(startDate){
+      params.append("start_date", startDate);
+    }
+    if(endDate){
+      params.append("end_date", endDate);
+    }
+    const query = params.toString();
+    return query ? `${apiBase}/events?${query}` : `${apiBase}/events`;
+  }
+
+  async function fetchLocalEventsBetween(startDate, endDate){
+    const url = buildEventsFetchUrl(startDate, endDate);
+    const res = await fetch(url);
+    if(!res.ok){
+      throw new Error("local events failed");
+    }
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  }
+
+  function markLocalCacheDirty(){
+    localCacheDirty = true;
+  }
+
+  function cacheCoversRange(cache, startDate, endDate){
+    return !!cache.start && !!cache.end && startDate >= cache.start && endDate <= cache.end;
+  }
+
+  function filterEventsInRange(items, startDate, endDate){
+    return (items || []).filter(ev => eventIntersectsRange(ev, startDate, endDate));
+  }
+
+  async function getLocalEventsForRange(startDate, endDate){
+    if(!startDate || !endDate) return [];
+    if(!localCacheDirty && cacheCoversRange(localEventsCache, startDate, endDate)){
+      return filterEventsInRange(localEventsCache.items, startDate, endDate);
+    }
+    if(localCachePromise){
+      try{
+        await localCachePromise;
+      }catch(err){
+        // ignore, fallback to fetching below
+      }
+      if(!localCacheDirty && cacheCoversRange(localEventsCache, startDate, endDate)){
+        return filterEventsInRange(localEventsCache.items, startDate, endDate);
+      }
+    }
+    localCachePromise = (async () => {
+      const data = await fetchLocalEventsBetween(startDate, endDate);
+      localEventsCache.start = startDate;
+      localEventsCache.end = endDate;
+      localEventsCache.items = Array.isArray(data) ? data : [];
+      localCacheDirty = false;
+      return localEventsCache.items;
+    })().catch((err) => {
+      localCacheDirty = true;
+      throw err;
+    }).finally(() => {
+      localCachePromise = null;
+    });
+    const data = await localCachePromise;
+    return filterEventsInRange(data, startDate, endDate);
+  }
 
   function validateDateRange(start, end){
     if(!start || !end){
@@ -1495,6 +1650,27 @@
     const m = String(d.getMonth()+1).padStart(2,"0");
     const day = String(d.getDate()).padStart(2,"0");
     return `${y}-${m}-${day}`;
+  }
+
+  function getCalendarViewRange(info){
+    const startSource = (info && info.start) ? info.start : new Date();
+    const startDate = new Date(startSource);
+    const endSource = (info && info.end) ? info.end : startDate;
+    let endDate = new Date(endSource);
+    endDate = new Date(endDate.getTime() - MS_PER_DAY);
+    if(endDate < startDate){
+      endDate = new Date(startDate);
+    }
+    const diffDays = Math.floor((endDate.getTime() - startDate.getTime()) / MS_PER_DAY);
+    if(diffDays > 365){
+      endDate = new Date(startDate.getTime() + 365 * MS_PER_DAY);
+    }
+    return {
+      startDate,
+      endDate,
+      startStr: toDateStrLocal(startDate),
+      endStr: toDateStrLocal(endDate)
+    };
   }
 
   function updateYearMonthLabel(date){
@@ -1839,6 +2015,7 @@
             headers,
             body: JSON.stringify(payload)
           });
+          markLocalCacheDirty();
         }
       }
       if(touchedGoogleEvent){
@@ -1896,6 +2073,7 @@
           headers:{ "Content-Type":"application/json" },
           body: JSON.stringify({ ids: localIds })
         });
+        markLocalCacheDirty();
       }
       for(const gid of googleIds){
         await deleteGoogleEventById(gid);
@@ -1908,22 +2086,33 @@
   }
 
   async function loadEventListForDate(dateStr){
-    const res = await fetch(apiBase + "/events");
-    const events = await res.json();
-
+    const targetDate = dateStr || "";
     const ul = document.getElementById("events-ul");
     const countEl = document.getElementById("selected-count-label");
     ul.innerHTML = "";
 
+    if(!targetDate){
+      if(countEl) countEl.textContent = "없음";
+      return;
+    }
+
+    let events = [];
+    try{
+      events = await getLocalEventsForRange(targetDate, targetDate);
+    }catch(err){
+      console.error(err);
+      events = [];
+    }
+
     const dayEvents = events
-      .filter(ev => eventCoversDate(ev, dateStr))
+      .filter(ev => eventCoversDate(ev, targetDate))
       .map(ev => ({ ...ev, _source: "local" }));
 
     let googleDayEvents = [];
     if(IS_GOOGLE_MODE){
       try{
-        await ensureGoogleEventsForDate(dateStr);
-        googleDayEvents = collectGoogleEventsForDate(dateStr)
+        await ensureGoogleEventsForDate(targetDate);
+        googleDayEvents = collectGoogleEventsForDate(targetDate)
           .map(ev => ({ ...ev, _source: "google" }));
       }catch(err){
         console.error(err);
@@ -1991,6 +2180,7 @@
           await deleteGoogleEventById(ev.google_event_id || "");
         }else{
           await fetch(apiBase + "/events/" + ev.id, { method:"DELETE" });
+          markLocalCacheDirty();
         }
         await refreshAll();
       });
@@ -2085,6 +2275,7 @@
             await deleteGoogleEventById(ev.google_event_id || ev.id);
           }else{
             await fetch(apiBase + "/events/" + ev.id, { method:"DELETE" });
+            markLocalCacheDirty();
           }
           await refreshAll();
           await loadRecentList();
@@ -2135,6 +2326,7 @@
     if(res.ok){
       const created = await res.json();
       recordUndoBatch([created]);
+      markLocalCacheDirty();
     }else{
       alert("일정 추가에 실패했습니다.");
       return;
@@ -2461,6 +2653,163 @@
     renderNlpImageAttachments();
   }
 
+  function resetRecurrenceEndSelections(){
+    recurrenceEndSelections.clear();
+  }
+
+  function getRecurrenceEndSelection(idx){
+    return recurrenceEndSelections.get(idx);
+  }
+
+  function setRecurrenceEndSelection(idx, payload){
+    recurrenceEndSelections.set(idx, payload);
+  }
+
+  function buildRecurrenceEndControls(item, idx){
+    const box = document.createElement("div");
+    box.className = "rec-end-box";
+
+    const title = document.createElement("h3");
+    title.textContent = "반복 종료를 선택해주세요";
+    box.appendChild(title);
+
+    const options = document.createElement("div");
+    options.className = "rec-end-options";
+    const optionDefs = [
+      { value:"none", label:"무기한" },
+      { value:"until", label:"종료 날짜" },
+      { value:"count", label:"횟수" }
+    ];
+    const name = `rec-end-${idx}`;
+
+    const extra = document.createElement("div");
+    extra.className = "rec-end-extra";
+
+    const dateInput = document.createElement("input");
+    dateInput.type = "date";
+    dateInput.value = item.end_date || item.start_date || "";
+    extra.appendChild(dateInput);
+
+    const countInput = document.createElement("input");
+    countInput.type = "number";
+    countInput.min = "1";
+    countInput.placeholder = "횟수";
+    extra.appendChild(countInput);
+
+    let currentMode = "none";
+
+    const updateSelection = () => {
+      if(currentMode === "until"){
+        extra.style.display = "flex";
+        dateInput.style.display = "";
+        countInput.style.display = "none";
+      }else if(currentMode === "count"){
+        extra.style.display = "flex";
+        dateInput.style.display = "none";
+        countInput.style.display = "";
+      }else{
+        extra.style.display = "none";
+        dateInput.style.display = "none";
+        countInput.style.display = "none";
+      }
+
+      if(currentMode === "until"){
+        setRecurrenceEndSelection(idx, {
+          mode:"until",
+          value: dateInput.value || null
+        });
+      }else if(currentMode === "count"){
+        const numeric = countInput.value ? parseInt(countInput.value, 10) : null;
+        setRecurrenceEndSelection(idx, {
+          mode:"count",
+          value: Number.isFinite(numeric) && numeric > 0 ? numeric : null
+        });
+      }else{
+        setRecurrenceEndSelection(idx, { mode:"none", value:null });
+      }
+    };
+
+    optionDefs.forEach(def => {
+      const label = document.createElement("label");
+      label.className = "rec-end-option";
+
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = name;
+      radio.value = def.value;
+      if(def.value === "none"){
+        radio.checked = true;
+      }
+      radio.addEventListener("change", () => {
+        currentMode = def.value;
+        updateSelection();
+      });
+
+      label.appendChild(radio);
+      label.appendChild(document.createTextNode(def.label));
+      options.appendChild(label);
+    });
+
+    dateInput.addEventListener("change", updateSelection);
+    countInput.addEventListener("change", updateSelection);
+
+    box.appendChild(options);
+    box.appendChild(extra);
+    currentMode = "none";
+    updateSelection();
+    return box;
+  }
+
+  function loadReasoningEffortFromStorage(){
+    if(!IS_ADMIN) return;
+    try{
+      const stored = localStorage.getItem(REASONING_EFFORT_KEY);
+      if(stored && ALLOWED_REASONING_EFFORTS.includes(stored)){
+        reasoningEffortValue = stored;
+      }
+    }catch(_err){
+      reasoningEffortValue = DEFAULT_REASONING_EFFORT;
+    }
+  }
+
+  function saveReasoningEffortToStorage(value){
+    if(!IS_ADMIN) return;
+    try{
+      localStorage.setItem(REASONING_EFFORT_KEY, value);
+    }catch(_err){
+      /* ignore */
+    }
+  }
+
+  function initReasoningEffortControl(){
+    const wrap = document.getElementById("reasoning-effort-control");
+    const select = document.getElementById("reasoning-effort-select");
+    if(!wrap || !select) return;
+    if(!IS_ADMIN){
+      wrap.style.display = "none";
+      return;
+    }
+    loadReasoningEffortFromStorage();
+    wrap.style.display = "flex";
+    select.value = reasoningEffortValue;
+    select.addEventListener("change", () => {
+      const val = select.value;
+      if(ALLOWED_REASONING_EFFORTS.includes(val)){
+        reasoningEffortValue = val;
+        saveReasoningEffortToStorage(val);
+      }else{
+        select.value = reasoningEffortValue;
+      }
+    });
+  }
+
+  function getReasoningEffortSetting(){
+    if(!IS_ADMIN) return null;
+    const select = document.getElementById("reasoning-effort-select");
+    const candidate = select ? select.value : reasoningEffortValue;
+    return ALLOWED_REASONING_EFFORTS.includes(candidate) ? candidate : null;
+  }
+
   function openImageEditor(attachmentId){
     const target = nlpImageAttachments.find(att => att.id === attachmentId);
     if(!target || !imageEditorOverlay || !imageEditorCanvas || !imageEditorCtx){
@@ -2691,12 +3040,17 @@
     document.getElementById("confirm-overlay").style.display = "none";
     document.getElementById("confirm-list").innerHTML = "";
     confirmState = { mode: null, addItems: [], deleteGroups: [] };
+    resetRecurrenceEndSelections();
   }
 
   async function openAddConfirm(text, imagePayload = []){
     const payload = { text };
     if(Array.isArray(imagePayload) && imagePayload.length){
       payload.images = imagePayload;
+    }
+    const effort = getReasoningEffortSetting();
+    if(effort){
+      payload.reasoning_effort = effort;
     }
     const res = await fetch(apiBase + "/nlp-preview", {
       method:"POST",
@@ -2716,6 +3070,7 @@
 
     confirmState.mode = "add";
     confirmState.addItems = items;
+    resetRecurrenceEndSelections();
 
     document.getElementById("confirm-title").textContent = "이 일정을 추가할까요?";
     document.getElementById("confirm-desc").textContent = "체크한 항목만 추가됩니다. 반복 일정은 묶어서 선택하거나 상세에서 일부만 고를 수 있습니다.";
@@ -2953,6 +3308,10 @@
       top.appendChild(toggle);
       row.appendChild(top);
       row.appendChild(sub);
+      if(it.requires_end_confirmation){
+        const endControls = buildRecurrenceEndControls(it, idx);
+        row.appendChild(endControls);
+      }
       host.appendChild(row);
     });
 
@@ -2961,10 +3320,15 @@
 
   async function openDeleteConfirm(text, scope){
     if(!scope) return;
+    const payload = { text, start_date: scope.start, end_date: scope.end };
+    const effort = getReasoningEffortSetting();
+    if(effort){
+      payload.reasoning_effort = effort;
+    }
     const res = await fetch(apiBase + "/nlp-delete-preview", {
       method:"POST",
       headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ text, start_date: scope.start, end_date: scope.end })
+      body: JSON.stringify(payload)
     });
     if(!res.ok){
       alert("삭제할 일정을 찾지 못했습니다.");
@@ -3219,35 +3583,23 @@
         try{
           const showLocal = !IS_GOOGLE_MODE;
           const showGoogle = IS_GOOGLE_MODE;
-          let localEvents = [];
+          const viewRange = getCalendarViewRange(info);
+          const viewStartDate = viewRange.startDate;
+          const viewEndDate = viewRange.endDate;
+          const viewStartStr = viewRange.startStr;
+          const viewEndStr = viewRange.endStr;
 
+          let localEvents = [];
           if(showLocal){
-            const res = await fetch(apiBase + "/events");
-            if(!res.ok){
-              throw new Error("local events failed");
-            }
-            const data = await res.json();
+            const data = await getLocalEventsForRange(viewStartStr, viewEndStr);
             localEvents = Array.isArray(data) ? data.map(formatLocalEvent) : [];
           }
 
           let googleEvents = [];
           if(showGoogle){
-            let viewStart = info.start ? new Date(info.start) : new Date();
-            let viewEnd = info.end ? new Date(info.end) : new Date(viewStart);
-            viewEnd = new Date(viewEnd.getTime() - MS_PER_DAY);
-            if(viewEnd < viewStart){
-              viewEnd = new Date(viewStart);
-            }
-            const diffDays = Math.floor((viewEnd.getTime() - viewStart.getTime()) / MS_PER_DAY);
-            if(diffDays > 365){
-              viewEnd = new Date(viewStart.getTime() + 365 * MS_PER_DAY);
-            }
-            const fmtDate = (d) => d.toISOString().slice(0,10);
-            const viewStartStr = fmtDate(viewStart);
-            const viewEndStr = fmtDate(viewEnd);
             const years = [];
-            const startYear = viewStart.getFullYear();
-            const endYear = viewEnd.getFullYear();
+            const startYear = viewStartDate.getFullYear();
+            const endYear = viewEndDate.getFullYear();
             for(let y = startYear; y <= endYear; y += 1){
               years.push(y);
             }
@@ -3287,6 +3639,15 @@
         updateYearMonthLabel(info.view.calendar.getDate());
         setActiveView(info.view.type);
         syncSelectedDayHighlight();
+      },
+
+      loading: (isLoading) => {
+        if(!isLoading && !initialListLoaded){
+          initialListLoaded = true;
+          if(selectedDateStr){
+            loadEventListForDate(selectedDateStr);
+          }
+        }
       }
     });
 
@@ -3294,9 +3655,6 @@
     syncSelectedDayHighlight();
     updateYearMonthLabel(calendar.getDate());
     setActiveView(calendar.view.type);
-
-    // initial right list
-    loadEventListForDate(selectedDateStr);
 
     // topbar controls
     document.getElementById("cal-prev").addEventListener("click", () => calendar.prev());
@@ -3320,6 +3678,7 @@
     // NLP auto-grow
     setupShadowAutoGrow("nlp-unified-text");
     setupImageComposer();
+    initReasoningEffortControl();
     setupEventModalControls();
 
     const toggle = document.getElementById("nlp-mode-toggle");
@@ -3413,26 +3772,51 @@
           }
         });
 
-        const selected = chosenIdx.map(idx => {
+        const selectedEntries = [];
+        chosenIdx.forEach(idx => {
           const base = confirmState.addItems[idx];
-          if(!base) return null;
+          if(!base) return;
 
           if((base.type || "").toLowerCase() === "recurring"){
             const occList = occSelected[idx];
             if(Array.isArray(occList) && occList.length > 0){
-              return { ...base, selected_occurrence_indexes: occList };
+              selectedEntries.push({ idx, item: { ...base, selected_occurrence_indexes: occList } });
+              return;
             }
             if(occSelected[idx] === undefined){
-              return base;
+              selectedEntries.push({ idx, item: base });
+              return;
             }
-            return null;
+            return;
           }
-          return base;
-        }).filter(Boolean);
+          selectedEntries.push({ idx, item: base });
+        });
+
+        const selected = selectedEntries.map(entry => entry.item);
 
         if(selected.length === 0){
           alert("추가할 항목을 선택해주세요.");
           return;
+        }
+
+        for(const entry of selectedEntries){
+          const original = confirmState.addItems[entry.idx];
+          if(original && original.requires_end_confirmation){
+            const selection = getRecurrenceEndSelection(entry.idx);
+            if(!selection){
+              alert("반복 종료 방식을 선택해주세요.");
+              return;
+            }
+            if(selection.mode === "until" && !selection.value){
+              alert("반복 종료 날짜를 입력해주세요.");
+              return;
+            }
+            if(selection.mode === "count" && (!selection.value || selection.value <= 0)){
+              alert("반복 횟수를 1 이상으로 입력해주세요.");
+              return;
+            }
+            entry.item.recurring_end_override = selection;
+          }
         }
 
         const res = await fetch(apiBase + "/nlp-apply-add", {
@@ -3449,6 +3833,7 @@
         if(Array.isArray(created)){
           recordUndoBatch(created);
         }
+        markLocalCacheDirty();
 
         closeConfirm();
         resetNlpComposerInputs();
@@ -3477,6 +3862,7 @@
           alert("일정 삭제 적용에 실패했습니다.");
           return;
         }
+        markLocalCacheDirty();
 
         closeConfirm();
         resetNlpComposerInputs();

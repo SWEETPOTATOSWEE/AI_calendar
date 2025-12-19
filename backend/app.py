@@ -6,10 +6,12 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, Tuple
 import os
 import json
+import calendar
 import re
 import time
 import pathlib
 import urllib.parse
+import copy
 
 import requests
 from openai import OpenAI
@@ -19,6 +21,7 @@ from zoneinfo import ZoneInfo
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request as GoogleRequest
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 app = FastAPI()
 
@@ -96,6 +99,11 @@ class Event(BaseModel):
   google_event_id: Optional[str] = None
   all_day: bool = False
   created_at: Optional[str] = None
+  start_date: Optional[str] = None
+  time: Optional[str] = None
+  duration_minutes: Optional[int] = None
+  recurrence: Optional[Dict[str, Any]] = None
+  timezone: Optional[str] = "Asia/Seoul"
 
 
 class EventCreate(BaseModel):
@@ -120,6 +128,7 @@ class EventUpdate(BaseModel):
 class NaturalText(BaseModel):
   text: str
   images: Optional[List[str]] = None
+  reasoning_effort: Optional[str] = None
 
 
 class NaturalTextWithScope(BaseModel):
@@ -127,6 +136,7 @@ class NaturalTextWithScope(BaseModel):
   start_date: Optional[str] = None
   end_date: Optional[str] = None
   images: Optional[List[str]] = None
+  reasoning_effort: Optional[str] = None
 
 
 class DeleteResult(BaseModel):
@@ -145,13 +155,23 @@ class IdsPayload(BaseModel):
 
 # 메모리 저장
 events: List[Event] = []
+recurring_events: List[Dict[str, Any]] = []
 next_id: int = 1
 UNDO_RETENTION_DAYS = 14
 GOOGLE_RECENT_DAYS = 14
 MAX_SCOPE_DAYS = 365
+MAX_CONTEXT_DAYS = 180
+DEFAULT_CONTEXT_DAYS = 120
+MAX_CONTEXT_EVENTS = 200
+MAX_RECURRENCE_EXPANSION_DAYS = 365
+MAX_RECURRENCE_OCCURRENCES = 400
+RECURRENCE_OCCURRENCE_SCALE = 10000
 MAX_IMAGE_ATTACHMENTS = 5
 MAX_IMAGE_DATA_URL_CHARS = 4_500_000  # 약 3.4MB base64
 IMAGE_TOO_LARGE_MESSAGE = "첨부한 이미지가 너무 큽니다. 이미지는 약 3MB 이하로 축소해 주세요."
+ALLOWED_REASONING_EFFORTS = {"low", "medium", "high"}
+DEFAULT_TEXT_REASONING_EFFORT = "low"
+DEFAULT_MULTIMODAL_REASONING_EFFORT = "medium"
 
 USD_TO_KRW = 1450.0
 MODEL_PRICING = {
@@ -167,10 +187,20 @@ MODEL_PRICING = {
     },
 }
 
+google_events_cache: Dict[str, Dict[str, Any]] = {}
+
+
+def _serialize_events_payload() -> Dict[str, Any]:
+  return {
+      "version": 2,
+      "events": [e.dict() for e in events],
+      "recurring_events": recurring_events,
+  }
+
 
 def _save_events_to_disk() -> None:
   try:
-    payload = [e.dict() for e in events]
+    payload = _serialize_events_payload()
     EVENTS_DATA_FILE.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
                                 encoding="utf-8")
   except Exception as exc:
@@ -178,21 +208,61 @@ def _save_events_to_disk() -> None:
 
 
 def _load_events_from_disk() -> None:
-  global events, next_id
+  global events, recurring_events, next_id
+  events.clear()
+  recurring_events.clear()
+  next_id = 1
   if not EVENTS_DATA_FILE.exists():
-    events.clear()
-    next_id = 1
     return
   try:
     data = json.loads(EVENTS_DATA_FILE.read_text(encoding="utf-8"))
-    if not isinstance(data, list):
-      events.clear()
-      next_id = 1
-      return
+  except Exception as exc:
+    _log_debug(f"[EVENT STORE] load failed: {exc}")
+    return
 
+  max_id = 0
+  legacy_list: Optional[List[Any]] = None
+  if isinstance(data, list):
+    legacy_list = data
+  elif isinstance(data, dict):
+    legacy_list = data.get("events")
+    recurring_raw = data.get("recurring_events") or []
+    if isinstance(recurring_raw, list):
+      for item in recurring_raw:
+        if not isinstance(item, dict):
+          continue
+        rid = item.get("id")
+        title = (item.get("title") or "").strip()
+        start_date = item.get("start_date")
+        recurrence = item.get("recurrence")
+        if not isinstance(rid, int) or rid <= 0:
+          continue
+        if not title or not isinstance(start_date, str):
+          continue
+        if not isinstance(recurrence, dict):
+          continue
+        normalized = _normalize_recurrence_dict(recurrence)
+        if not normalized:
+          continue
+        item = {
+            "id": rid,
+            "title": title,
+            "start_date": start_date,
+            "time": item.get("time"),
+            "duration_minutes": item.get("duration_minutes"),
+            "location": item.get("location"),
+            "recurrence": normalized,
+            "timezone": item.get("timezone") or "Asia/Seoul",
+            "google_event_id": item.get("google_event_id"),
+            "created_at": item.get("created_at") or _now_iso_minute(),
+        }
+        recurring_events.append(item)
+        if rid > max_id:
+          max_id = rid
+
+  if isinstance(legacy_list, list):
     loaded: List[Event] = []
-    max_id = 0
-    for item in data:
+    for item in legacy_list:
       if not isinstance(item, dict):
         continue
       if not item.get("created_at"):
@@ -205,61 +275,9 @@ def _load_events_from_disk() -> None:
       if ev.id > max_id:
         max_id = ev.id
     events[:] = loaded
-    next_id = max_id + 1 if max_id else 1
-  except Exception as exc:
-    events.clear()
-    next_id = 1
-    _log_debug(f"[EVENT STORE] load failed: {exc}")
 
+  next_id = max_id + 1 if max_id else 1
 
-_load_events_from_disk()
-
-
-def _save_events_to_disk() -> None:
-  try:
-    payload = [e.dict() for e in events]
-    EVENTS_DATA_FILE.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
-                                encoding="utf-8")
-  except Exception as exc:
-    _log_debug(f"[EVENT STORE] save failed: {exc}")
-
-
-def _load_events_from_disk() -> None:
-  global events, next_id
-  if not EVENTS_DATA_FILE.exists():
-    events.clear()
-    next_id = 1
-    return
-  try:
-    data = json.loads(EVENTS_DATA_FILE.read_text(encoding="utf-8"))
-    if not isinstance(data, list):
-      events.clear()
-      next_id = 1
-      return
-
-    loaded: List[Event] = []
-    max_id = 0
-    for item in data:
-      if not isinstance(item, dict):
-        continue
-      if not item.get("created_at"):
-        item["created_at"] = _now_iso_minute()
-      try:
-        ev = Event(**item)
-      except Exception:
-        continue
-      loaded.append(ev)
-      if ev.id > max_id:
-        max_id = ev.id
-    events[:] = loaded
-    next_id = max_id + 1 if max_id else 1
-  except Exception as exc:
-    events.clear()
-    next_id = 1
-    _log_debug(f"[EVENT STORE] load failed: {exc}")
-
-
-_load_events_from_disk()
 
 
 # -------------------------
@@ -551,6 +569,162 @@ def store_event(
   return new_event
 
 
+def store_recurring_event(title: str,
+                          start_date: str,
+                          time: Optional[str],
+                          duration_minutes: Optional[int],
+                          location: Optional[str],
+                          recurrence: Dict[str, Any],
+                          timezone_value: str = "Asia/Seoul",
+                          google_event_id: Optional[str] = None) -> Dict[str, Any]:
+  global next_id, recurring_events
+  recurrence_copy = copy.deepcopy(recurrence)
+  record = {
+      "id": next_id,
+      "title": title,
+      "start_date": start_date,
+      "time": time,
+      "duration_minutes": duration_minutes,
+      "location": location,
+      "recurrence": recurrence_copy,
+      "timezone": timezone_value or "Asia/Seoul",
+      "google_event_id": google_event_id,
+      "created_at": _now_iso_minute(),
+  }
+  recurring_events.append(record)
+  next_id += 1
+  _save_events_to_disk()
+  return record
+
+
+def _find_recurring_event(event_id: int) -> Optional[Dict[str, Any]]:
+  for item in recurring_events:
+    if item.get("id") == event_id:
+      return item
+  return None
+
+
+def _delete_recurring_event(event_id: int, persist: bool = True) -> bool:
+  global recurring_events
+  before = len(recurring_events)
+  recurring_events = [item for item in recurring_events if item.get("id") != event_id]
+  if len(recurring_events) < before:
+    if persist:
+      _save_events_to_disk()
+    return True
+  return False
+
+
+def _recurring_definition_to_event(rec: Dict[str, Any]) -> Event:
+  time_str = rec.get("time") or "00:00"
+  all_day = not bool(rec.get("time"))
+  start_value = f"{rec['start_date']}T{time_str}"
+  end_value = None
+  duration = rec.get("duration_minutes")
+  if not all_day and isinstance(duration, (int, float)) and duration > 0:
+    try:
+      st = datetime.strptime(start_value, "%Y-%m-%dT%H:%M")
+      end_value = (st + timedelta(minutes=int(duration))).strftime("%Y-%m-%dT%H:%M")
+    except Exception:
+      end_value = None
+  elif all_day:
+    try:
+      st = datetime.strptime(rec["start_date"], "%Y-%m-%d")
+      end_value = (st + timedelta(days=1)).strftime("%Y-%m-%dT00:00")
+    except Exception:
+      end_value = None
+
+  return Event(
+      id=rec["id"],
+      title=rec["title"],
+      start=start_value,
+      end=end_value,
+      location=rec.get("location"),
+      recur="recurring",
+      google_event_id=rec.get("google_event_id"),
+      all_day=all_day,
+      created_at=rec.get("created_at"),
+      start_date=rec.get("start_date"),
+      time=rec.get("time"),
+      duration_minutes=rec.get("duration_minutes"),
+      recurrence=rec.get("recurrence"),
+      timezone=rec.get("timezone") or "Asia/Seoul",
+  )
+
+
+def _build_recurring_occurrence_event(rec: Dict[str, Any], occ: Dict[str, Any],
+                                      occurrence_id: int) -> Event:
+  return Event(
+      id=occurrence_id,
+      title=occ.get("title") or rec["title"],
+      start=occ.get("start") or f"{rec['start_date']}T00:00",
+      end=occ.get("end"),
+      location=occ.get("location"),
+      recur="recurring",
+      google_event_id=rec.get("google_event_id"),
+      all_day=bool(occ.get("all_day")),
+      created_at=rec.get("created_at"),
+      start_date=rec.get("start_date"),
+      time=rec.get("time"),
+      duration_minutes=rec.get("duration_minutes"),
+      recurrence=rec.get("recurrence"),
+      timezone=rec.get("timezone") or "Asia/Seoul",
+  )
+
+
+def _decode_occurrence_id(value: int) -> Optional[int]:
+  if value >= 0:
+    return None
+  raw = abs(value)
+  rec_id = raw // RECURRENCE_OCCURRENCE_SCALE
+  if rec_id == 0:
+    rec_id = raw
+  return rec_id
+
+
+def _collect_local_recurring_occurrences(
+    scope: Optional[Tuple[date, date]] = None) -> List[Event]:
+  items: List[Event] = []
+  for rec in recurring_events:
+    recurrence_spec = rec.get("recurrence")
+    if not isinstance(recurrence_spec, dict):
+      continue
+    base_dict = {
+        "title": rec.get("title"),
+        "start_date": rec.get("start_date"),
+        "time": rec.get("time"),
+        "duration_minutes": rec.get("duration_minutes"),
+        "location": rec.get("location"),
+        "recurrence": recurrence_spec,
+        "timezone": rec.get("timezone"),
+    }
+    expanded = _expand_recurring_item(base_dict, scope=scope)
+    for idx, occ in enumerate(expanded):
+      occurrence_id = -(rec["id"] * RECURRENCE_OCCURRENCE_SCALE + idx + 1)
+      items.append(_build_recurring_occurrence_event(rec, occ, occurrence_id))
+  return items
+
+
+def _list_local_events_for_api(
+    scope: Optional[Tuple[date, date]] = None) -> List[Event]:
+  if scope:
+    singles = [ev for ev in events if _event_within_scope(ev, scope)]
+  else:
+    singles = list(events)
+
+  if not recurring_events:
+    return singles
+
+  expansion_scope = scope
+  if expansion_scope is None:
+    today = datetime.now(SEOUL).date()
+    expansion_scope = (today - timedelta(days=30),
+                       today + timedelta(days=MAX_RECURRENCE_EXPANSION_DAYS))
+
+  rec_items = _collect_local_recurring_occurrences(scope=expansion_scope)
+  return singles + rec_items
+
+
 def is_admin(request: Request) -> bool:
   return request.cookies.get(ADMIN_COOKIE_NAME) == ADMIN_COOKIE_VALUE
 
@@ -570,6 +744,9 @@ EVENTS_SYSTEM_PROMPT_TEMPLATE = """너는 한국어 일정 문장을 구조화�
 
 출력 스키마:
 {
+  "needs_context": true | false,
+  "days_before": number,
+  "days_after": number,
   "items": [
     {
       "type": "single",
@@ -582,16 +759,31 @@ EVENTS_SYSTEM_PROMPT_TEMPLATE = """너는 한국어 일정 문장을 구조화�
       "type": "recurring",
       "title": string,
       "start_date": "YYYY-MM-DD",
-      "end_date": "YYYY-MM-DD",
-      "weekdays": [0,1,2,3,4,5,6],
       "time": "HH:MM" | null,
       "duration_minutes": number | null,
-      "location": string | null
+      "location": string | null,
+      "recurrence": {
+        "freq": "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY",
+        "interval": number | null,
+        "byweekday": [0,1,2,3,4,5,6] | null,
+        "bymonthday": [1..31, -1] | null,
+        "bysetpos": number | null,
+        "bymonth": [1..12] | null,
+        "end": {
+          "until": "YYYY-MM-DD" | null,
+          "count": number | null
+        } | null
+      },
+      "end_date": "YYYY-MM-DD" | null,
+      "weekdays": [0,1,2,3,4,5,6] | null
     }
   ]
 }
 
 규칙:
+- 기존 일정 컨텍스트가 반드시 필요하면 needs_context=true로 설정하고 items는 빈 배열로 반환.
+- needs_context=true일 때 days_before/days_after에 기준 날짜 기준으로 필요한 앞/뒤 일수를 정수로 작성.
+- 컨텍스트가 필요 없으면 needs_context=false, days_before/days_after는 0.
 - 여러 일정이면 single을 여러 개.
 - 반복이 있으면 recurring.
 - 단일+반복 혼합이면 둘 다 넣는다.
@@ -599,6 +791,8 @@ EVENTS_SYSTEM_PROMPT_TEMPLATE = """너는 한국어 일정 문장을 구조화�
 - 상대 날짜는 기준 날짜로 계산
 - weekdays는 0=월요일, 6=일요일
 - 시간 정보가 없으면 recurring의 time과 duration_minutes는 null.
+- recurrence가 있으면 우선 사용한다. end_date/weekday는 이전 버전 호환용으로만 사용(필수 아님).
+- recurrence.end는 until 또는 count 중 하나만 사용한다. 둘 다 쓰지 않는다.
 - 사용자의 요청이 없다면 과거 이벤트는 생성하지 않음
 """
 
@@ -608,15 +802,28 @@ def build_events_system_prompt() -> str:
   return EVENTS_SYSTEM_PROMPT_TEMPLATE.replace("{TODAY}", today)
 
 
-EVENTS_MULTIMODAL_PROMPT_TEMPLATE = """너는 한국어 일정 정보를 텍스트와 이미지에서 구조화하는 파서다. 반드시 JSON 한 개만 반환한다. 설명 금지.
-입력 특징:
-- 사용자가 항공권/티켓/메신저/시간표 등 캡처 이미지를 제공한다.
-- 검은 박스로 가린 영역이나 알아볼 수 없는 부분은 추측하지 말고 무시한다.
-- 텍스트 설명이 함께 있을 수 있으므로 반드시 모두 참고한다.
-
-기준 정보:
-- 기준 날짜: {TODAY}
-- 시간대: Asia/Seoul
+EVENTS_SYSTEM_PROMPT_WITH_CONTEXT_TEMPLATE = """너는 한국어 일정 문장을 구조화하는 파서다. 반드시 JSON 한 개만 반환한다. 설명 금지.
+입력 형식:
+{
+  "request": string,
+  "has_images": boolean,
+  "context": {
+    "today": "YYYY-MM-DD",
+    "timezone": "Asia/Seoul",
+    "scope": {"start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD"},
+    "events": [
+      {
+        "id": number,
+        "title": string,
+        "start": "YYYY-MM-DDTHH:MM",
+        "end": "YYYY-MM-DDTHH:MM" | null,
+        "location": string | null,
+        "recur": "recurring" | null,
+        "all_day": boolean
+      }
+    ]
+  }
+}
 
 출력 스키마:
 {
@@ -632,16 +839,99 @@ EVENTS_MULTIMODAL_PROMPT_TEMPLATE = """너는 한국어 일정 정보를 텍스�
       "type": "recurring",
       "title": string,
       "start_date": "YYYY-MM-DD",
-      "end_date": "YYYY-MM-DD",
-      "weekdays": [0,1,2,3,4,5,6],
       "time": "HH:MM" | null,
       "duration_minutes": number | null,
-      "location": string | null
+      "location": string | null,
+      "recurrence": {
+        "freq": "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY",
+        "interval": number | null,
+        "byweekday": [0,1,2,3,4,5,6] | null,
+        "bymonthday": [1..31, -1] | null,
+        "bysetpos": number | null,
+        "bymonth": [1..12] | null,
+        "end": {
+          "until": "YYYY-MM-DD" | null,
+          "count": number | null
+        } | null
+      },
+      "end_date": "YYYY-MM-DD" | null,
+      "weekdays": [0,1,2,3,4,5,6] | null
     }
   ]
 }
 
 규칙:
+- context.events는 이미 존재하는 일정이다. 요청이 기존 일정과의 관계(직후/직전/같은 시간/충돌 회피 등)를 요구할 때만 참고한다.
+- context.events 자체를 수정하거나 삭제하지 말고, 새로 추가할 일정만 만든다.
+- 여러 일정이면 single을 여러 개.
+- 반복이 있으면 recurring.
+- 단일+반복 혼합이면 둘 다 넣는다.
+- title에는 시간/장소를 넣지 않는다.
+- 상대 날짜는 context.today를 기준으로 계산
+- weekdays는 0=월요일, 6=일요일
+- 시간 정보가 없으면 recurring의 time과 duration_minutes는 null.
+- recurrence가 있으면 우선 사용한다. end_date/weekday는 이전 버전 호환용으로만 사용(필수 아님).
+- recurrence.end는 until 또는 count 중 하나만 사용한다. 둘 다 쓰지 않는다.
+- 사용자의 요청이 없다면 과거 이벤트는 생성하지 않음
+"""
+
+
+def build_events_system_prompt_with_context() -> str:
+  return EVENTS_SYSTEM_PROMPT_WITH_CONTEXT_TEMPLATE
+
+
+EVENTS_MULTIMODAL_PROMPT_TEMPLATE = """너는 한국어 일정 정보를 텍스트와 이미지에서 구조화하는 파서다. 반드시 JSON 한 개만 반환한다. 설명 금지.
+입력 특징:
+- 사용자가 항공권/티켓/메신저/시간표 등 캡처 이미지를 제공한다.
+- 검은 박스로 가린 영역이나 알아볼 수 없는 부분은 추측하지 말고 무시한다.
+- 텍스트 설명이 함께 있을 수 있으므로 반드시 모두 참고한다.
+
+기준 정보:
+- 기준 날짜: {TODAY}
+- 시간대: Asia/Seoul
+
+출력 스키마:
+{
+  "needs_context": true | false,
+  "days_before": number,
+  "days_after": number,
+  "items": [
+    {
+      "type": "single",
+      "title": string,
+      "start": "YYYY-MM-DDTHH:MM",
+      "end": "YYYY-MM-DDTHH:MM" | null,
+      "location": string | null
+    },
+    {
+      "type": "recurring",
+      "title": string,
+      "start_date": "YYYY-MM-DD",
+      "time": "HH:MM" | null,
+      "duration_minutes": number | null,
+      "location": string | null,
+      "recurrence": {
+        "freq": "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY",
+        "interval": number | null,
+        "byweekday": [0,1,2,3,4,5,6] | null,
+        "bymonthday": [1..31, -1] | null,
+        "bysetpos": number | null,
+        "bymonth": [1..12] | null,
+        "end": {
+          "until": "YYYY-MM-DD" | null,
+          "count": number | null
+        } | null
+      },
+      "end_date": "YYYY-MM-DD" | null,
+      "weekdays": [0,1,2,3,4,5,6] | null
+    }
+  ]
+}
+
+규칙:
+- 기존 일정 컨텍스트가 반드시 필요하면 needs_context=true로 설정하고 items는 빈 배열로 반환.
+- needs_context=true일 때 days_before/days_after에 기준 날짜 기준으로 필요한 앞/뒤 일수를 정수로 작성.
+- 컨텍스트가 필요 없으면 needs_context=false, days_before/days_after는 0.
 - 여러 일정이면 single을 여러 개.
 - 반복이 있으면 recurring.
 - 단일+반복 혼합이면 둘 다 넣는다.
@@ -650,6 +940,8 @@ EVENTS_MULTIMODAL_PROMPT_TEMPLATE = """너는 한국어 일정 정보를 텍스�
 - weekdays는 0=월요일, 6=일요일
 - 이미지 또는 텍스트에 정보가 없으면 null 처리
 - 가려진 구간이나 알아볼 수 없는 내용은 제외
+- recurrence가 있으면 우선 사용한다. end_date/weekday는 이전 버전 호환용으로만 사용(필수 아님).
+- recurrence.end는 until 또는 count 중 하나만 사용한다. 둘 다 쓰지 않는다.
 - 사용자의 요청이 없다면 과거 이벤트는 생성하지 않음
 """
 
@@ -659,7 +951,102 @@ def build_events_multimodal_prompt() -> str:
   return EVENTS_MULTIMODAL_PROMPT_TEMPLATE.replace("{TODAY}", today)
 
 
-def _build_events_user_payload(text: str, has_images: bool) -> str:
+EVENTS_MULTIMODAL_PROMPT_WITH_CONTEXT_TEMPLATE = """너는 한국어 일정 정보를 텍스트와 이미지에서 구조화하는 파서다. 반드시 JSON 한 개만 반환한다. 설명 금지.
+입력 특징:
+- 사용자가 항공권/티켓/메신저/시간표 등 캡처 이미지를 제공한다.
+- 검은 박스로 가린 영역이나 알아볼 수 없는 부분은 추측하지 말고 무시한다.
+- 텍스트 설명이 함께 있을 수 있으므로 반드시 모두 참고한다.
+
+입력 형식:
+{
+  "request": string,
+  "has_images": boolean,
+  "context": {
+    "today": "YYYY-MM-DD",
+    "timezone": "Asia/Seoul",
+    "scope": {"start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD"},
+    "events": [
+      {
+        "id": number,
+        "title": string,
+        "start": "YYYY-MM-DDTHH:MM",
+        "end": "YYYY-MM-DDTHH:MM" | null,
+        "location": string | null,
+        "recur": "recurring" | null,
+        "all_day": boolean
+      }
+    ]
+  }
+}
+
+출력 스키마:
+{
+  "items": [
+    {
+      "type": "single",
+      "title": string,
+      "start": "YYYY-MM-DDTHH:MM",
+      "end": "YYYY-MM-DDTHH:MM" | null,
+      "location": string | null
+    },
+    {
+      "type": "recurring",
+      "title": string,
+      "start_date": "YYYY-MM-DD",
+      "time": "HH:MM" | null,
+      "duration_minutes": number | null,
+      "location": string | null,
+      "recurrence": {
+        "freq": "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY",
+        "interval": number | null,
+        "byweekday": [0,1,2,3,4,5,6] | null,
+        "bymonthday": [1..31, -1] | null,
+        "bysetpos": number | null,
+        "bymonth": [1..12] | null,
+        "end": {
+          "until": "YYYY-MM-DD" | null,
+          "count": number | null
+        } | null
+      },
+      "end_date": "YYYY-MM-DD" | null,
+      "weekdays": [0,1,2,3,4,5,6] | null
+    }
+  ]
+}
+
+규칙:
+- context.events는 이미 존재하는 일정이다. 요청이 기존 일정과의 관계(직후/직전/같은 시간/충돌 회피 등)를 요구할 때만 참고한다.
+- context.events 자체를 수정하거나 삭제하지 말고, 새로 추가할 일정만 만든다.
+- 여러 일정이면 single을 여러 개.
+- 반복이 있으면 recurring.
+- 단일+반복 혼합이면 둘 다 넣는다.
+- title에는 시간/장소를 넣지 않는다.
+- 상대 날짜는 context.today를 기준으로 계산
+- weekdays는 0=월요일, 6=일요일
+- 이미지 또는 텍스트에 정보가 없으면 null 처리
+- 가려진 구간이나 알아볼 수 없는 내용은 제외
+- recurrence가 있으면 우선 사용한다. end_date/weekday는 이전 버전 호환용으로만 사용(필수 아님).
+- recurrence.end는 until 또는 count 중 하나만 사용한다. 둘 다 쓰지 않는다.
+- 사용자의 요청이 없다면 과거 이벤트는 생성하지 않음
+"""
+
+
+def build_events_multimodal_prompt_with_context() -> str:
+  return EVENTS_MULTIMODAL_PROMPT_WITH_CONTEXT_TEMPLATE
+
+
+def _build_events_user_payload(text: str,
+                               has_images: bool,
+                               context: Optional[Dict[str, Any]] = None
+                               ) -> str:
+  if context is not None:
+    payload: Dict[str, Any] = {
+        "request": text or "",
+        "has_images": bool(has_images),
+        "context": context,
+    }
+    return json.dumps(payload, ensure_ascii=False)
+
   lines = []
   if text:
     lines.append(f"문장: {text}")
@@ -668,6 +1055,475 @@ def _build_events_user_payload(text: str, has_images: bool) -> str:
   if has_images:
     lines.append("첨부 이미지를 참고해서 일정 정보를 추출해줘.")
   return "\n".join(lines)
+
+
+def _sanitize_reasoning_effort(value: Optional[str]) -> Optional[str]:
+  if not value or not isinstance(value, str):
+    return None
+  normalized = value.strip().lower()
+  if normalized in ALLOWED_REASONING_EFFORTS:
+    return normalized
+  return None
+
+
+def _resolve_request_reasoning_effort(request: Request,
+                                      requested: Optional[str]) -> Optional[str]:
+  if not requested:
+    return None
+  if not is_admin(request):
+    return None
+  return _sanitize_reasoning_effort(requested)
+
+
+def _pick_reasoning_effort(value: Optional[str], default_value: str) -> str:
+  sanitized = _sanitize_reasoning_effort(value)
+  return sanitized or default_value
+
+
+def _sanitize_context_days(value: Any) -> int:
+  try:
+    days = int(value)
+  except (TypeError, ValueError):
+    return 0
+  if days < 0:
+    return 0
+  return min(days, MAX_CONTEXT_DAYS)
+
+
+def _parse_bool(value: Any) -> bool:
+  if isinstance(value, bool):
+    return value
+  if isinstance(value, (int, float)):
+    return value != 0
+  if isinstance(value, str):
+    return value.strip().lower() in ("true", "yes", "1")
+  return False
+
+
+def _extract_context_request(data: Dict[str, Any]) -> Tuple[bool, int, int]:
+  needs = _parse_bool(data.get("needs_context"))
+  if not needs:
+    return False, 0, 0
+
+  has_before = "days_before" in data
+  has_after = "days_after" in data
+  days_before = _sanitize_context_days(data.get("days_before"))
+  days_after = _sanitize_context_days(data.get("days_after"))
+
+  if not has_before and not has_after:
+    return True, DEFAULT_CONTEXT_DAYS, DEFAULT_CONTEXT_DAYS
+
+  if not has_before:
+    days_before = days_after
+  if not has_after:
+    days_after = days_before
+
+  if days_before == 0 and days_after == 0:
+    days_before = DEFAULT_CONTEXT_DAYS
+    days_after = DEFAULT_CONTEXT_DAYS
+
+  return True, days_before, days_after
+
+
+def _build_events_context(days_before: int,
+                          days_after: int) -> Dict[str, Any]:
+  today = datetime.now(SEOUL).date()
+  start_date = today - timedelta(days=days_before)
+  end_date = today + timedelta(days=days_after)
+  scope = (start_date, end_date)
+
+  snapshot: List[Dict[str, Any]] = []
+  for ev in events:
+    if not _event_within_scope(ev, scope):
+      continue
+    snapshot.append({
+        "id": ev.id,
+        "title": ev.title,
+        "start": ev.start,
+        "end": ev.end,
+        "location": ev.location,
+        "recur": ev.recur,
+        "all_day": ev.all_day,
+    })
+
+  rec_occurrences = _collect_local_recurring_occurrences(scope=scope)
+  for occ in rec_occurrences:
+    snapshot.append({
+        "id": occ.id,
+        "title": occ.title,
+        "start": occ.start,
+        "end": occ.end,
+        "location": occ.location,
+        "recur": occ.recur,
+        "all_day": occ.all_day,
+    })
+
+  snapshot.sort(key=lambda x: x.get("start") or "")
+  if len(snapshot) > MAX_CONTEXT_EVENTS:
+    snapshot = snapshot[:MAX_CONTEXT_EVENTS]
+
+  return {
+      "today": today.isoformat(),
+      "timezone": "Asia/Seoul",
+      "scope": {
+          "start_date": start_date.isoformat(),
+          "end_date": end_date.isoformat(),
+      },
+      "events": snapshot,
+  }
+
+
+def _normalize_int_list(value: Any,
+                        min_val: int,
+                        max_val: int,
+                        allow_neg1: bool = False) -> List[int]:
+  if not isinstance(value, list):
+    return []
+  out: List[int] = []
+  seen: set[int] = set()
+  for raw in value:
+    try:
+      iv = int(raw)
+    except Exception:
+      continue
+    if allow_neg1 and iv == -1:
+      if iv not in seen:
+        out.append(iv)
+        seen.add(iv)
+      continue
+    if min_val <= iv <= max_val and iv not in seen:
+      out.append(iv)
+      seen.add(iv)
+  return out
+
+
+def _normalize_recurrence_dict(rec: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+  freq = (rec.get("freq") or "").strip().upper()
+  if freq not in {"DAILY", "WEEKLY", "MONTHLY", "YEARLY"}:
+    return None
+
+  interval_raw = rec.get("interval")
+  try:
+    interval = int(interval_raw) if interval_raw is not None else 1
+  except Exception:
+    interval = 1
+  if interval < 1:
+    interval = 1
+
+  byweekday = _normalize_int_list(rec.get("byweekday"), 0, 6)
+  bymonthday = _normalize_int_list(rec.get("bymonthday"),
+                                   1,
+                                   31,
+                                   allow_neg1=True)
+  bymonth = _normalize_int_list(rec.get("bymonth"), 1, 12)
+
+  bysetpos_raw = rec.get("bysetpos")
+  bysetpos: Optional[int] = None
+  if bysetpos_raw is not None:
+    try:
+      iv = int(bysetpos_raw)
+      if iv == -1 or 1 <= iv <= 5:
+        bysetpos = iv
+    except Exception:
+      bysetpos = None
+
+  end_value = rec.get("end")
+  end: Optional[Dict[str, Any]] = None
+  if isinstance(end_value, dict):
+    until_raw = end_value.get("until")
+    count_raw = end_value.get("count")
+    until = (until_raw.strip() if isinstance(until_raw, str) else None)
+    if until and not ISO_DATE_RE.match(until):
+      until = None
+    count: Optional[int] = None
+    if count_raw is not None:
+      try:
+        count = int(count_raw)
+      except Exception:
+        count = None
+      if count is not None and count <= 0:
+        count = None
+    if until and count:
+      count = None
+    if until or count:
+      end = {"until": until, "count": count}
+
+  return {
+      "freq": freq,
+      "interval": interval,
+      "byweekday": byweekday or None,
+      "bymonthday": bymonthday or None,
+      "bysetpos": bysetpos,
+      "bymonth": bymonth or None,
+      "end": end,
+  }
+
+
+def _build_legacy_weekly_recurrence(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+  weekdays = _normalize_int_list(item.get("weekdays"), 0, 6)
+  if not weekdays:
+    return None
+  end_date_str = item.get("end_date")
+  until = None
+  if isinstance(end_date_str, str) and ISO_DATE_RE.match(end_date_str.strip()):
+    until = end_date_str.strip()
+  end = {"until": until, "count": None} if until else None
+  return {
+      "freq": "WEEKLY",
+      "interval": 1,
+      "byweekday": weekdays or None,
+      "bymonthday": None,
+      "bysetpos": None,
+      "bymonth": None,
+      "end": end,
+  }
+
+
+def _resolve_recurrence(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+  rec_raw = item.get("recurrence")
+  if isinstance(rec_raw, dict):
+    normalized = _normalize_recurrence_dict(rec_raw)
+    if normalized:
+      item["recurrence"] = normalized
+      return normalized
+
+  legacy = _build_legacy_weekly_recurrence(item)
+  if legacy:
+    item["recurrence"] = legacy
+    return legacy
+
+  return None
+
+
+_load_events_from_disk()
+
+
+def _month_last_day(year: int, month: int) -> int:
+  return calendar.monthrange(year, month)[1]
+
+
+def _nth_weekday_in_month(year: int,
+                          month: int,
+                          weekday: int,
+                          pos: int) -> Optional[date]:
+  if pos == 0:
+    return None
+  last_day = _month_last_day(year, month)
+  if pos > 0:
+    first = date(year, month, 1)
+    offset = (weekday - first.weekday()) % 7
+    day = 1 + offset + (pos - 1) * 7
+    if 1 <= day <= last_day:
+      return date(year, month, day)
+    return None
+
+  last = date(year, month, last_day)
+  offset = (last.weekday() - weekday) % 7
+  day = last_day - offset + (pos + 1) * 7
+  if 1 <= day <= last_day:
+    return date(year, month, day)
+  return None
+
+
+def _monthly_candidates(year: int,
+                        month: int,
+                        recurrence: Dict[str, Any],
+                        default_day: int) -> List[date]:
+  bymonthday = recurrence.get("bymonthday") or []
+  byweekday = recurrence.get("byweekday") or []
+  bysetpos = recurrence.get("bysetpos")
+  last_day = _month_last_day(year, month)
+  results: List[date] = []
+
+  for d in bymonthday:
+    if d == -1:
+      day = last_day
+    elif 1 <= d <= last_day:
+      day = d
+    else:
+      continue
+    results.append(date(year, month, day))
+
+  if byweekday:
+    if bysetpos is not None:
+      for w in byweekday:
+        dt = _nth_weekday_in_month(year, month, w, int(bysetpos))
+        if dt:
+          results.append(dt)
+    else:
+      for w in byweekday:
+        dt = _nth_weekday_in_month(year, month, w, 1)
+        while dt and dt.month == month:
+          results.append(dt)
+          dt = dt + timedelta(days=7)
+
+  if not results:
+    day = min(max(default_day, 1), last_day)
+    results.append(date(year, month, day))
+
+  dedup = sorted({d: None for d in results}.keys())
+  return dedup
+
+
+def _add_months(year: int, month: int, delta: int) -> Tuple[int, int]:
+  total = (year * 12 + (month - 1)) + delta
+  new_year = total // 12
+  new_month = total % 12 + 1
+  return new_year, new_month
+
+
+def _collect_recurrence_dates(recurrence: Dict[str, Any],
+                              start_date: date,
+                              scope: Optional[Tuple[date, date]] = None) -> List[date]:
+  freq = recurrence.get("freq")
+  interval = int(recurrence.get("interval") or 1)
+  interval = max(interval, 1)
+  byweekday = recurrence.get("byweekday") or []
+  bymonthday = recurrence.get("bymonthday") or []
+  bysetpos = recurrence.get("bysetpos")
+  bymonth = recurrence.get("bymonth") or []
+  end = recurrence.get("end") or {}
+
+  until_date: Optional[date] = None
+  count: Optional[int] = None
+  until_raw = end.get("until")
+  if isinstance(until_raw, str) and ISO_DATE_RE.match(until_raw):
+    try:
+      until_date = datetime.strptime(until_raw, "%Y-%m-%d").date()
+    except Exception:
+      until_date = None
+  count_raw = end.get("count")
+  if count_raw is not None:
+    try:
+      count = int(count_raw)
+    except Exception:
+      count = None
+    if count is not None and count <= 0:
+      count = None
+  if until_date and count:
+    count = None
+
+  scope_start = start_date
+  limit_date = start_date + timedelta(days=MAX_RECURRENCE_EXPANSION_DAYS)
+  scope_filter: Optional[Tuple[date, date]] = None
+
+  if scope:
+    if count is None:
+      scope_start = max(scope_start, scope[0])
+    else:
+      scope_filter = scope
+    limit_date = scope[1]
+
+  if count is not None:
+    count = min(count, MAX_RECURRENCE_OCCURRENCES)
+    if not scope and not until_date:
+      limit_days = MAX_RECURRENCE_EXPANSION_DAYS * count
+      limit_date = max(limit_date, start_date + timedelta(days=limit_days))
+
+  if until_date and until_date < limit_date:
+    limit_date = until_date
+
+  results: List[date] = []
+
+  def push_date(d: date) -> bool:
+    if d < scope_start:
+      return False
+    if d > limit_date:
+      return False
+    results.append(d)
+    if len(results) >= MAX_RECURRENCE_OCCURRENCES:
+      return True
+    if count is not None and len(results) >= count:
+      return True
+    return False
+
+  if freq == "DAILY":
+    if scope_start <= start_date:
+      cur = start_date
+    else:
+      delta_days = (scope_start - start_date).days
+      offset = delta_days % interval
+      cur = scope_start if offset == 0 else scope_start + timedelta(
+          days=interval - offset)
+    while cur <= limit_date:
+      if push_date(cur):
+        break
+      cur += timedelta(days=interval)
+
+  elif freq == "WEEKLY":
+    weekdays = sorted({int(w) for w in byweekday
+                       if isinstance(w, int) and 0 <= w <= 6})
+    if not weekdays:
+      weekdays = [start_date.weekday()]
+
+    base = start_date - timedelta(days=start_date.weekday())
+    week_index = 0
+    while True:
+      week_start = base + timedelta(days=week_index * interval * 7)
+      if week_start > limit_date:
+        break
+      for w in weekdays:
+        occ = week_start + timedelta(days=w)
+        if occ < scope_start:
+          continue
+        if occ > limit_date:
+          continue
+        if push_date(occ):
+          return results
+      week_index += 1
+
+  elif freq == "MONTHLY":
+    month_index = 0
+    while True:
+      year, month = _add_months(start_date.year, start_date.month,
+                                month_index * interval)
+      first_day = date(year, month, 1)
+      if first_day > limit_date:
+        break
+      candidates = _monthly_candidates(year, month, {
+          "bymonthday": bymonthday,
+          "byweekday": byweekday,
+          "bysetpos": bysetpos
+      }, start_date.day)
+      for occ in candidates:
+        if occ < scope_start:
+          continue
+        if occ > limit_date:
+          continue
+        if push_date(occ):
+          return results
+      month_index += 1
+
+  elif freq == "YEARLY":
+    months = [int(m) for m in bymonth if isinstance(m, int) and 1 <= m <= 12]
+    if not months:
+      months = [start_date.month]
+
+    year_index = 0
+    while True:
+      year = start_date.year + year_index * interval
+      first_day = date(year, 1, 1)
+      if first_day > limit_date:
+        break
+      for month in months:
+        candidates = _monthly_candidates(year, month, {
+            "bymonthday": bymonthday,
+            "byweekday": byweekday,
+            "bysetpos": bysetpos
+        }, start_date.day)
+        for occ in candidates:
+          if occ < scope_start:
+            continue
+          if occ > limit_date:
+            continue
+          if push_date(occ):
+            return results
+      year_index += 1
+
+  results.sort()
+  if scope_filter:
+    return [d for d in results if scope_filter[0] <= d <= scope_filter[1]]
+  return results
 
 
 def _get_detail_value(detail: Any, key: str) -> Optional[int]:
@@ -704,13 +1560,41 @@ def _estimate_llm_cost(model_name: str, prompt_tokens: Optional[int],
   return usd, krw
 
 
-def _invoke_event_parser(kind: str, text: str,
-                         images: List[str]) -> Dict[str, Any]:
+def _invoke_event_parser(kind: str,
+                         text: str,
+                         images: List[str],
+                         reasoning_effort: Optional[str] = None) -> Dict[str, Any]:
   payload = _build_events_user_payload(text, bool(images))
   if images:
-    return _chat_multimodal_json(kind, build_events_multimodal_prompt(),
-                                 payload, images)
-  return _chat_json(kind, build_events_system_prompt(), payload)
+    data = _chat_multimodal_json(kind,
+                                 build_events_multimodal_prompt(),
+                                 payload,
+                                 images,
+                                 reasoning_effort=reasoning_effort)
+  else:
+    data = _chat_json(kind,
+                      build_events_system_prompt(),
+                      payload,
+                      reasoning_effort=reasoning_effort)
+
+  needs_context, days_before, days_after = _extract_context_request(data)
+  if not needs_context:
+    return data
+
+  context = _build_events_context(days_before, days_after)
+  payload_with_context = _build_events_user_payload(text, bool(images), context)
+
+  if images:
+    return _chat_multimodal_json(
+        kind,
+        build_events_multimodal_prompt_with_context(),
+        payload_with_context,
+        images,
+        reasoning_effort=reasoning_effort)
+  return _chat_json(kind,
+                    build_events_system_prompt_with_context(),
+                    payload_with_context,
+                    reasoning_effort=reasoning_effort)
 
 
 def build_delete_system_prompt() -> str:
@@ -792,8 +1676,10 @@ def _current_reference_line() -> str:
   return f"기준 시각: {now.strftime('%Y-%m-%d')} (Asia/Seoul)\n"
 
 
-def _chat_json(kind: str, system_prompt: str,
-               user_text: str) -> Dict[str, Any]:
+def _chat_json(kind: str,
+               system_prompt: str,
+               user_text: str,
+               reasoning_effort: Optional[str] = None) -> Dict[str, Any]:
   """
     gpt-5-nano를 Chat Completions로 호출하는 버전.
     - max_tokens 대신 max_completion_tokens 사용
@@ -804,6 +1690,8 @@ def _chat_json(kind: str, system_prompt: str,
   input_text = _current_reference_line() + user_text
 
   started = time.perf_counter()
+  effort_value = _pick_reasoning_effort(reasoning_effort,
+                                        DEFAULT_TEXT_REASONING_EFFORT)
   try:
     completion = c.chat.completions.create(
         model="gpt-5-nano",
@@ -817,7 +1705,10 @@ def _chat_json(kind: str, system_prompt: str,
                 "content": input_text
             },
         ],
-        max_completion_tokens=5000,
+        max_completion_tokens=10000,
+        reasoning_effort=effort_value,
+        verbosity="low",
+        response_format={"type": "json_object"},
     )
 
     latency_ms = (time.perf_counter() - started) * 1000.0
@@ -852,7 +1743,8 @@ def _chat_json(kind: str, system_prompt: str,
 def _chat_multimodal_json(kind: str,
                           system_prompt: str,
                           user_text: str,
-                          images: List[str]) -> Dict[str, Any]:
+                          images: List[str],
+                          reasoning_effort: Optional[str] = None) -> Dict[str, Any]:
   c = get_client()
 
   user_parts: List[Dict[str, Any]] = [{
@@ -869,6 +1761,8 @@ def _chat_multimodal_json(kind: str,
     })
 
   started = time.perf_counter()
+  effort_value = _pick_reasoning_effort(reasoning_effort,
+                                        DEFAULT_MULTIMODAL_REASONING_EFFORT)
   try:
     completion = c.chat.completions.create(
         model="gpt-5-mini",
@@ -886,6 +1780,9 @@ def _chat_multimodal_json(kind: str,
             },
         ],
         max_completion_tokens=10000,
+        reasoning_effort=effort_value,
+        verbosity="low",
+        response_format={"type": "json_object"},
     )
 
     latency_ms = (time.perf_counter() - started) * 1000.0
@@ -920,52 +1817,30 @@ def _chat_multimodal_json(kind: str,
 # -------------------------
 # recurring 전개 & RRULE
 # -------------------------
-def _expand_recurring_item(item: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _expand_recurring_item(item: Dict[str, Any],
+                           scope: Optional[Tuple[date, date]] = None) -> List[Dict[str, Any]]:
   """
     recurring item -> 여러 개의 단일 일정 dict로 전개
     """
   title = (item.get("title") or "").strip()
   start_date_str = item.get("start_date")
-  end_date_str = item.get("end_date")
-  weekdays_raw = item.get("weekdays")
+  if not title or not isinstance(start_date_str, str):
+    return []
 
-  if not title or not isinstance(start_date_str, str) or not isinstance(
-      end_date_str, str):
+  recurrence = _resolve_recurrence(item)
+  if not recurrence:
     return []
 
   try:
     start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
-    end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
   except Exception:
-    return []
-
-  if end_date < start_date:
-    return []
-
-  # 최대 1년까지만 전개
-  max_span_days = 365
-  span = (end_date - start_date).days
-  if span > max_span_days:
-    end_date = start_date + timedelta(days=max_span_days)
-
-  if not isinstance(weekdays_raw, list) or not weekdays_raw:
-    return []
-
-  weekday_set = set()
-  for w in weekdays_raw:
-    try:
-      iw = int(w)
-    except Exception:
-      continue
-    if 0 <= iw <= 6:
-      weekday_set.add(iw)
-
-  if not weekday_set:
     return []
 
   time_str = item.get("time")
   duration_minutes = item.get("duration_minutes")
   location = item.get("location")
+  timezone_str = item.get("timezone") or "Asia/Seoul"
+  tzinfo = ZoneInfo(timezone_str)
 
   hh, mm = 0, 0
   time_valid = False
@@ -987,70 +1862,170 @@ def _expand_recurring_item(item: Dict[str, Any]) -> List[Dict[str, Any]]:
 
   results: List[Dict[str, Any]] = []
 
-  cur = start_date
-  while cur <= end_date:
-    if cur.weekday() in weekday_set:
-      if time_valid:
-        start_dt = datetime(cur.year, cur.month, cur.day, hh, mm, tzinfo=SEOUL)
-        start_str = start_dt.strftime("%Y-%m-%dT%H:%M")
-
-        end_str: Optional[str] = None
-        if dur is not None:
-          end_dt = start_dt + timedelta(minutes=dur)
-          end_str = end_dt.strftime("%Y-%m-%dT%H:%M")
-      else:
-        start_dt = datetime(cur.year, cur.month, cur.day, 0, 0, tzinfo=SEOUL)
-        end_dt = datetime(cur.year, cur.month, cur.day, 23, 59, tzinfo=SEOUL)
-        start_str = start_dt.strftime("%Y-%m-%dT%H:%M")
+  for cur in _collect_recurrence_dates(recurrence, start_date, scope=scope):
+    if time_valid:
+      start_dt = datetime(cur.year, cur.month, cur.day, hh, mm, tzinfo=tzinfo)
+      start_str = start_dt.strftime("%Y-%m-%dT%H:%M")
+      end_str: Optional[str] = None
+      if dur is not None:
+        end_dt = start_dt + timedelta(minutes=dur)
         end_str = end_dt.strftime("%Y-%m-%dT%H:%M")
+    else:
+      start_dt = datetime(cur.year, cur.month, cur.day, 0, 0, tzinfo=tzinfo)
+      end_dt = datetime(cur.year, cur.month, cur.day, 23, 59, tzinfo=tzinfo)
+      start_str = start_dt.strftime("%Y-%m-%dT%H:%M")
+      end_str = end_dt.strftime("%Y-%m-%dT%H:%M")
 
-      results.append({
-          "title": title,
-          "start": start_str,
-          "end": end_str,
-          "location": location_str,
-          "recur": "recurring",
-          "all_day": not time_valid
-      })
-    cur += timedelta(days=1)
+    results.append({
+        "title": title,
+        "start": start_str,
+        "end": end_str,
+        "location": location_str,
+        "recur": "recurring",
+        "all_day": not time_valid
+    })
+
+  if scope:
+    filtered: List[Dict[str, Any]] = []
+    for ev in results:
+      start_iso = ev.get("start")
+      if not isinstance(start_iso, str):
+        continue
+      start_date_value = datetime.strptime(start_iso[:10], "%Y-%m-%d").date()
+      if scope[0] <= start_date_value <= scope[1]:
+        filtered.append(ev)
+    return filtered
 
   return results
 
 
-def recurring_to_rrule(item: Dict[str, Any]) -> Optional[str]:
-  """
-    recurring item -> RRULE 문자열 (FREQ=WEEKLY)
-    """
-  weekdays_raw = item.get("weekdays")
-  if not isinstance(weekdays_raw, list) or not weekdays_raw:
+def _format_rrule_until(until_date: date,
+                        time_str: Optional[str],
+                        tz_name: str) -> str:
+  if isinstance(time_str, str) and re.match(r"^\d{2}:\d{2}$",
+                                            time_str.strip()):
+    hh, mm = [int(x) for x in time_str.strip().split(":")]
+    local_dt = datetime(until_date.year,
+                        until_date.month,
+                        until_date.day,
+                        hh,
+                        mm,
+                        tzinfo=ZoneInfo(tz_name))
+    utc_dt = local_dt.astimezone(timezone.utc)
+    return utc_dt.strftime("%Y%m%dT%H%M%SZ")
+  return until_date.strftime("%Y%m%d")
+
+
+def _build_rrule_core(recurrence: Dict[str, Any],
+                      start_date_str: str,
+                      time_str: Optional[str],
+                      tz_name: str) -> Optional[str]:
+  freq = recurrence.get("freq")
+  if freq not in {"DAILY", "WEEKLY", "MONTHLY", "YEARLY"}:
     return None
 
-  weekday_map = {0: "MO", 1: "TU", 2: "WE", 3: "TH", 4: "FR", 5: "SA", 6: "SU"}
-
-  byday_list: List[str] = []
-  for w in weekdays_raw:
-    try:
-      iw = int(w)
-    except Exception:
-      continue
-    if iw in weekday_map:
-      byday_list.append(weekday_map[iw])
-
-  if not byday_list:
-    return None
-
-  end_date_str = item.get("end_date")
-  if not isinstance(end_date_str, str):
-    return None
+  interval = int(recurrence.get("interval") or 1)
+  interval = max(interval, 1)
+  byweekday = recurrence.get("byweekday") or []
+  bymonthday = recurrence.get("bymonthday") or []
+  bysetpos = recurrence.get("bysetpos")
+  bymonth = recurrence.get("bymonth") or []
+  end = recurrence.get("end") or {}
 
   try:
-    end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
+    start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
   except Exception:
     return None
 
-  until = end_date.strftime("%Y%m%dT235959Z")
-  byday = ",".join(byday_list)
-  return f"FREQ=WEEKLY;BYDAY={byday};UNTIL={until}"
+  if freq == "WEEKLY" and not byweekday:
+    byweekday = [start_date.weekday()]
+
+  if freq == "MONTHLY" and not byweekday and not bymonthday:
+    bymonthday = [start_date.day]
+
+  if freq == "YEARLY":
+    if not bymonth:
+      bymonth = [start_date.month]
+    if not byweekday and not bymonthday:
+      bymonthday = [start_date.day]
+
+  parts = [f"FREQ={freq}"]
+  if interval != 1:
+    parts.append(f"INTERVAL={interval}")
+
+  if bymonth:
+    parts.append("BYMONTH=" + ",".join(str(m) for m in bymonth))
+
+  if bymonthday:
+    parts.append("BYMONTHDAY=" + ",".join(str(d) for d in bymonthday))
+
+  if byweekday:
+    weekday_map = {
+        0: "MO",
+        1: "TU",
+        2: "WE",
+        3: "TH",
+        4: "FR",
+        5: "SA",
+        6: "SU"
+    }
+    byday_list = []
+    for w in byweekday:
+      try:
+        iw = int(w)
+      except Exception:
+        continue
+      if iw in weekday_map:
+        byday_list.append(weekday_map[iw])
+    if byday_list:
+      parts.append("BYDAY=" + ",".join(byday_list))
+
+  if bysetpos is not None:
+    try:
+      parts.append(f"BYSETPOS={int(bysetpos)}")
+    except Exception:
+      pass
+
+  until_raw = end.get("until")
+  count_raw = end.get("count")
+  until_date: Optional[date] = None
+  if isinstance(until_raw, str) and ISO_DATE_RE.match(until_raw):
+    try:
+      until_date = datetime.strptime(until_raw, "%Y-%m-%d").date()
+    except Exception:
+      until_date = None
+
+  count: Optional[int] = None
+  if count_raw is not None:
+    try:
+      count = int(count_raw)
+    except Exception:
+      count = None
+    if count is not None and count <= 0:
+      count = None
+
+  if until_date:
+    parts.append("UNTIL=" + _format_rrule_until(until_date, time_str, tz_name))
+  elif count:
+    parts.append(f"COUNT={count}")
+
+  return ";".join(parts)
+
+
+def recurring_to_rrule(item: Dict[str, Any]) -> Optional[str]:
+  """
+    recurring item -> RRULE 문자열 (recurrence 기반)
+    """
+  recurrence = _resolve_recurrence(item)
+  if not recurrence:
+    return None
+
+  start_date_str = item.get("start_date")
+  if not isinstance(start_date_str, str):
+    return None
+
+  return _build_rrule_core(recurrence, start_date_str, item.get("time"),
+                           "Asia/Seoul")
 
 
 # -------------------------
@@ -1343,18 +2318,81 @@ def _convert_gcal_time(obj: Dict[str, Any],
   return (None, False)
 
 
-def fetch_google_events_between(range_start: date,
-                                range_end: date) -> List[Dict[str, Any]]:
-  if not is_gcal_configured():
-    raise HTTPException(status_code=400,
-                        detail="Google Calendar 연동이 설정되지 않았습니다.")
+class SyncTokenInvalid(Exception):
 
-  try:
-    service = get_gcal_service()
-  except Exception as exc:
-    raise HTTPException(status_code=502,
-                        detail=f"Google Calendar 인증에 실패했습니다: {exc}") from exc
+  def __init__(self, kind: str = "invalid") -> None:
+    super().__init__(kind)
+    self.kind = kind
 
+
+def _google_cache_key(range_start: date, range_end: date) -> str:
+  return f"{range_start.isoformat()}:{range_end.isoformat()}"
+
+
+def _event_in_date_range(ev: Dict[str, Any],
+                         range_start: date,
+                         range_end: date) -> bool:
+  start_date, _ = _split_iso_date_time(ev.get("start"))
+  if not start_date:
+    return False
+  end_date, _ = _split_iso_date_time(ev.get("end"))
+  if not end_date:
+    end_date = start_date
+  if end_date < range_start or start_date > range_end:
+    return False
+  return True
+
+
+def _normalize_gcal_event(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+  start_raw = raw.get("start") or {}
+  start_iso, all_day_flag = _convert_gcal_time(start_raw, False, None)
+  if not start_iso:
+    return None
+  end_raw = raw.get("end") or {}
+  end_iso, _ = _convert_gcal_time(end_raw, True, start_iso)
+  return {
+      "id": raw.get("id"),
+      "title": raw.get("summary") or "(제목 없음)",
+      "start": start_iso,
+      "end": end_iso,
+      "location": raw.get("location"),
+      "all_day": all_day_flag,
+      "status": raw.get("status"),
+      "html_link": raw.get("htmlLink"),
+      "organizer": (raw.get("organizer") or {}).get("email"),
+      "created": raw.get("created"),
+      "updated": raw.get("updated"),
+  }
+
+
+def _sorted_google_cache_items(cache: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+  items = list(cache.values())
+  items.sort(key=lambda ev: ev.get("start") or "")
+  return items
+
+
+def _sync_token_error_kind(exc: Exception) -> Optional[str]:
+  if not isinstance(exc, HttpError):
+    return None
+  status = getattr(exc.resp, "status", None)
+  content = getattr(exc, "content", None)
+  if isinstance(content, (bytes, bytearray)):
+    content = content.decode("utf-8", errors="ignore")
+  content_str = str(content or "")
+  if status == 410:
+    return "invalid"
+  if status == 400 and "syncToken" in content_str:
+    if "timeMin" in content_str or "timeMax" in content_str or "orderBy" in content_str:
+      return "unsupported"
+    return "invalid"
+  return None
+
+
+def _fetch_google_events_raw(service,
+                             range_start: date,
+                             range_end: date,
+                             sync_token: Optional[str] = None
+                             ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
   time_min = datetime(range_start.year,
                       range_start.month,
                       range_start.day,
@@ -1370,46 +2408,112 @@ def fetch_google_events_between(range_start: date,
 
   events_data: List[Dict[str, Any]] = []
   page_token: Optional[str] = None
+  next_sync_token: Optional[str] = None
 
   while True:
-    request = service.events().list(calendarId=GOOGLE_CALENDAR_ID,
-                                    timeMin=time_min.isoformat(),
-                                    timeMax=time_max.isoformat(),
-                                    singleEvents=True,
-                                    orderBy="startTime",
-                                    pageToken=page_token)
-    response = request.execute()
+    params: Dict[str, Any] = {
+        "calendarId": GOOGLE_CALENDAR_ID,
+        "singleEvents": True,
+        "pageToken": page_token,
+        "timeMin": time_min.isoformat(),
+        "timeMax": time_max.isoformat(),
+    }
+    if sync_token:
+      params["syncToken"] = sync_token
+      params["showDeleted"] = True
+    else:
+      params["orderBy"] = "startTime"
+
+    request = service.events().list(**params)
+    try:
+      response = request.execute()
+    except HttpError as exc:
+      if sync_token:
+        kind = _sync_token_error_kind(exc)
+        if kind:
+          raise SyncTokenInvalid(kind) from exc
+      raise
+
     items = response.get("items", [])
-
-    for raw in items:
-      if not isinstance(raw, dict):
-        continue
-      start_raw = raw.get("start") or {}
-      start_iso, all_day_flag = _convert_gcal_time(start_raw, False, None)
-      if not start_iso:
-        continue
-      end_raw = raw.get("end") or {}
-      end_iso, _ = _convert_gcal_time(end_raw, True, start_iso)
-
-      events_data.append({
-          "id": raw.get("id"),
-          "title": raw.get("summary") or "(제목 없음)",
-          "start": start_iso,
-          "end": end_iso,
-          "location": raw.get("location"),
-          "all_day": all_day_flag,
-          "status": raw.get("status"),
-          "html_link": raw.get("htmlLink"),
-          "organizer": (raw.get("organizer") or {}).get("email"),
-          "created": raw.get("created"),
-          "updated": raw.get("updated"),
-      })
+    if isinstance(items, list):
+      events_data.extend(items)
 
     page_token = response.get("nextPageToken")
     if not page_token:
+      next_sync_token = response.get("nextSyncToken") or next_sync_token
       break
 
-  return events_data
+  return events_data, next_sync_token
+
+
+def _apply_gcal_items_to_cache(cache: Dict[str, Dict[str, Any]],
+                               raw_items: List[Dict[str, Any]],
+                               range_start: date,
+                               range_end: date) -> None:
+  for raw in raw_items:
+    if not isinstance(raw, dict):
+      continue
+    event_id = raw.get("id")
+    if not event_id:
+      continue
+    if raw.get("status") == "cancelled":
+      cache.pop(event_id, None)
+      continue
+    normalized = _normalize_gcal_event(raw)
+    if not normalized:
+      continue
+    if _event_in_date_range(normalized, range_start, range_end):
+      cache[event_id] = normalized
+    else:
+      cache.pop(event_id, None)
+
+
+def fetch_google_events_between(range_start: date,
+                                range_end: date) -> List[Dict[str, Any]]:
+  if not is_gcal_configured():
+    raise HTTPException(status_code=400,
+                        detail="Google Calendar 연동이 설정되지 않았습니다.")
+
+  try:
+    service = get_gcal_service()
+  except Exception as exc:
+    raise HTTPException(status_code=502,
+                        detail=f"Google Calendar 인증에 실패했습니다: {exc}") from exc
+
+  cache_key = _google_cache_key(range_start, range_end)
+  cache_entry = google_events_cache.get(cache_key)
+  if cache_entry and cache_entry.get("sync_token") and not cache_entry.get("sync_disabled"):
+    try:
+      raw_items, next_sync = _fetch_google_events_raw(service,
+                                                      range_start,
+                                                      range_end,
+                                                      sync_token=cache_entry.get(
+                                                          "sync_token"))
+      cache_events = cache_entry.get("events") or {}
+      if not isinstance(cache_events, dict):
+        cache_events = {}
+      _apply_gcal_items_to_cache(cache_events, raw_items, range_start, range_end)
+      cache_entry["events"] = cache_events
+      if next_sync:
+        cache_entry["sync_token"] = next_sync
+      cache_entry["updated_at"] = _now_iso_minute()
+      return _sorted_google_cache_items(cache_events)
+    except SyncTokenInvalid as exc:
+      cache_entry["sync_token"] = None
+      if getattr(exc, "kind", "") == "unsupported":
+        cache_entry["sync_disabled"] = True
+
+  raw_items, next_sync = _fetch_google_events_raw(service, range_start,
+                                                  range_end)
+  events_by_id: Dict[str, Dict[str, Any]] = {}
+  _apply_gcal_items_to_cache(events_by_id, raw_items, range_start, range_end)
+  google_events_cache[cache_key] = {
+      "events": events_by_id,
+      "sync_token": next_sync,
+      "sync_disabled": False,
+      "updated_at": _now_iso_minute(),
+  }
+  return _sorted_google_cache_items(events_by_id)
 
 
 def fetch_recent_google_events(days: int = GOOGLE_RECENT_DAYS) -> List[Dict[str, Any]]:
@@ -1481,8 +2585,10 @@ def fetch_recent_google_events(days: int = GOOGLE_RECENT_DAYS) -> List[Dict[str,
 # -------------------------
 # 자연어 → 일정 생성(기존)
 # -------------------------
-def create_events_from_natural_text_core(text: str,
-                                         images: Optional[List[str]] = None) -> List[Event]:
+def create_events_from_natural_text_core(
+    text: str,
+    images: Optional[List[str]] = None,
+    reasoning_effort: Optional[str] = None) -> List[Event]:
   images = images or []
   t = normalize_text(text)
   if not t and not images:
@@ -1493,7 +2599,7 @@ def create_events_from_natural_text_core(text: str,
         status_code=500,
         detail="LLM client is not configured (OPENAI_API_KEY 미설정)")
 
-  data = _invoke_event_parser("preview", t, images)
+  data = _invoke_event_parser("preview", t, images, reasoning_effort)
   items = data.get("items")
   if not isinstance(items, list):
     raise HTTPException(status_code=502, detail="LLM 응답 형식 오류입니다.")
@@ -1601,7 +2707,8 @@ def create_events_from_natural_text_core(text: str,
 # -------------------------
 def preview_events_from_natural_text_core(
     text: str,
-    images: Optional[List[str]] = None) -> Dict[str, Any]:
+    images: Optional[List[str]] = None,
+    reasoning_effort: Optional[str] = None) -> Dict[str, Any]:
   images = images or []
   t = normalize_text(text)
   if not t and not images:
@@ -1612,7 +2719,7 @@ def preview_events_from_natural_text_core(
         status_code=500,
         detail="LLM client is not configured (OPENAI_API_KEY 미설정)")
 
-  data = _invoke_event_parser("parse", t, images)
+  data = _invoke_event_parser("parse", t, images, reasoning_effort)
   items = data.get("items")
   if not isinstance(items, list) or len(items) == 0:
     raise HTTPException(status_code=422, detail="미리보기를 만들 수 없습니다.")
@@ -1650,6 +2757,7 @@ def preview_events_from_natural_text_core(
       if not title:
         continue
 
+      recurrence = _resolve_recurrence(item)
       expanded = _expand_recurring_item(item)
       count = len(expanded)
 
@@ -1684,28 +2792,48 @@ def preview_events_from_natural_text_core(
             "all_day": ev.get("all_day", False)
         })
 
+      display_end_date = None
+      legacy_end = item.get("end_date")
+      if isinstance(legacy_end, str) and ISO_DATE_RE.match(legacy_end):
+        display_end_date = legacy_end
+      elif recurrence and recurrence.get("end"):
+        rec_end = recurrence.get("end") or {}
+        until_val = rec_end.get("until")
+        if isinstance(until_val, str) and ISO_DATE_RE.match(until_val):
+          display_end_date = until_val
+        elif rec_end.get("count") and occurrences:
+          last_start = occurrences[-1].get("start")
+          if isinstance(last_start, str) and len(last_start) >= 10:
+            display_end_date = last_start[:10]
+
+      display_weekdays = item.get("weekdays")
+      if not isinstance(display_weekdays, list) and recurrence:
+        display_weekdays = recurrence.get("byweekday")
+      requires_end = False
+      if recurrence:
+        rec_end_val = recurrence.get("end")
+        requires_end = not (rec_end_val and (rec_end_val.get("until") or rec_end_val.get("count")))
+      elif not display_end_date:
+        requires_end = True
+
+      finite_count = count if recurrence and recurrence.get("end") else None
+
       out_items.append({
-          "type":
-          "recurring",
-          "title":
-          title,
-          "start_date":
-          item.get("start_date"),
-          "end_date":
-          item.get("end_date"),
-          "weekdays":
-          item.get("weekdays"),
-          "time":
-          item.get("time"),
-          "duration_minutes":
-          item.get("duration_minutes"),
+          "type": "recurring",
+          "title": title,
+          "start_date": item.get("start_date"),
+          "end_date": display_end_date,
+          "weekdays": display_weekdays,
+          "time": item.get("time"),
+          "duration_minutes": item.get("duration_minutes"),
           "location": (item.get("location") or "").strip() or None,
-          "count":
-          count,
+          "recurrence": recurrence,
+          "count": finite_count,
           "samples": [x.get("start") for x in samples if x.get("start")],
           "all_day":
           len(expanded) > 0 and bool(expanded[0].get("all_day")),
           "occurrences": occurrences,
+          "requires_end_confirmation": requires_end,
       })
 
   if not out_items:
@@ -1755,6 +2883,41 @@ def apply_add_items_core(items: List[Dict[str, Any]]) -> List[Event]:
           ))
 
     elif typ == "recurring":
+      recurrence_spec = _resolve_recurrence(item)
+      if not recurrence_spec:
+        continue
+      override = item.get("recurring_end_override")
+      if isinstance(override, dict):
+        mode = override.get("mode")
+        if mode == "none":
+          recurrence_spec = {
+              **recurrence_spec, "end": None,
+          }
+        elif mode == "until":
+          until_val = override.get("value")
+          if isinstance(until_val, str) and ISO_DATE_RE.match(until_val):
+            recurrence_spec = {
+                **recurrence_spec,
+                "end": {
+                    "until": until_val,
+                    "count": None
+                }
+            }
+        elif mode == "count":
+          try:
+            count_val = int(override.get("value"))
+          except Exception:
+            count_val = None
+          if count_val and count_val > 0:
+            recurrence_spec = {
+                **recurrence_spec,
+                "end": {
+                    "until": None,
+                    "count": count_val
+                }
+            }
+      item["recurrence"] = recurrence_spec
+
       expanded_all = _expand_recurring_item(item)
       if not expanded_all:
         continue
@@ -1788,25 +2951,34 @@ def apply_add_items_core(items: List[Dict[str, Any]]) -> List[Event]:
       google_recur_id: Optional[str] = None
       if full_recurring:
         google_recur_id = gcal_create_recurring_event(item)
+        start_date_value = item.get("start_date")
+        if not isinstance(start_date_value, str):
+          continue
+        stored = store_recurring_event(
+            title=(item.get("title") or "").strip(),
+            start_date=start_date_value,
+            time=item.get("time"),
+            duration_minutes=item.get("duration_minutes"),
+            location=(item.get("location") or "").strip() or None,
+            recurrence=recurrence_spec,
+            google_event_id=google_recur_id,
+        )
+        created.append(_recurring_definition_to_event(stored))
+        continue
 
       for ev in expanded:
         all_day_flag = bool(ev.get("all_day"))
-        if google_recur_id is None:
-          google_single_id = gcal_create_single_event(ev["title"],
-                                                      ev["start"],
-                                                      ev.get("end"),
-                                                      ev.get("location"),
-                                                      all_day_flag)
-        else:
-          google_single_id = google_recur_id
-
+        google_single_id = gcal_create_single_event(ev["title"], ev["start"],
+                                                    ev.get("end"),
+                                                    ev.get("location"),
+                                                    all_day_flag)
         created.append(
             store_event(
                 title=ev["title"],
                 start=ev["start"],
                 end=ev.get("end"),
                 location=ev.get("location"),
-                recur="recurring" if full_recurring else None,
+                recur=None,
                 google_event_id=google_single_id,
                 all_day=all_day_flag,
             ))
@@ -1821,8 +2993,9 @@ def apply_add_items_core(items: List[Dict[str, Any]]) -> List[Event]:
 # 삭제 NLP (기존)
 # -------------------------
 def create_delete_ids_from_natural_text(text: str,
-                                        scope: Optional[Tuple[date, date]]
-                                        = None) -> List[int]:
+                                        scope: Optional[Tuple[date, date]] = None,
+                                        reasoning_effort: Optional[str] = None
+                                        ) -> List[int]:
   if client is None:
     return []
 
@@ -1835,14 +3008,45 @@ def create_delete_ids_from_natural_text(text: str,
       "recur": e.recur
   } for e in events if _event_within_scope(e, scope)][:50]
 
+  if len(snapshot) < 50:
+    rec_occurrences = _collect_local_recurring_occurrences(scope=scope)
+    for occ in rec_occurrences:
+      snapshot.append({
+          "id": occ.id,
+          "title": occ.title,
+          "start": occ.start,
+          "end": occ.end,
+          "location": occ.location,
+          "recur": occ.recur
+      })
+      if len(snapshot) >= 50:
+        break
+
+  if len(snapshot) < 50:
+    for rec in recurring_events:
+      rec_ev = _recurring_definition_to_event(rec)
+      if not scope or _event_within_scope(rec_ev, scope):
+        snapshot.append({
+            "id": rec_ev.id,
+            "title": rec_ev.title,
+            "start": rec_ev.start,
+            "end": rec_ev.end,
+            "location": rec_ev.location,
+            "recur": rec_ev.recur
+        })
+        if len(snapshot) >= 50:
+          break
+
   user_payload = {
       "existing_events": snapshot,
       "delete_request": normalize_text(text),
       "timezone": "Asia/Seoul"
   }
 
-  data = _chat_json("delete", build_delete_system_prompt(),
-                    json.dumps(user_payload, ensure_ascii=False))
+  data = _chat_json("delete",
+                    build_delete_system_prompt(),
+                    json.dumps(user_payload, ensure_ascii=False),
+                    reasoning_effort=reasoning_effort)
 
   ids = data.get("ids")
   if not isinstance(ids, list):
@@ -1855,6 +3059,10 @@ def create_delete_ids_from_natural_text(text: str,
       i = int(x)
     except Exception:
       continue
+    if i < 0:
+      rec_target = _decode_occurrence_id(i)
+      if rec_target:
+        i = rec_target
     if i not in seen:
       seen.add(i)
       cleaned.append(i)
@@ -1867,33 +3075,64 @@ def delete_events_by_ids(ids: List[int]) -> List[int]:
   if not ids:
     return []
 
-  id_set = set(ids)
-  existing_ids = {e.id for e in events}
-  target_ids = sorted(list(id_set & existing_ids))
-  if not target_ids:
-    return []
+  normalized_ids: List[int] = []
+  for raw in ids:
+    if raw < 0:
+      rec_target = _decode_occurrence_id(raw)
+      if rec_target:
+        normalized_ids.append(rec_target)
+    else:
+      normalized_ids.append(raw)
 
-  events = [e for e in events if e.id not in id_set]
-  _save_events_to_disk()
-  return target_ids
+  id_set = set(normalized_ids)
+  deleted: List[int] = []
+
+  remaining: List[Event] = []
+  for ev in events:
+    if ev.id in id_set:
+      deleted.append(ev.id)
+    else:
+      remaining.append(ev)
+  events = remaining
+
+  for raw_id in list(id_set):
+    if raw_id in deleted:
+      continue
+    if _delete_recurring_event(raw_id, persist=False):
+      deleted.append(raw_id)
+
+  if deleted:
+    _save_events_to_disk()
+  return sorted(deleted)
 
 
 # -------------------------
 # 삭제 미리보기(그룹화)
 # -------------------------
 def delete_preview_groups(text: str,
-                          scope: Optional[Tuple[date, date]] = None
+                          scope: Optional[Tuple[date, date]] = None,
+                          reasoning_effort: Optional[str] = None
                           ) -> Dict[str, Any]:
   text = normalize_text(text)
   if not text:
     return {"groups": []}
 
-  ids = create_delete_ids_from_natural_text(text, scope=scope)
+  ids = create_delete_ids_from_natural_text(text,
+                                            scope=scope,
+                                            reasoning_effort=reasoning_effort)
   if not ids:
     return {"groups": []}
 
   id_set = set(ids)
-  targets = [e for e in events if e.id in id_set and _event_within_scope(e, scope)]
+  combined_events = list(events)
+  combined_events.extend(_collect_local_recurring_occurrences(scope=scope))
+  for rec in recurring_events:
+    event_obj = _recurring_definition_to_event(rec)
+    if _event_within_scope(event_obj, scope):
+      combined_events.append(event_obj)
+  targets = [
+      e for e in combined_events if e.id in id_set and _event_within_scope(e, scope)
+  ]
 
   def group_key(e: Event) -> str:
     t = (e.start or
@@ -2070,10 +3309,15 @@ def logout():
 # API 엔드포인트
 # -------------------------
 @app.get("/api/events", response_model=List[Event])
-def list_events(request: Request):
+def list_events(request: Request,
+                start_date: Optional[str] = Query(None),
+                end_date: Optional[str] = Query(None)):
   if is_google_mode_active(request):
     return []
-  return events
+  scope = _parse_scope_dates(start_date, end_date, require=False)
+  items = _list_local_events_for_api(scope=scope)
+  items.sort(key=lambda ev: ev.start)
+  return items
 
 
 def _format_recent_local_event(ev: Event) -> Dict[str, Any]:
@@ -2087,6 +3331,23 @@ def _format_recent_local_event(ev: Event) -> Dict[str, Any]:
       "created_at": ev.created_at,
       "source": "local",
       "google_event_id": ev.google_event_id,
+  }
+
+
+def _format_recent_recurring_event(rec: Dict[str, Any]) -> Dict[str, Any]:
+  start_time = rec.get("time") or "00:00"
+  start_value = f"{rec['start_date']}T{start_time}"
+  return {
+      "id": rec["id"],
+      "title": rec["title"],
+      "start": start_value,
+      "end": None,
+      "location": rec.get("location"),
+      "all_day": not bool(rec.get("time")),
+      "created_at": rec.get("created_at"),
+      "source": "local",
+      "google_event_id": rec.get("google_event_id"),
+      "recurrence": rec.get("recurrence"),
   }
 
 
@@ -2124,6 +3385,9 @@ def list_recent_events(request: Request):
       for e in events
       if _parse_created_at(e.created_at) >= cutoff
   ]
+  for rec in recurring_events:
+    if _parse_created_at(rec.get("created_at")) >= cutoff:
+      recent.append(_format_recent_recurring_event(rec))
   recent.sort(key=lambda ev: _parse_created_at(ev.get("created_at")), reverse=True)
   return recent[:200]
 
@@ -2217,13 +3481,20 @@ def create_event(event_in: EventCreate):
 
 @app.delete("/api/events/{event_id}")
 def delete_event(event_id: int):
-  global events
-  events = [e for e in events if e.id != event_id]
-  return {"ok": True}
+  deleted = delete_events_by_ids([event_id])
+  if not deleted:
+    raise HTTPException(status_code=404, detail="일정을 찾을 수 없습니다.")
+  return {"ok": True, "deleted": deleted}
 
 
 @app.patch("/api/events/{event_id}", response_model=Event)
 def update_event(event_id: int, payload: EventUpdate):
+  recurrence_id = _decode_occurrence_id(event_id)
+  if recurrence_id:
+    raise HTTPException(status_code=400, detail="반복 일정은 개별 수정할 수 없습니다.")
+  if _find_recurring_event(event_id):
+    raise HTTPException(status_code=400, detail="반복 일정은 개별 수정할 수 없습니다.")
+
   target = next((e for e in events if e.id == event_id), None)
   if target is None:
     raise HTTPException(status_code=404, detail="일정을 찾을 수 없습니다.")
@@ -2276,10 +3547,11 @@ def update_event(event_id: int, payload: EventUpdate):
 
 
 @app.post("/api/nlp-events", response_model=List[Event])
-def create_events_from_natural_text(body: NaturalText):
+def create_events_from_natural_text(body: NaturalText, request: Request):
   try:
     images = _validate_image_payload(body.images)
-    return create_events_from_natural_text_core(body.text, images)
+    effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
+    return create_events_from_natural_text_core(body.text, images, effort)
   except HTTPException:
     raise
   except Exception as e:
@@ -2288,10 +3560,11 @@ def create_events_from_natural_text(body: NaturalText):
 
 
 @app.post("/api/nlp-event", response_model=Event)
-def create_event_from_natural_text_compat(body: NaturalText):
+def create_event_from_natural_text_compat(body: NaturalText, request: Request):
   try:
     images = _validate_image_payload(body.images)
-    created = create_events_from_natural_text_core(body.text, images)
+    effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
+    created = create_events_from_natural_text_core(body.text, images, effort)
     return created[0]
   except HTTPException:
     raise
@@ -2301,10 +3574,11 @@ def create_event_from_natural_text_compat(body: NaturalText):
 
 
 @app.post("/api/nlp-preview")
-def nlp_preview(body: NaturalText):
+def nlp_preview(body: NaturalText, request: Request):
   try:
     images = _validate_image_payload(body.images)
-    return preview_events_from_natural_text_core(body.text, images)
+    effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
+    return preview_events_from_natural_text_core(body.text, images, effort)
   except HTTPException:
     raise
   except Exception as e:
@@ -2325,10 +3599,11 @@ def nlp_apply_add(body: ApplyItems):
 
 
 @app.post("/api/nlp-delete-preview")
-def nlp_delete_preview(body: NaturalTextWithScope):
+def nlp_delete_preview(body: NaturalTextWithScope, request: Request):
   try:
     scope = _parse_scope_dates(body.start_date, body.end_date, require=True)
-    return delete_preview_groups(body.text, scope=scope)
+    effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
+    return delete_preview_groups(body.text, scope=scope, reasoning_effort=effort)
   except HTTPException:
     raise
   except Exception as e:
@@ -2343,10 +3618,14 @@ def delete_by_ids(body: IdsPayload):
 
 
 @app.post("/api/nlp-delete-events", response_model=DeleteResult)
-def delete_events_from_natural_text(body: NaturalTextWithScope):
+def delete_events_from_natural_text(body: NaturalTextWithScope,
+                                    request: Request):
   try:
     scope = _parse_scope_dates(body.start_date, body.end_date, require=True)
-    ids = create_delete_ids_from_natural_text(body.text, scope=scope)
+    effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
+    ids = create_delete_ids_from_natural_text(body.text,
+                                              scope=scope,
+                                              reasoning_effort=effort)
     deleted = delete_events_by_ids(ids)
     return DeleteResult(ok=True, deleted_ids=deleted, count=len(deleted))
   except HTTPException:
