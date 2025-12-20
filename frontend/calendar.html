@@ -31,6 +31,7 @@
 
       --sidebar-w: 360px;
       --ctl-h: 34px;
+      --topbar-ctl-h: 34px;
     }
 
     *{box-sizing:border-box;}
@@ -40,6 +41,7 @@
       font-family:"Noto Sans KR", system-ui, -apple-system, "Segoe UI", sans-serif;
       background:var(--bg);
       color:var(--text);
+      font-weight:500;
     }
     input, textarea, button, select{ font-family:inherit; }
 
@@ -49,7 +51,7 @@
       z-index:30;
       background:rgba(247,247,245,.92);
       backdrop-filter:saturate(180%) blur(10px);
-      border-bottom:1px solid var(--border);
+      border-bottom:0;
     }
 
     .topbar{
@@ -69,13 +71,12 @@
       min-width: 0;
     }
 
-    .brand{
-      font-weight:800;
-      letter-spacing:-0.2px;
-      padding:6px 10px;
+    .app-icon-slot{
+      width:var(--ctl-h);
+      height:var(--ctl-h);
       border-radius:10px;
       background:#fff;
-      border:1px solid var(--border);
+      border:1px dashed var(--border);
       flex:0 0 auto;
     }
 
@@ -86,29 +87,59 @@
       flex:0 0 auto;
     }
 
-    .nav-btn{
-      height:34px;
-      padding:0 10px;
-      border-radius:10px;
+    .nav-group{
+      display:inline-flex;
+      align-items:center;
+      gap:4px;
+      padding:2px;
+      height:var(--topbar-ctl-h);
       border:1px solid var(--border);
+      border-radius:999px;
       background:#fff;
+      flex:0 0 auto;
+    }
+    .nav-btn{
+      height:30px;
+      padding:0 12px;
+      border:0;
+      border-radius:999px;
+      background:transparent;
       color:var(--text);
-      font-weight:700;
       cursor:pointer;
       display:inline-flex;
       align-items:center;
       gap:6px;
-      flex:0 0 auto;
+    }
+    .nav-btn.is-circle{
+      width:30px;
+      padding:0;
+      justify-content:center;
     }
     .nav-btn:hover{background:#f2f2f0;}
 
     .ym-label{
-      font-size:16px;
-      font-weight:800;
+      display:flex;
+      align-items:center;
+      height:var(--topbar-ctl-h);
+      font-size:22px;
+      font-weight:900;
       letter-spacing:-0.2px;
       padding:0 4px;
       white-space:nowrap;
       flex:0 0 auto;
+    }
+    .month-label{
+      position:absolute;
+      top:12px;
+      left:28px;
+      font-size:28px;
+      font-weight:900;
+      color:var(--text);
+      background:transparent;
+      border:0;
+      padding:0;
+      z-index:5;
+      pointer-events:none;
     }
 
     .topbar-right{
@@ -118,23 +149,214 @@
       flex:0 0 auto;
     }
 
-    .view-switch{
+    .event-search{
+      position:relative;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      height:var(--topbar-ctl-h);
+      width:var(--topbar-ctl-h);
+      border-radius:999px;
+      background:transparent;
+      overflow:visible;
+    }
+    .event-search-field{
+      position:absolute;
+      right:calc(100% + 6px);
+      top:0;
+      height:100%;
+      display:flex;
+      align-items:center;
+      gap:4px;
+      border:1px solid var(--border);
+      border-radius:999px;
+      background:#fff;
+      padding:0 4px 0 8px;
+      width:0;
+      opacity:0;
+      pointer-events:none;
+      transition:width 180ms ease, opacity 160ms ease;
+    }
+    .event-search.is-open .event-search-field{
+      width:180px;
+      opacity:1;
+      pointer-events:auto;
+    }
+    .event-search-field input{
+      border:0;
+      outline:none;
+      background:transparent;
+      color:var(--text);
+      font-size:13px;
+      padding:0 2px;
+      min-width:0;
+      width:auto;
+      flex:1 1 auto;
+    }
+    .event-search input::placeholder{ color:var(--muted); }
+    .event-search-settings-btn{
+      width:24px;
+      height:24px;
+      border:0;
+      border-radius:999px;
+      background:transparent;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      color:var(--muted);
+      cursor:pointer;
+      margin-left:0;
+      outline:none;
+      box-shadow:none;
+    }
+    .event-search .event-search-settings-btn{
+      border:0;
+      background:transparent;
+    }
+    .event-search-settings-btn:focus-visible{
+      outline:none;
+      box-shadow:none;
+    }
+    .event-search-settings-btn:hover{ background:#f2f2f0; color:var(--text); }
+    .event-search-settings-btn svg{ width:14px; height:14px; fill:currentColor; }
+
+    .event-search-popover{
+      position:absolute;
+      right:0;
+      top:calc(100% + 8px);
+      display:inline-flex;
+      flex-direction:column;
+      width:max-content;
+      min-width:120px;
+      max-width:160px;
+      background:#fff;
+      border:1px solid var(--border);
+      border-radius:12px;
+      padding:8px;
+      box-shadow:0 10px 30px rgba(0,0,0,.08);
+      z-index:40;
+      opacity:0;
+      transform:translateY(-4px);
+      pointer-events:none;
+      transition:opacity 160ms ease, transform 160ms ease;
+    }
+    .event-search.is-range-open .event-search-popover{
+      opacity:1;
+      transform:translateY(0);
+      pointer-events:auto;
+    }
+    .event-search-popover .popover-title{
+      font-size:12px;
+      color:var(--muted);
+      margin-bottom:6px;
+      padding-right:22px;
+      text-align:left;
+    }
+    .event-search-popover .popover-row{
       display:flex;
       align-items:center;
       gap:6px;
-      padding:4px;
-      border-radius:12px;
+      margin-bottom:6px;
+      font-size:12px;
+      color:var(--muted);
+    }
+    .event-search-popover .popover-row:last-of-type{
+      margin-bottom:0;
+    }
+    .event-search-popover .popover-row input{
+      width:30px;
+      text-align:center;
+      font-size:12px;
+      color:var(--text);
+      padding:2px 3px;
+      border:1px solid var(--border);
+      border-radius:8px;
+      outline:none;
+      background:#fff;
+      flex:0 0 auto;
+    }
+    .event-search-popover .popover-row input::-webkit-outer-spin-button,
+    .event-search-popover .popover-row input::-webkit-inner-spin-button{
+      -webkit-appearance:none;
+      margin:0;
+    }
+    .event-search-popover .popover-row input[type="number"]{
+      -moz-appearance:textfield;
+    }
+    .event-search-popover .popover-actions{
+      display:flex;
+      justify-content:flex-end;
+      margin-top:6px;
+    }
+    .event-search-popover .popover-actions button{
+      border:0;
+      background:#111;
+      color:#fff;
+      width:22px;
+      height:22px;
+      padding:0;
+      border-radius:999px;
+      cursor:pointer;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      font-size:12px;
+      line-height:1;
+    }
+    .event-search-popover .popover-close{
+      position:absolute;
+      top:6px;
+      right:6px;
+      border:0;
+      background:transparent;
+      color:var(--muted);
+      font-size:14px;
+      width:22px;
+      height:22px;
+      border-radius:999px;
+      cursor:pointer;
+    }
+    .event-search-popover .popover-close:hover{
+      background:#f2f2f0;
+      color:var(--text);
+    }
+    .event-search button{
+      width:30px;
+      height:30px;
+      border:1px solid var(--border);
+      background:#fff;
+      border-radius:999px;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      cursor:pointer;
+      color:var(--muted);
+    }
+    .event-search button.event-search-settings-btn{
+      border:0;
+      background:transparent;
+    }
+    .event-search button:hover{ background:#f2f2f0; color:var(--text); }
+    .event-search svg{ width:16px; height:16px; fill:currentColor; }
+
+    .view-switch{
+      display:inline-flex;
+      align-items:center;
+      gap:4px;
+      padding:2px;
+      height:var(--topbar-ctl-h);
+      border-radius:999px;
       border:1px solid var(--border);
       background:#fff;
     }
     .view-btn{
+      width:30px;
       height:30px;
-      padding:0 10px;
-      border-radius:10px;
+      padding:0;
+      border-radius:999px;
       border:0;
       background:transparent;
       color:var(--muted);
-      font-weight:800;
       cursor:pointer;
     }
     .view-btn:hover{background:#f2f2f0; color:var(--text);}
@@ -175,7 +397,8 @@
       display:inline-flex;
       align-items:center;
       justify-content:center;
-      padding:.32rem .62rem;
+      height:var(--topbar-ctl-h);
+      padding:0 12px;
       border-radius:10px;
       border:1px solid var(--border);
       background:#fff;
@@ -186,6 +409,31 @@
       white-space:nowrap;
     }
     .header-btn:hover{ background:#f2f2f0; }
+    .menu-btn{
+      width:var(--topbar-ctl-h);
+      height:var(--topbar-ctl-h);
+      border-radius:999px;
+      border:1px solid var(--border);
+      background:#fff;
+      color:var(--text);
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      cursor:pointer;
+      flex:0 0 auto;
+    }
+    .menu-btn:hover{ background:#f2f2f0; }
+    .menu-btn svg{
+      width:16px;
+      height:16px;
+      fill:currentColor;
+    }
+    .topbar-right .primary-btn{
+      height:var(--topbar-ctl-h);
+      padding:0 12px;
+      margin-top:0;
+      align-self:center;
+    }
 
     /* ===== Layout: calendar left, utilities right ===== */
     .app{
@@ -196,6 +444,83 @@
       max-width: 1400px;
       margin:0 auto;
       align-items:start;
+    }
+
+    .tool-overlay{
+      position:fixed;
+      inset:0;
+      background:rgba(15,18,20,.25);
+      opacity:0;
+      pointer-events:none;
+      transition:opacity .25s ease;
+      z-index:40;
+    }
+    .tool-overlay.active{
+      opacity:1;
+      pointer-events:auto;
+    }
+    .tool-drawer{
+      position:fixed;
+      top:0;
+      right:0;
+      height:100%;
+      width:min(320px, 86vw);
+      background:#fff;
+      border-left:1px solid var(--border);
+      transform:translateX(100%);
+      transition:transform .3s ease;
+      z-index:50;
+      display:flex;
+      flex-direction:column;
+    }
+    .tool-drawer.active{
+      transform:translateX(0);
+    }
+    .tool-drawer-head{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      padding:16px;
+      border-bottom:1px solid var(--border);
+    }
+    .tool-drawer-title{
+      font-size:16px;
+      font-weight:900;
+      letter-spacing:-0.2px;
+    }
+    .tool-close{
+      width:32px;
+      height:32px;
+      border-radius:999px;
+      border:1px solid var(--border);
+      background:#fff;
+      cursor:pointer;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+    }
+    .tool-close:hover{ background:#f2f2f0; }
+    .tool-drawer-body{
+      padding:16px;
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+    }
+    .tool-link{
+      display:inline-flex;
+      align-items:center;
+      justify-content:space-between;
+      padding:12px 14px;
+      border-radius:12px;
+      border:1px solid var(--border);
+      background:#fff;
+      color:var(--text);
+      text-decoration:none;
+      font-weight:800;
+    }
+    .tool-link:hover{ background:#f2f2f0; }
+    body.drawer-open{
+      overflow:hidden;
     }
 
     main{min-width:0;}
@@ -215,6 +540,9 @@
       box-shadow:var(--shadow);
       padding:12px;
       margin-bottom:12px;
+    }
+    .panel.composer{
+      padding:6px;
     }
 
     .panel-title{
@@ -265,20 +593,140 @@
       border:1px solid var(--border);
       border-radius:var(--radius);
       box-shadow:var(--shadow);
-      padding:10px;
+      padding:10px 10px 0;
       position:relative;
       overflow:hidden;
+    }
+    #calendar-container.is-year-view #month-label{
+      display:none;
+    }
+    #calendar{
+      padding-top:52px;
     }
     .calendar-main-content{
       position:relative;
       display:flex;
       flex-direction:column;
-      gap:12px;
+      gap:0;
       min-height:100%;
-      transition:filter .4s ease;
+      opacity:1;
+      transition:filter .4s ease, opacity .04s ease;
+    }
+    .calendar-main-content.is-hidden{
+      display:none;
+    }
+    .calendar-main-content.is-fading{
+      opacity:0;
+    }
+    #year-view{
+      display:none;
+      padding:52px 6px 10px;
+    }
+    #calendar-container.is-year-view #year-view{
+      padding-top:10px;
+    }
+    #year-view.active{
+      display:block;
+    }
+    .year-grid{
+      display:grid;
+      grid-template-columns:repeat(4, minmax(0, 1fr));
+      gap:12px;
+      width:100%;
+      max-width:680px;
+      margin:0 auto;
+    }
+    @media (max-width: 1200px){
+      .year-grid{
+        grid-template-columns:repeat(3, minmax(0, 1fr));
+        max-width:580px;
+      }
+    }
+    @media (max-width: 900px){
+      .year-grid{
+        grid-template-columns:repeat(3, minmax(0, 1fr));
+        max-width:520px;
+      }
+    }
+    @media (max-width: 620px){
+      .year-grid{
+        grid-template-columns:repeat(2, minmax(0, 1fr));
+        max-width:360px;
+      }
+    }
+    @media (max-width: 420px){
+      .year-grid{
+        grid-template-columns:1fr;
+        max-width:220px;
+      }
+    }
+    .year-card{
+      border:1px solid var(--border);
+      border-radius:12px;
+      padding:10px;
+      background:#fff;
+      cursor:pointer;
+      transition:background 160ms ease, border-color 160ms ease;
+      display:flex;
+      flex-direction:column;
+      align-items:stretch;
+    }
+    .year-card:hover{
+      background:#f7f7f5;
+      border-color:#dcdcd7;
+    }
+    .year-card-title{
+      font-size:13px;
+      color:var(--muted);
+      margin-bottom:8px;
+      font-weight:700;
+      text-align:center;
+    }
+    .mini-weekdays{
+      display:grid;
+      grid-template-columns:repeat(7, 1fr);
+      gap:3px;
+      margin-bottom:6px;
+    }
+    .mini-weekdays span{
+      font-size:11px;
+      color:var(--muted);
+      text-align:center;
+      line-height:14px;
+    }
+    .mini-days{
+      display:grid;
+      grid-template-columns:repeat(7, 1fr);
+      gap:3px;
+    }
+    .mini-day{
+      font-size:11px;
+      color:var(--text);
+      text-align:center;
+      line-height:16px;
+      height:16px;
+    }
+    .mini-day.is-empty{
+      color:transparent;
+    }
+    .mini-day.is-today{
+      background:#111;
+      color:#fff;
+      border-radius:999px;
+      width:16px;
+      height:16px;
+      margin:0 auto;
+      display:flex;
+      align-items:center;
+      justify-content:center;
     }
     #calendar-container .calendar-events-panel{
       margin:0;
+    }
+    .calendar-events-panel{
+      border:0;
+      padding-top:0;
+      padding-bottom:0;
     }
 
     #calendar .fc{
@@ -292,19 +740,65 @@
     #calendar .fc-theme-standard th{
       border-color:var(--border);
     }
+    #calendar .fc-theme-standard td,
+    #calendar .fc-theme-standard th{
+      border-left:0;
+      border-right:0;
+    }
+    #calendar .fc-theme-standard .fc-scrollgrid td,
+    #calendar .fc-theme-standard .fc-scrollgrid th{
+      border-left:0 !important;
+      border-right:0 !important;
+    }
+    #calendar .fc-daygrid-day,
+    #calendar .fc-daygrid-day-frame,
+    #calendar .fc-scrollgrid-section-header th,
+    #calendar .fc-scrollgrid-section-body td{
+      border-left:0 !important;
+      border-right:0 !important;
+    }
     #calendar .fc-scrollgrid{ border:0; }
     #calendar .fc-col-header-cell-cushion{
-      font-weight:900;
       color:var(--muted);
-      padding:10px 6px;
+      padding:0 4px;
+      font-size:12px;
+      display:block;
+      line-height:22px;
+      text-align:center;
+      min-height:22px;
+    }
+    #calendar .fc-col-header{
+      border-top:1px solid var(--border);
     }
     #calendar .fc-daygrid-day-number{
-      font-weight:900;
       color:var(--text);
       padding:7px 8px;
+      display:block;
+      text-align:center;
+      margin:0 auto;
+      line-height:26px;
+    }
+    #calendar .fc-daygrid-day-top{
+      justify-content:center;
     }
     #calendar .fc-day-today{
-      background: rgba(47,52,55,.04) !important;
+      background: transparent !important;
+    }
+    #calendar .fc-day-today .fc-daygrid-day-frame{
+      background: transparent !important;
+    }
+    #calendar .fc-day-today .fc-daygrid-day-number{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      width:26px;
+      height:26px;
+      border-radius:50%;
+      background:#111;
+      color:#fff;
+      padding:0;
+      margin:7px auto 0;
+      line-height:26px;
     }
     #calendar .fc .fc-daygrid-event{
       background:transparent;
@@ -343,8 +837,15 @@
       box-shadow: inset 0 0 0 2px rgba(47,111,235,.28);
     }
     #calendar .fc-daygrid-day.selected-day .fc-daygrid-day-number{
-      color:#1d3360 !important;
+      color:#111 !important;
       font-weight:900;
+    }
+    #calendar .fc-daygrid-day.selected-day a,
+    #calendar .fc-daygrid-day.selected-day .fc-daygrid-day-top{
+      color:#111 !important;
+    }
+    #calendar .fc-daygrid-day.fc-day-today .fc-daygrid-day-number{
+      color:#fff !important;
     }
     #calendar .fc-daygrid-day.selected-day .fc-daygrid-event{
       background: rgba(47,111,235,.18);
@@ -380,33 +881,70 @@
     /* ===== NLP Composer ===== */
     .composer textarea{
       width:100%;
-      border:1px solid var(--border);
-      border-radius:12px;
-      padding:10px 10px 44px 10px;
+      border:0;
+      border-radius:0;
+      padding:6px 4px;
       font-size:14px;
       line-height:1.45;
       outline:none;
       resize:none;
-      background:#fff;
+      background:transparent;
       color:var(--text);
-      min-height:56px;
-      height:56px;
+      min-height:28px;
+      height:28px;
       overflow:hidden;
       transition: height .18s cubic-bezier(.25,.8,.25,1);
     }
-    .composer textarea:focus{ border-color: rgba(47,52,55,.35); }
 
-    .composer-controls{
-      position:relative;
-      margin-top:-40px;
+    .composer-input-wrap{
+      --composer-gap: 8px;
+      --composer-row-gap: 6px;
       display:flex;
       align-items:center;
-      justify-content:space-between;
-      gap:10px;
-      padding:0 8px 6px;
-      pointer-events:none;
+      gap:var(--composer-gap);
+      border:1px solid var(--border);
+      border-radius:var(--composer-pill-radius, 999px);
+      padding:6px 6px;
+      background:#fff;
     }
-    .composer-controls > *{ pointer-events:auto; }
+    .composer-left{
+      display:flex;
+      align-items:center;
+      gap:8px;
+    }
+    .composer-input-wrap.is-multiline{
+      display:grid;
+      grid-template-columns:1fr auto;
+      grid-template-rows:auto auto;
+      grid-template-areas:
+        "input input"
+        "left action";
+      align-items:end;
+      row-gap:var(--composer-row-gap);
+      column-gap:var(--composer-gap);
+    }
+    .composer-input-wrap.is-multiline textarea{
+      grid-area:input;
+    }
+    .composer-input-wrap.is-multiline .composer-left{
+      grid-area:left;
+    }
+    .composer-input-wrap.is-multiline .inline-action{
+      grid-area:action;
+      justify-self:end;
+    }
+    .composer-input-wrap:focus-within{
+      border-color: rgba(47,52,55,.35);
+    }
+    .composer-input-wrap textarea{
+      flex:1 1 auto;
+      min-width:0;
+    }
+    .composer-left,
+    .composer-input-wrap .inline-action,
+    .composer-input-wrap textarea{
+      will-change:transform, opacity;
+    }
 
     .seg-toggle{
       display:inline-flex;
@@ -415,21 +953,28 @@
       border:1px solid var(--border);
       background:#fff;
       border-radius:12px;
-      padding:3px;
-      height:32px;
+      padding:0;
+      height:var(--ctl-h);
     }
     .seg-toggle input{ display:none; }
     .seg{
-      height:26px;
-      padding:0 10px;
+      width:var(--ctl-h);
+      height:var(--ctl-h);
+      padding:0;
       border-radius:10px;
       display:inline-flex;
       align-items:center;
+      justify-content:center;
       font-weight:900;
       font-size:12px;
       color:var(--muted);
       cursor:pointer;
       user-select:none;
+    }
+    .seg svg{
+      width:14px;
+      height:14px;
+      fill:currentColor;
     }
     #nlp-mode-toggle:not(:checked) ~ .seg.add{
       background:rgba(47,52,55,.10);
@@ -451,7 +996,7 @@
     .Btn{
       width:var(--ctl-h);
       height:var(--ctl-h);
-      border-radius:10px;
+      border-radius:999px;
       border:1px solid var(--border);
       background:#fff;
       cursor:pointer;
@@ -464,9 +1009,19 @@
     .Btn:active{ transform:translateY(1px); }
     .Btn.mode-delete{ border-color: rgba(239,68,68,.35); }
 
-    .Btn .sign svg{ width:16px; height:16px; }
+    .Btn .sign svg{ width:20px; height:20px; }
     .Btn .sign svg path{ fill: var(--text); }
     .Btn.mode-delete .sign svg path{ fill: #8a1f1f; }
+    #nlp-action-btn{
+      background:#111;
+      border-color:#111;
+    }
+    #nlp-action-btn:hover{ background:#222; }
+    #nlp-action-btn .sign svg path{ fill:#fff; }
+    #nlp-action-btn.mode-delete{
+      border-color:#111;
+    }
+    #nlp-action-btn.mode-delete .sign svg path{ fill:#fff; }
 
     .scale-0{transform:scale(.95); opacity:0; pointer-events:none;}
     .scale-1{transform:scale(1); opacity:1;}
@@ -491,42 +1046,31 @@
     }
     @keyframes spin{ to{ transform:rotate(360deg); } }
 
-    .attachment-bar{
-      margin-top:12px;
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap:10px;
-    }
     .attach-btn{
+      width:var(--ctl-h);
+      height:var(--ctl-h);
       display:inline-flex;
       align-items:center;
-      gap:6px;
-      height:32px;
-      padding:0 12px;
-      border-radius:10px;
+      justify-content:center;
+      border-radius:999px;
       border:1px solid var(--border);
       background:#fff;
-      font-weight:800;
-      color:var(--text);
       cursor:pointer;
-      font-size:13px;
     }
     .attach-btn svg{
       width:16px;
       height:16px;
-      fill:currentColor;
+      fill:var(--text);
     }
     .attach-btn:hover{ background:#f2f2f0; }
-    .attach-hint{
-      font-size:12px;
-      color:var(--muted);
-    }
     .image-attachments{
       margin-top:10px;
       display:flex;
       flex-wrap:wrap;
       gap:10px;
+    }
+    .image-attachments:empty{
+      margin-top:0;
     }
     .image-chip{
       width:92px;
@@ -759,6 +1303,17 @@
     gap:10px;
     cursor:pointer;
   }
+  #events-ul li:last-child{
+    border-bottom:0;
+  }
+  #events-ul li.events-empty{
+    display:block;
+    text-align:center;
+    color:var(--muted);
+    font-weight:800;
+    border-bottom:0;
+    cursor:default;
+  }
   .event-dot{
     width:8px;
     height:8px;
@@ -769,7 +1324,7 @@
     }
     .event-info{flex:1; min-width:0;}
     .event-title{
-      font-weight:900;
+      font-weight:600;
       font-size:13px;
       white-space:nowrap;
       overflow:hidden;
@@ -779,9 +1334,38 @@
       color:var(--muted);
       font-size:12px;
       margin-top:2px;
+      display:flex;
+      align-items:center;
+      gap:6px;
       white-space:nowrap;
       overflow:hidden;
       text-overflow:ellipsis;
+    }
+    .location-icon{
+      width:12px;
+      height:12px;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      flex:0 0 auto;
+    }
+    .location-icon svg{
+      width:12px;
+      height:12px;
+      fill:var(--muted);
+    }
+    .event-time{
+      display:flex;
+      flex-direction:column;
+      align-items:flex-end;
+      gap:4px;
+      flex:0 0 auto;
+      color:var(--muted);
+      font-size:12px;
+      font-weight:400;
+    }
+    .event-time .time-line{
+      white-space:nowrap;
     }
   .delete-btn{
     border:1px solid var(--border);
@@ -1048,6 +1632,70 @@
     line-height:1.4;
   }
 
+  #toast-stack{
+    position:fixed;
+    right:16px;
+    bottom:16px;
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+    z-index:120;
+    pointer-events:none;
+  }
+  .toast{
+    min-width:220px;
+    max-width:360px;
+    background:#fff;
+    border:1px solid var(--border);
+    border-left:4px solid var(--danger);
+    border-radius:12px;
+    padding:10px 12px;
+    box-shadow:0 10px 20px rgba(0,0,0,.12);
+    display:flex;
+    align-items:flex-start;
+    gap:10px;
+    opacity:0;
+    transform:translateY(6px);
+    transition:opacity .2s ease, transform .2s ease;
+    pointer-events:auto;
+  }
+  .toast.show{
+    opacity:1;
+    transform:translateY(0);
+  }
+  .toast-icon{
+    width:20px;
+    height:20px;
+    border-radius:50%;
+    background:rgba(239,68,68,.12);
+    color:var(--danger);
+    font-weight:900;
+    font-size:12px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    flex:0 0 auto;
+    margin-top:2px;
+  }
+  .toast-message{
+    font-size:13px;
+    line-height:1.4;
+    font-weight:700;
+    color:var(--text);
+    flex:1 1 auto;
+    word-break:keep-all;
+  }
+  .toast-close{
+    border:0;
+    background:transparent;
+    color:var(--muted);
+    font-weight:900;
+    cursor:pointer;
+    padding:0 2px;
+    flex:0 0 auto;
+  }
+  .toast-close:hover{ color:var(--text); }
+
   #event-modal-overlay{
     position:fixed;
     inset:0;
@@ -1117,8 +1765,14 @@
   }
   .event-modal-foot{
     display:flex;
-    justify-content:flex-end;
+    justify-content:flex-start;
+    align-items:center;
     gap:10px;
+  }
+  .event-modal-actions{
+    display:flex;
+    gap:10px;
+    margin-left:auto;
   }
   .event-modal-foot button{
     border-radius:10px;
@@ -1128,6 +1782,11 @@
     padding:6px 12px;
     cursor:pointer;
   }
+  .event-modal-foot button.danger{
+    border-color:rgba(239,68,68,.35);
+    color:var(--danger);
+    background:#fff;
+  }
   .event-modal-foot button.primary{
     background:var(--text);
     color:#fff;
@@ -1135,6 +1794,9 @@
   }
   .event-modal-foot button:hover:not(.primary){
     background:#f2f2f0;
+  }
+  .event-modal-foot button.danger:hover{
+    background:rgba(239,68,68,.08);
   }
 
     /* Recent modal */
@@ -1238,6 +1900,12 @@
     }
     .recent-close:hover{ background:#f2f2f0; }
 
+    button,
+    .seg-toggle,
+    .seg{
+      border-radius:999px;
+    }
+
     @media (max-width: 980px){
       .app{ grid-template-columns: 1fr; }
       aside{ position:relative; top:auto; height:auto; }
@@ -1250,25 +1918,66 @@
 <header>
   <div class="topbar">
     <div class="topbar-left">
-      <div class="brand">Calendar</div>
+      <div class="app-icon-slot" role="img" aria-label="앱 아이콘 자리"></div>
       <div class="divider"></div>
 
-      <button class="nav-btn" id="cal-prev" type="button" aria-label="이전"><span aria-hidden="true">←</span></button>
-      <button class="nav-btn" id="cal-today" type="button">오늘</button>
-      <button class="nav-btn" id="cal-next" type="button" aria-label="다음"><span aria-hidden="true">→</span></button>
-
       <div class="ym-label" id="ym-label"></div>
+
+      <div class="nav-group" role="group" aria-label="달력 이동">
+        <button class="nav-btn is-circle" id="cal-prev" type="button" aria-label="이전"><span aria-hidden="true">←</span></button>
+        <button class="nav-btn" id="cal-today" type="button">오늘</button>
+        <button class="nav-btn is-circle" id="cal-next" type="button" aria-label="다음"><span aria-hidden="true">→</span></button>
+      </div>
     </div>
 
     <div class="topbar-right">
+      <div class="event-search" role="search">
+        <div class="event-search-field">
+          <input type="text" id="event-search-input" placeholder="이벤트 검색" aria-label="이벤트 검색" />
+          <button type="button" class="event-search-settings-btn" id="event-search-settings-btn" aria-label="검색 범위 설정">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 7h10v2H3V7zm0 8h14v2H3v-2zm14-8h4v2h-4V7zm-6 8h10v2H11v-2z"/>
+            </svg>
+          </button>
+        </div>
+        <button type="button" id="event-search-btn" aria-label="이벤트 검색">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M15.5 14h-.79l-.28-.27a6 6 0 1 0-.71.71l.27.28v.79L20 20.5 21.5 19 15.5 14zm-5.5 0a4 4 0 1 1 0-8 4 4 0 0 1 0 8z"/>
+          </svg>
+        </button>
+        <div class="event-search-popover" id="event-search-popover" role="dialog" aria-label="검색 범위 설정">
+          <div class="popover-title">검색 범위 설정</div>
+          <button type="button" class="popover-close" id="event-search-range-close" aria-label="닫기">✕</button>
+          <div class="popover-row">
+            <span>이전</span>
+            <input type="number" id="event-search-range-back" min="0" max="10" value="1" inputmode="numeric" />
+            <span>년</span>
+          </div>
+          <div class="popover-row">
+            <span>이후</span>
+            <input type="number" id="event-search-range-forward" min="0" max="10" value="1" inputmode="numeric" />
+            <span>년</span>
+          </div>
+          <div class="popover-actions">
+            <button type="button" id="event-search-range-apply" aria-label="적용">✓</button>
+          </div>
+        </div>
+      </div>
       <div class="view-switch" role="tablist" aria-label="뷰 전환">
+        <button class="view-btn" type="button" data-cal-view="year" id="cal-view-year">년</button>
         <button class="view-btn active" type="button" data-cal-view="dayGridMonth" id="cal-view-month">월</button>
         <button class="view-btn" type="button" data-cal-view="timeGridWeek" id="cal-view-week">주</button>
         <button class="view-btn" type="button" data-cal-view="timeGridDay" id="cal-view-day">일</button>
       </div>
 
+      <button type="button" class="primary-btn" id="undo-last-btn" disabled>되돌리기</button>
       <button class="header-btn" id="recent-added-btn" type="button">최근 추가한 일정</button>
       <div class="header-actions">__HEADER_ACTIONS__</div>
+      <button class="menu-btn" id="tool-menu-btn" type="button" aria-label="도구 열기">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h16v2H4v-2z"/>
+        </svg>
+      </button>
     </div>
   </div>
 </header>
@@ -1277,17 +1986,13 @@
   <!-- Calendar LEFT -->
   <main>
     <div id="calendar-container">
+      <div class="month-label" id="month-label"></div>
+      <div id="year-view" aria-label="연간 달력">
+        <div class="year-grid" id="year-grid"></div>
+      </div>
       <div class="calendar-main-content">
         <div id="calendar"></div>
         <div class="panel calendar-events-panel" id="events-list">
-          <div class="panel-title">
-            <h2>선택한 날짜 일정</h2>
-            <div class="sub">
-              <span id="selected-date-label"></span>
-              <span class="sub-divider">·</span>
-              <span id="selected-count-label"></span>
-            </div>
-          </div>
           <ul id="events-ul"></ul>
         </div>
       </div>
@@ -1303,23 +2008,34 @@
   <aside id="sidebar">
 
     <div class="panel composer">
-      <div class="panel-title">
-        <h2>자연어로 추가/삭제</h2>
-        <div class="sub">Enter 실행 · Shift+Enter 줄바꿈</div>
-      </div>
+      <div class="composer-input-wrap">
+        <div class="composer-left">
+          <button type="button" class="attach-btn" id="nlp-attach-btn" aria-label="이미지 첨부">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M21 19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14zm-2 0V5H5v14h14zM8.5 13.5l2.5 3 3.5-4.5 4.5 6H6l2.5-4.5zM9 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/>
+            </svg>
+          </button>
 
-      <textarea
-        id="nlp-unified-text"
-        placeholder="어떤 일정이든 입력하세요"
-        rows="1"
-      ></textarea>
+          <label class="seg-toggle" title="추가/삭제 전환">
+            <input type="checkbox" id="nlp-mode-toggle"/>
+            <span class="seg add" aria-label="추가">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 5c.55 0 1 .45 1 1v5h5c.55 0 1 .45 1 1s-.45 1-1 1h-5v5c0 .55-.45 1-1 1s-1-.45-1-1v-5H6c-.55 0-1-.45-1-1s.45-1 1-1h5V6c0-.55.45-1 1-1z"/>
+              </svg>
+            </span>
+            <span class="seg del" aria-label="삭제">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M7 6h10l-1 14H8L7 6zm3-3h4l1 2H9l1-2zm-5 2h14v2H5V5z"/>
+              </svg>
+            </span>
+          </label>
+        </div>
 
-      <div class="composer-controls">
-        <label class="seg-toggle" title="추가/삭제 전환">
-          <input type="checkbox" id="nlp-mode-toggle"/>
-          <span class="seg add">추가</span>
-          <span class="seg del">삭제</span>
-        </label>
+        <textarea
+          id="nlp-unified-text"
+          placeholder="어떤 일정이든 입력하세요"
+          rows="1"
+        ></textarea>
 
         <div class="inline-action">
           <button
@@ -1331,7 +2047,7 @@
           >
             <div class="sign">
               <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M12 5c.55 0 1 .45 1 1v5h5c.55 0 1 .45 1 1s-.45 1-1 1h-5v5c0 .55-.45 1-1 1s-1-.45-1-1v-5H6c-.55 0-1-.45-1-1s.45-1 1-1h5V6c0-.55.45-1 1-1z"/>
+                <path d="M12 5l6 6-1.4 1.4L13 8.8V20h-2V8.8L7.4 12.4 6 11l6-6z"/>
               </svg>
             </div>
           </button>
@@ -1341,17 +2057,7 @@
           </div>
         </div>
       </div>
-
-      <div class="attachment-bar">
-        <button type="button" class="attach-btn" id="nlp-attach-btn">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M16.5 6.5v8.25a4.25 4.25 0 0 1-8.5 0V5a2.5 2.5 0 0 1 5 0v8a.75.75 0 0 1-1.5 0V6.5H10V13a2.5 2.5 0 0 0 5 0V5a4 4 0 0 0-8 0v9.75a5.75 5.75 0 0 0 11.5 0V6.5h-2z"/>
-          </svg>
-          이미지 첨부
-        </button>
-        <div class="attach-hint">최대 5장 · 민감한 영역은 직접 가리고 업로드</div>
-        <input type="file" id="nlp-image-input" accept="image/*" multiple hidden>
-      </div>
+      <input type="file" id="nlp-image-input" accept="image/*" multiple hidden>
       <div class="image-attachments" id="nlp-image-attachments"></div>
 
       <div class="scope-controls" id="delete-scope-controls">
@@ -1372,12 +2078,22 @@
         </select>
       </div>
 
-      <button type="button" class="primary-btn" id="undo-last-btn" disabled>되돌리기</button>
-
     </div>
 
   </aside>
 </div>
+
+<div class="tool-overlay" id="tool-overlay" aria-hidden="true"></div>
+<aside class="tool-drawer" id="tool-drawer" aria-hidden="true">
+  <div class="tool-drawer-head">
+    <div class="tool-drawer-title">도구</div>
+    <button class="tool-close" id="tool-close-btn" type="button" aria-label="닫기">✕</button>
+  </div>
+  <div class="tool-drawer-body">
+    <a class="tool-link" href="/settings">설정</a>
+    <a class="tool-link" href="/logout">로그아웃</a>
+  </div>
+</aside>
 
 <!-- Confirm Modal -->
 <div id="confirm-overlay">
@@ -1439,8 +2155,11 @@
       </div>
     </div>
     <div class="event-modal-foot">
-      <button type="button" id="event-modal-cancel">취소</button>
-      <button type="button" class="primary" id="event-modal-save">저장</button>
+      <button type="button" class="danger" id="event-modal-delete">삭제</button>
+      <div class="event-modal-actions">
+        <button type="button" id="event-modal-cancel">취소</button>
+        <button type="button" class="primary" id="event-modal-save">저장</button>
+      </div>
     </div>
   </div>
 </div>
@@ -1482,6 +2201,7 @@
     </div>
   </div>
 </div>
+<div id="toast-stack" aria-live="polite" aria-atomic="true"></div>
 
 <script>
   const apiBase = "/api";
@@ -1530,6 +2250,58 @@
   let localCacheDirty = true;
   let localCachePromise = null;
   let initialListLoaded = false;
+  let toastSeq = 0;
+
+  function showToast(message, kind = "warn", durationMs = 3600){
+    const text = (message || "").toString().trim();
+    if(!text) return;
+    const host = document.getElementById("toast-stack");
+    if(!host) return;
+
+    toastSeq += 1;
+    const toast = document.createElement("div");
+    toast.className = `toast ${kind}`;
+    toast.setAttribute("role", "status");
+    toast.dataset.toastId = String(toastSeq);
+
+    const icon = document.createElement("div");
+    icon.className = "toast-icon";
+    icon.textContent = "!";
+
+    const msg = document.createElement("div");
+    msg.className = "toast-message";
+    msg.textContent = text;
+
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "toast-close";
+    close.setAttribute("aria-label", "닫기");
+    close.textContent = "닫기";
+
+    toast.appendChild(icon);
+    toast.appendChild(msg);
+    toast.appendChild(close);
+    host.appendChild(toast);
+
+    const dismiss = () => {
+      toast.classList.remove("show");
+      const remove = () => toast.remove();
+      toast.addEventListener("transitionend", remove, { once: true });
+      setTimeout(remove, 350);
+    };
+
+    const timer = setTimeout(dismiss, durationMs);
+    close.addEventListener("click", () => {
+      clearTimeout(timer);
+      dismiss();
+    });
+
+    requestAnimationFrame(() => toast.classList.add("show"));
+  }
+
+  function showWarning(message){
+    showToast(message, "warn");
+  }
 
   function buildEventsFetchUrl(startDate, endDate){
     const params = new URLSearchParams();
@@ -1623,7 +2395,7 @@
     const end = endInput?.value || "";
     const validation = validateDateRange(start, end);
     if(!validation.ok){
-      alert(validation.message);
+      showWarning(validation.message);
       return null;
     }
     return { start, end };
@@ -1652,6 +2424,91 @@
     return `${y}-${m}-${day}`;
   }
 
+  function normalizeSearchQuery(raw){
+    return (raw || "").trim().toLowerCase();
+  }
+
+  function getEventDateStr(ev){
+    return toDateOnly(ev?.start) || toDateOnly(ev?.end) || "";
+  }
+
+  function eventMatchesQuery(ev, query){
+    if(!ev || !query) return false;
+    const title = (ev.title || "").toString().toLowerCase();
+    const location = (ev.location || "").toString().toLowerCase();
+    return title.includes(query) || location.includes(query);
+  }
+
+  function extractSearchYears(query, baseYear){
+    const years = new Set();
+    if(Number.isFinite(baseYear)){
+      for(let y = baseYear - 1; y <= baseYear + 1; y += 1){
+        if(y >= 1970 && y <= 2100){
+          years.add(y);
+        }
+      }
+    }
+    const matches = (query || "").match(/\b(19|20)\d{2}\b/g) || [];
+    matches.forEach((val) => {
+      const y = parseInt(val, 10);
+      if(Number.isFinite(y) && y >= 1970 && y <= 2100){
+        years.add(y);
+      }
+    });
+    return Array.from(years);
+  }
+
+  function getYearsFromRange(startDateStr, endDateStr){
+    const startYear = getYearFromDateStr(startDateStr);
+    const endYear = getYearFromDateStr(endDateStr);
+    if(!Number.isFinite(startYear) || !Number.isFinite(endYear)){
+      return [];
+    }
+    const years = [];
+    for(let y = startYear; y <= endYear; y += 1){
+      years.push(y);
+    }
+    return years;
+  }
+
+  function getCustomSearchRange(backYears, forwardYears){
+    const back = Number.isFinite(backYears) ? backYears : 0;
+    const forward = Number.isFinite(forwardYears) ? forwardYears : 0;
+    if(back <= 0 && forward <= 0){
+      return null;
+    }
+    const today = new Date();
+    const start = new Date(today);
+    const end = new Date(today);
+    start.setFullYear(today.getFullYear() - Math.max(0, back));
+    end.setFullYear(today.getFullYear() + Math.max(0, forward));
+    return {
+      start: toDateStrLocal(start),
+      end: toDateStrLocal(end)
+    };
+  }
+
+  function pickBestMatch(matches){
+    if(!Array.isArray(matches) || matches.length === 0){
+      return null;
+    }
+    const today = toDateStrLocal(new Date());
+    const dated = matches
+      .map((ev) => ({ ev, date: getEventDateStr(ev) }))
+      .filter((item) => item.date);
+    if(dated.length === 0){
+      return matches[0];
+    }
+    const upcoming = dated
+      .filter((item) => item.date >= today)
+      .sort((a, b) => a.date.localeCompare(b.date));
+    if(upcoming.length > 0){
+      return upcoming[0].ev;
+    }
+    dated.sort((a, b) => b.date.localeCompare(a.date));
+    return dated[0].ev;
+  }
+
   function getCalendarViewRange(info){
     const startSource = (info && info.start) ? info.start : new Date();
     const startDate = new Date(startSource);
@@ -1675,9 +2532,96 @@
 
   function updateYearMonthLabel(date){
     const ymLabel = document.getElementById("ym-label");
+    const monthLabel = document.getElementById("month-label");
     const y = date.getFullYear();
     const m = date.getMonth() + 1;
-    ymLabel.textContent = `${y}년 ${m}월`;
+    ymLabel.textContent = `${y}`;
+    if(monthLabel){
+      monthLabel.textContent = `${m}`;
+    }
+  }
+
+  function setYearViewVisible(isVisible){
+    const container = document.getElementById("calendar-container");
+    const yearView = document.getElementById("year-view");
+    const calendarContent = document.querySelector("#calendar-container .calendar-main-content");
+    if(container){
+      container.classList.toggle("is-year-view", !!isVisible);
+    }
+    if(yearView){
+      yearView.classList.toggle("active", !!isVisible);
+    }
+    if(calendarContent){
+      calendarContent.classList.toggle("is-hidden", !!isVisible);
+    }
+  }
+
+  function renderYearView(year){
+    const grid = document.getElementById("year-grid");
+    if(!grid || !Number.isFinite(year)) return;
+    grid.innerHTML = "";
+    const today = new Date();
+    const todayKey = toDateStrLocal(today);
+    const weekdays = ["일", "월", "화", "수", "목", "금", "토"];
+
+    for(let month = 0; month < 12; month += 1){
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "year-card";
+      card.setAttribute("aria-label", `${month + 1}월`);
+
+      const title = document.createElement("div");
+      title.className = "year-card-title";
+      title.textContent = `${month + 1}`;
+      card.appendChild(title);
+
+      const head = document.createElement("div");
+      head.className = "mini-weekdays";
+      weekdays.forEach((label) => {
+        const span = document.createElement("span");
+        span.textContent = label;
+        head.appendChild(span);
+      });
+      card.appendChild(head);
+
+      const daysWrap = document.createElement("div");
+      daysWrap.className = "mini-days";
+      const first = new Date(year, month, 1);
+      const startDay = first.getDay();
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      for(let i = 0; i < startDay; i += 1){
+        const empty = document.createElement("span");
+        empty.className = "mini-day is-empty";
+        empty.textContent = ".";
+        daysWrap.appendChild(empty);
+      }
+      for(let d = 1; d <= daysInMonth; d += 1){
+        const mm = String(month + 1).padStart(2, "0");
+        const dd = String(d).padStart(2, "0");
+        const dateStr = `${year}-${mm}-${dd}`;
+        const dayEl = document.createElement("span");
+        dayEl.className = "mini-day";
+        dayEl.textContent = String(d);
+        if(dateStr === todayKey){
+          dayEl.classList.add("is-today");
+        }
+        daysWrap.appendChild(dayEl);
+      }
+      card.appendChild(daysWrap);
+
+      card.addEventListener("click", () => {
+        const mm = String(month + 1).padStart(2, "0");
+        const targetDate = `${year}-${mm}-01`;
+        setYearViewVisible(false);
+        calendar.changeView("dayGridMonth");
+        calendar.gotoDate(targetDate);
+        setActiveView("dayGridMonth");
+        setSelectedDate(targetDate);
+        loadEventListForDate(targetDate);
+      });
+
+      grid.appendChild(card);
+    }
   }
 
   function setActiveView(viewType){
@@ -1734,15 +2678,150 @@
     const ta = document.getElementById(textareaId);
     if(!ta) return;
 
-    let base = 56;
+    const wrap = ta.closest(".composer-input-wrap");
+    const shadow = document.createElement("div");
+    shadow.setAttribute("aria-hidden", "true");
+    shadow.style.position = "absolute";
+    shadow.style.top = "0";
+    shadow.style.left = "-9999px";
+    shadow.style.visibility = "hidden";
+    shadow.style.pointerEvents = "none";
+    shadow.style.whiteSpace = "pre-wrap";
+    shadow.style.wordBreak = "break-word";
+    shadow.style.overflowWrap = "break-word";
+    shadow.style.padding = "0";
+    shadow.style.margin = "0";
+    shadow.style.border = "0";
+    shadow.style.boxSizing = "border-box";
+    document.body.appendChild(shadow);
+    let base = 28;
     let rafId = null;
+    let shadowPadY = 0;
+    let shadowLineHeight = 0;
+
+    const syncShadowStyle = () => {
+      const cs = getComputedStyle(ta);
+      shadow.style.fontFamily = cs.fontFamily;
+      shadow.style.fontSize = cs.fontSize;
+      shadow.style.fontWeight = cs.fontWeight;
+      shadow.style.letterSpacing = cs.letterSpacing;
+      const fs = parseFloat(cs.fontSize) || 14;
+      const lh = parseFloat(cs.lineHeight);
+      shadowLineHeight = Number.isFinite(lh) ? lh : fs * 1.45;
+      shadow.style.lineHeight = `${shadowLineHeight}px`;
+      const padTop = parseFloat(cs.paddingTop) || 0;
+      const padRight = parseFloat(cs.paddingRight) || 0;
+      const padBottom = parseFloat(cs.paddingBottom) || 0;
+      const padLeft = parseFloat(cs.paddingLeft) || 0;
+      shadowPadY = padTop + padBottom;
+      shadow.style.paddingTop = `${padTop}px`;
+      shadow.style.paddingRight = `${padRight}px`;
+      shadow.style.paddingBottom = `${padBottom}px`;
+      shadow.style.paddingLeft = `${padLeft}px`;
+    };
+
+    const getLineHeight = () => {
+      if(shadowLineHeight) return shadowLineHeight;
+      const cs = getComputedStyle(ta);
+      const lh = parseFloat(cs.lineHeight);
+      if(Number.isFinite(lh)) return lh;
+      const fs = parseFloat(cs.fontSize) || 14;
+      return fs * 1.45;
+    };
+
+    const getInlineWidth = () => {
+      if(!wrap) return ta.clientWidth;
+      const style = getComputedStyle(wrap);
+      const padLeft = parseFloat(style.paddingLeft) || 0;
+      const padRight = parseFloat(style.paddingRight) || 0;
+      const gap = parseFloat(style.getPropertyValue("--composer-gap")) || 8;
+      const left = wrap.querySelector(".composer-left");
+      const action = wrap.querySelector(".inline-action");
+      const leftW = left ? left.offsetWidth : 0;
+      const actionW = action ? action.offsetWidth : 0;
+      let gaps = 0;
+      if(leftW && actionW) gaps = gap * 2;
+      else if(leftW || actionW) gaps = gap;
+      const width = wrap.clientWidth - padLeft - padRight - leftW - actionW - gaps;
+      return Math.max(Math.floor(width), 0);
+    };
+
+    const measureInline = (value) => {
+      syncShadowStyle();
+      const lineHeight = getLineHeight();
+      if(!wrap){
+        return { inlineHeight: base, lineHeight };
+      }
+      const width = getInlineWidth();
+      if(width <= 0){
+        return { inlineHeight: base, lineHeight };
+      }
+      shadow.style.width = `${width}px`;
+      shadow.textContent = value || "";
+      const totalHeight = Math.ceil(shadow.scrollHeight || 0);
+      const inlineHeight = Math.max(0, totalHeight - shadowPadY);
+      return { inlineHeight, lineHeight };
+    };
+
+    const shouldUseMultiline = (value, metrics) => {
+      const text = value || "";
+      if(text.includes("\n")) return true;
+      if(text.trim() === "") return false;
+      if(!wrap) return false;
+      const lineHeight = metrics?.lineHeight || getLineHeight();
+      const measuredHeight = metrics?.inlineHeight || 0;
+      const lineCount = Math.max(1, Math.ceil(measuredHeight / lineHeight));
+      return lineCount >= 2;
+    };
+
+    const updateWrap = (value, metrics) => {
+      if(!wrap) return;
+      const nextIsMultiline = shouldUseMultiline(value, metrics);
+      const currentIsMultiline = wrap.classList.contains("is-multiline");
+      if(currentIsMultiline === nextIsMultiline) return;
+
+      const targets = [
+        wrap.querySelector(".composer-left"),
+        ta,
+        wrap.querySelector(".inline-action")
+      ].filter(Boolean);
+
+      const firstRects = targets.map(el => el.getBoundingClientRect());
+      wrap.classList.toggle("is-multiline", nextIsMultiline);
+      const lastRects = targets.map(el => el.getBoundingClientRect());
+
+      targets.forEach((el, idx) => {
+        const first = firstRects[idx];
+        const last = lastRects[idx];
+        const dx = first.left - last.left;
+        const dy = first.top - last.top;
+        if(!dx && !dy) return;
+
+        if(el.getAnimations){
+          el.getAnimations().forEach(anim => anim.cancel());
+        }
+        const keyframes = [
+          { transform: `translate(${dx}px, ${dy}px)` },
+          { transform: "translate(0, 0)" }
+        ];
+        if(el !== ta){
+          keyframes[0].opacity = 0.35;
+          keyframes[1].opacity = 1;
+        }
+        el.animate(keyframes, {
+          duration:240,
+          easing:"cubic-bezier(.22,.61,.36,1)",
+          fill:"both"
+        });
+      });
+    };
 
     const computeBase = () => {
       const prev = ta.value;
       ta.value = "";
       ta.style.height = "auto";
       const measured = ta.scrollHeight;
-      base = Math.max(measured || 0, 56);
+      base = Math.max(measured || 0, 28);
       ta.value = prev;
     };
 
@@ -1750,19 +2829,26 @@
       const value = ta.value ?? "";
       if(value.trim() === ""){
         if(rafId) cancelAnimationFrame(rafId);
+        updateWrap("", { inlineHeight: base, lineHeight: getLineHeight() });
         ta.style.height = base + "px";
         return;
       }
 
+      const metrics = measureInline(value);
+      updateWrap(value, metrics);
       const startH = ta.getBoundingClientRect().height;
       ta.style.height = "auto";
-      let target = ta.scrollHeight;
+      const actualHeight = ta.scrollHeight;
+      const inlineHeight = Math.max(metrics.inlineHeight || 0, base);
+      let target = Math.max(actualHeight, inlineHeight, base);
 
       if(target <= base + 1){ target = base; }
       ta.style.height = startH + "px";
 
       if(rafId) cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(() => { ta.style.height = target + "px"; });
+      rafId = requestAnimationFrame(() => {
+        ta.style.height = target + "px";
+      });
     };
 
     requestAnimationFrame(() => {
@@ -1771,8 +2857,18 @@
       resize();
     });
 
-    ["input","focus","change"].forEach(evt => ta.addEventListener(evt, resize));
-    window.addEventListener("resize", () => { computeBase(); resize(); });
+    ["input","focus"].forEach(evt => ta.addEventListener(evt, resize));
+    const onResize = () => {
+      if(rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        syncShadowStyle();
+        computeBase();
+        const metrics = measureInline(ta.value || "");
+        updateWrap(ta.value || "", metrics);
+        resize();
+      });
+    };
+    window.addEventListener("resize", onResize);
   }
 
   function toDateOnly(value){
@@ -1887,6 +2983,12 @@
     currentEventModalContext = null;
   }
 
+  function setEventModalDeleteVisible(isVisible){
+    const deleteBtn = document.getElementById("event-modal-delete");
+    if(!deleteBtn) return;
+    deleteBtn.style.display = isVisible ? "inline-flex" : "none";
+  }
+
   function openEventModal(eventInfo){
     const overlay = document.getElementById("event-modal-overlay");
     if(!overlay) return;
@@ -1935,11 +3037,52 @@
     currentEventModalContext = {
       source: eventInfo.source || "local",
       localId: (eventInfo.source === "google") ? null : (Number.isFinite(numericId) ? numericId : null),
-      googleId: eventInfo.googleId || null
+      googleId: eventInfo.googleId || null,
+      isNew: false
     };
 
+    setEventModalDeleteVisible(true);
     overlay.style.display = "flex";
     requestAnimationFrame(() => overlay.classList.add("active"));
+  }
+
+  function openCreateEventModal(dateStr){
+    const overlay = document.getElementById("event-modal-overlay");
+    if(!overlay) return;
+    const titleEl = document.getElementById("event-modal-title");
+    const subEl = document.getElementById("event-modal-sub");
+    const titleInput = document.getElementById("event-modal-input-title");
+    const startDateInput = document.getElementById("event-modal-input-start-date");
+    const startTimeInput = document.getElementById("event-modal-input-start-time");
+    const endDateInput = document.getElementById("event-modal-input-end-date");
+    const endTimeInput = document.getElementById("event-modal-input-end-time");
+    const locationInput = document.getElementById("event-modal-input-location");
+    const notesInput = document.getElementById("event-modal-input-notes");
+    if(!titleInput || !startDateInput || !startTimeInput || !endDateInput || !endTimeInput || !locationInput || !notesInput){
+      return;
+    }
+
+    titleEl.textContent = "새 일정";
+    subEl.textContent = IS_GOOGLE_MODE ? "Google 일정" : "내 일정";
+    titleInput.value = "";
+    startDateInput.value = dateStr || "";
+    startTimeInput.value = "";
+    endDateInput.value = dateStr || "";
+    endTimeInput.value = "";
+    locationInput.value = "";
+    notesInput.value = "";
+
+    currentEventModalContext = {
+      source: IS_GOOGLE_MODE ? "google" : "local",
+      localId: null,
+      googleId: null,
+      isNew: true
+    };
+
+    setEventModalDeleteVisible(false);
+    overlay.style.display = "flex";
+    requestAnimationFrame(() => overlay.classList.add("active"));
+    titleInput.focus();
   }
 
   async function saveEventModal(){
@@ -1963,11 +3106,11 @@
     const locationValue = locationInput.value.trim();
 
     if(!title){
-      alert("제목을 입력해주세요.");
+      showWarning("제목을 입력해주세요.");
       return;
     }
     if(!startDate){
-      alert("시작 날짜를 입력해주세요.");
+      showWarning("시작 날짜를 입력해주세요.");
       return;
     }
 
@@ -1989,7 +3132,7 @@
       const startMs = Date.parse(payload.start);
       const endMs = Date.parse(payload.end);
       if(!Number.isNaN(startMs) && !Number.isNaN(endMs) && endMs < startMs){
-        alert("종료 시각이 시작 시각보다 빠릅니다.");
+        showWarning("종료 시각이 시작 시각보다 빠릅니다.");
         return;
       }
     }
@@ -1997,6 +3140,28 @@
     const headers = { "Content-Type": "application/json" };
     let touchedGoogleEvent = false;
     try{
+      const isNew = !!currentEventModalContext.isNew
+        || (!currentEventModalContext.localId && !currentEventModalContext.googleId);
+      if(isNew){
+        const res = await fetch("/api/events", {
+          method:"POST",
+          headers,
+          body: JSON.stringify(payload)
+        });
+        if(!res.ok){
+          showWarning("일정 추가에 실패했습니다.");
+          return;
+        }
+        const created = await res.json();
+        recordUndoBatch([created]);
+        markLocalCacheDirty();
+        if(IS_GOOGLE_MODE){
+          markGoogleCacheDirty();
+        }
+        closeEventModal();
+        await refreshAll();
+        return;
+      }
       if(currentEventModalContext.source === "google"){
         const googleId = currentEventModalContext.googleId || "";
         if(googleId){
@@ -2025,7 +3190,34 @@
       await refreshAll();
     }catch(err){
       console.error(err);
-      alert("일정 수정에 실패했습니다.");
+      showWarning("일정 수정에 실패했습니다.");
+    }
+  }
+
+  async function deleteEventModal(){
+    if(!currentEventModalContext) return;
+    try{
+      if(currentEventModalContext.source === "google"){
+        const googleId = currentEventModalContext.googleId || "";
+        if(!googleId){
+          showWarning("삭제할 일정이 없습니다.");
+          return;
+        }
+        await deleteGoogleEventById(googleId);
+      }else{
+        const localId = currentEventModalContext.localId;
+        if(!localId){
+          showWarning("삭제할 일정이 없습니다.");
+          return;
+        }
+        await fetch(`/api/events/${localId}`, { method:"DELETE" });
+        markLocalCacheDirty();
+      }
+      closeEventModal();
+      await refreshAll();
+    }catch(err){
+      console.error(err);
+      showWarning("일정 삭제에 실패했습니다.");
     }
   }
 
@@ -2081,7 +3273,7 @@
       await refreshAll();
     }catch(err){
       console.error(err);
-      alert("되돌리기에 실패했습니다.");
+      showWarning("되돌리기에 실패했습니다.");
     }
   }
 
@@ -2096,22 +3288,23 @@
       return;
     }
 
-    let events = [];
-    try{
-      events = await getLocalEventsForRange(targetDate, targetDate);
-    }catch(err){
-      console.error(err);
-      events = [];
+    let dayEvents = [];
+    if(!IS_GOOGLE_MODE){
+      let events = [];
+      try{
+        events = await getLocalEventsForRange(targetDate, targetDate);
+      }catch(err){
+        console.error(err);
+        events = [];
+      }
+      dayEvents = events
+        .filter(ev => eventCoversDate(ev, targetDate))
+        .map(ev => ({ ...ev, _source: "local" }));
     }
-
-    const dayEvents = events
-      .filter(ev => eventCoversDate(ev, targetDate))
-      .map(ev => ({ ...ev, _source: "local" }));
 
     let googleDayEvents = [];
     if(IS_GOOGLE_MODE){
       try{
-        await ensureGoogleEventsForDate(targetDate);
         googleDayEvents = collectGoogleEventsForDate(targetDate)
           .map(ev => ({ ...ev, _source: "google" }));
       }catch(err){
@@ -2132,7 +3325,7 @@
     if(countEl) countEl.textContent = combined.length ? `${combined.length}개` : "없음";
 
     if(combined.length === 0){
-      ul.innerHTML = "<li style='padding:10px 6px; color:var(--muted); font-weight:800;'>선택한 날짜에 일정이 없습니다.</li>";
+      ul.innerHTML = "<li class='events-empty'>일정 없음</li>";
       return;
     }
 
@@ -2164,27 +3357,50 @@
 
       const meta = document.createElement("div");
       meta.className = "event-meta";
-      meta.textContent = formatEventMeta(ev);
+      const locationIcon = document.createElement("span");
+      locationIcon.className = "location-icon";
+      locationIcon.setAttribute("aria-hidden", "true");
+      locationIcon.innerHTML = "<svg viewBox='0 0 24 24' role='img' focusable='false' aria-hidden='true'><path d='M12 2c3.9 0 7 3.1 7 7 0 5.2-6 12.3-6.3 12.6-.4.4-1 .4-1.4 0C11 21.3 5 14.2 5 9c0-3.9 3.1-7 7-7zm0 4.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6z'/></svg>";
+
+      if(ev.location){
+        const locationText = document.createElement("span");
+        locationText.textContent = ev.location;
+        meta.appendChild(locationIcon);
+        meta.appendChild(locationText);
+      }
 
       info.appendChild(title);
-      info.appendChild(meta);
+      if(meta.childNodes.length){
+        info.appendChild(meta);
+      }
+
+      const timeBox = document.createElement("div");
+      timeBox.className = "event-time";
+      const startStr = ev.start || "";
+      const endStr = ev.end || "";
+      const isAllDay = (ev.all_day === true) || isAllDayRange(startStr, endStr);
+
+      if(isAllDay){
+        const line = document.createElement("div");
+        line.className = "time-line";
+        line.textContent = "하루종일";
+        timeBox.appendChild(line);
+      }else{
+        const startLine = document.createElement("div");
+        startLine.className = "time-line";
+        startLine.textContent = startStr.length >= 16 ? startStr.slice(11,16) : "시작 없음";
+
+        const endLine = document.createElement("div");
+        endLine.className = "time-line";
+        endLine.textContent = endStr.length >= 16 ? endStr.slice(11,16) : "종료 없음";
+
+        timeBox.appendChild(startLine);
+        timeBox.appendChild(endLine);
+      }
 
       li.appendChild(dot);
       li.appendChild(info);
-      const delBtn = document.createElement("button");
-      delBtn.className = "delete-btn";
-      delBtn.textContent = "삭제";
-      delBtn.addEventListener("click", async (event) => {
-        event.stopPropagation();
-        if(ev._source === "google"){
-          await deleteGoogleEventById(ev.google_event_id || "");
-        }else{
-          await fetch(apiBase + "/events/" + ev.id, { method:"DELETE" });
-          markLocalCacheDirty();
-        }
-        await refreshAll();
-      });
-      li.appendChild(delBtn);
+      li.appendChild(timeBox);
       ul.appendChild(li);
     }
   }
@@ -2281,7 +3497,7 @@
           await loadRecentList();
         }catch(err){
           console.error(err);
-          alert("삭제에 실패했습니다.");
+          showWarning("삭제에 실패했습니다.");
         }
       });
 
@@ -2311,7 +3527,7 @@
     const location = document.getElementById("location").value.trim();
 
     if(!title || !start){
-      alert("제목과 시작 시각은 필수입니다.");
+      showWarning("제목과 시작 시각은 필수입니다.");
       return;
     }
 
@@ -2328,7 +3544,7 @@
       recordUndoBatch([created]);
       markLocalCacheDirty();
     }else{
-      alert("일정 추가에 실패했습니다.");
+      showWarning("일정 추가에 실패했습니다.");
       return;
     }
 
@@ -2574,12 +3790,12 @@
     if(!fileList) return;
     const files = Array.from(fileList);
     if(nlpImageAttachments.length >= MAX_IMAGE_ATTACHMENTS){
-      alert(`이미지는 최대 ${MAX_IMAGE_ATTACHMENTS}장까지만 첨부할 수 있습니다.`);
+      showWarning(`이미지는 최대 ${MAX_IMAGE_ATTACHMENTS}장까지만 첨부할 수 있습니다.`);
       return;
     }
     for(const file of files){
       if(nlpImageAttachments.length >= MAX_IMAGE_ATTACHMENTS){
-        alert(`이미지는 최대 ${MAX_IMAGE_ATTACHMENTS}장까지만 첨부할 수 있습니다.`);
+        showWarning(`이미지는 최대 ${MAX_IMAGE_ATTACHMENTS}장까지만 첨부할 수 있습니다.`);
         break;
       }
       if(!file.type.startsWith("image/")) continue;
@@ -2592,7 +3808,7 @@
         });
       }catch(err){
         console.error(err);
-        alert("이미지를 처리하지 못했습니다. 해상도를 줄이거나 다른 이미지를 사용해주세요.");
+        showWarning("이미지를 처리하지 못했습니다. 해상도를 줄이거나 다른 이미지를 사용해주세요.");
       }
     }
     renderNlpImageAttachments();
@@ -2821,7 +4037,7 @@
     setEditorCanvasFromDataUrl(target.dataUrl, true).then(() => {
       imageEditorOverlay.classList.add("active");
     }).catch(() => {
-      alert("이미지 편집 도중 오류가 발생했습니다.");
+      showWarning("이미지 편집 도중 오류가 발생했습니다.");
       imageEditorState.attachmentId = null;
     });
   }
@@ -2977,7 +4193,7 @@
       attempts += 1;
     }
     if(estimateDataUrlBytes(dataUrl) > MAX_IMAGE_BYTES){
-      alert("편집 결과 이미지가 너무 큽니다. 가린 영역을 줄이거나 이미지를 축소해주세요.");
+      showWarning("편집 결과 이미지가 너무 큽니다. 가린 영역을 줄이거나 이미지를 축소해주세요.");
       return;
     }
     const target = nlpImageAttachments.find(att => att.id === imageEditorState.attachmentId);
@@ -3027,6 +4243,7 @@
     document.getElementById("event-modal-close")?.addEventListener("click", closeEventModal);
     document.getElementById("event-modal-cancel")?.addEventListener("click", closeEventModal);
     document.getElementById("event-modal-save")?.addEventListener("click", saveEventModal);
+    document.getElementById("event-modal-delete")?.addEventListener("click", deleteEventModal);
     overlay.addEventListener("click", (event) => {
       if(event.target === overlay){
         closeEventModal();
@@ -3058,13 +4275,13 @@
       body: JSON.stringify(payload)
     });
     if(!res.ok){
-      alert("추가할 일정을 해석하지 못했습니다.");
+      showWarning("추가할 일정을 해석하지 못했습니다.");
       return;
     }
     const data = await res.json();
     const items = Array.isArray(data?.items) ? data.items : [];
     if(items.length === 0){
-      alert("추가할 일정을 찾지 못했습니다.");
+      showWarning("추가할 일정을 찾지 못했습니다.");
       return;
     }
 
@@ -3331,13 +4548,13 @@
       body: JSON.stringify(payload)
     });
     if(!res.ok){
-      alert("삭제할 일정을 찾지 못했습니다.");
+      showWarning("삭제할 일정을 찾지 못했습니다.");
       return;
     }
     const data = await res.json();
     const groups = Array.isArray(data?.groups) ? data.groups : [];
     if(groups.length === 0){
-      alert("삭제할 일정을 찾지 못했습니다.");
+      showWarning("삭제할 일정을 찾지 못했습니다.");
       return;
     }
 
@@ -3466,11 +4683,11 @@
     const isDelete = !!toggle?.checked;
     if(isDelete){
       if(!text){
-        alert("삭제할 문장을 입력해주세요.");
+        showWarning("삭제할 문장을 입력해주세요.");
         return;
       }
     }else if(!text && imagePayload.length === 0){
-      alert("문장이나 이미지를 입력해주세요.");
+      showWarning("문장이나 이미지를 입력해주세요.");
       return;
     }
 
@@ -3485,7 +4702,7 @@
       }
     }catch(err){
       console.error(err);
-      alert("실행 중 오류가 발생했습니다. 다시 시도해주세요.");
+      showWarning("실행 중 오류가 발생했습니다. 다시 시도해주세요.");
     }finally{
       setUnifiedBusy(false);
     }
@@ -3493,6 +4710,8 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     // Calendar init
+    let calendarFadeTimer = null;
+    const calendarContent = document.querySelector("#calendar-container .calendar-main-content");
     const calendarEl = document.getElementById("calendar");
     selectedDateStr = toDateStrLocal(new Date());
     setSelectedDate(selectedDateStr);
@@ -3504,11 +4723,13 @@
       headerToolbar:false,
       fixedWeekCount:false,
       dayMaxEventRows:4,
+      displayEventTime:false,
 
       dayCellClassNames: (arg) => {
         const ds = toDateStrLocal(arg.date);
         return (ds === selectedDateStr) ? ["selected-day"] : [];
       },
+      dayCellContent: (arg) => String(arg.date.getDate()),
       dayHeaderClassNames: (arg) => {
         const ds = toDateStrLocal(arg.date);
         return (ds === selectedDateStr) ? ["selected-day-header"] : [];
@@ -3639,6 +4860,12 @@
         updateYearMonthLabel(info.view.calendar.getDate());
         setActiveView(info.view.type);
         syncSelectedDayHighlight();
+        if(calendarContent){
+          window.clearTimeout(calendarFadeTimer);
+          calendarFadeTimer = window.setTimeout(() => {
+            calendarContent.classList.remove("is-fading");
+          }, 40);
+        }
       },
 
       loading: (isLoading) => {
@@ -3656,19 +4883,260 @@
     updateYearMonthLabel(calendar.getDate());
     setActiveView(calendar.view.type);
 
+    calendarEl.addEventListener("dblclick", (event) => {
+      const target = event.target;
+      if(target.closest(".fc-event")) return;
+      const dayCell = target.closest(".fc-daygrid-day");
+      const timeCol = target.closest(".fc-timegrid-col");
+      const dateStr = (dayCell && dayCell.getAttribute("data-date"))
+        || (timeCol && timeCol.getAttribute("data-date"));
+      if(!dateStr) return;
+      setSelectedDate(dateStr);
+      loadEventListForDate(dateStr);
+      openCreateEventModal(dateStr);
+    });
+
+    const runCalendarFadeNav = (action) => {
+      if(!calendarContent){
+        action();
+        return;
+      }
+      calendarContent.classList.add("is-fading");
+      window.clearTimeout(calendarFadeTimer);
+      calendarFadeTimer = window.setTimeout(() => {
+        action();
+        calendarFadeTimer = window.setTimeout(() => {
+          calendarContent.classList.remove("is-fading");
+        }, 40);
+      }, 40);
+    };
+
     // topbar controls
-    document.getElementById("cal-prev").addEventListener("click", () => calendar.prev());
-    document.getElementById("cal-next").addEventListener("click", () => calendar.next());
+    let yearViewYear = calendar.getDate().getFullYear();
+    const isYearViewActive = () => document.getElementById("year-view")?.classList.contains("active");
+    const refreshYearView = (year) => {
+      yearViewYear = year;
+      const ymLabel = document.getElementById("ym-label");
+      if(ymLabel) ymLabel.textContent = `${yearViewYear}`;
+      renderYearView(yearViewYear);
+    };
+
+    document.getElementById("cal-prev").addEventListener("click", () => {
+      if(isYearViewActive()){
+        refreshYearView(yearViewYear - 1);
+        return;
+      }
+      runCalendarFadeNav(() => calendar.prev());
+    });
+    document.getElementById("cal-next").addEventListener("click", () => {
+      if(isYearViewActive()){
+        refreshYearView(yearViewYear + 1);
+        return;
+      }
+      runCalendarFadeNav(() => calendar.next());
+    });
     document.getElementById("cal-today").addEventListener("click", () => {
-      calendar.today();
-      const d = toDateStrLocal(new Date());
-      setSelectedDate(d);
-      loadEventListForDate(d);
+      if(isYearViewActive()){
+        refreshYearView(new Date().getFullYear());
+        return;
+      }
+      runCalendarFadeNav(() => {
+        calendar.today();
+        const d = toDateStrLocal(new Date());
+        setSelectedDate(d);
+        loadEventListForDate(d);
+      });
+    });
+
+    const eventSearchWrap = document.querySelector(".event-search");
+    const eventSearchInput = document.getElementById("event-search-input");
+    const eventSearchRangeBack = document.getElementById("event-search-range-back");
+    const eventSearchRangeForward = document.getElementById("event-search-range-forward");
+    const eventSearchSettingsBtn = document.getElementById("event-search-settings-btn");
+    const eventSearchRangeClose = document.getElementById("event-search-range-close");
+    const eventSearchRangeApply = document.getElementById("event-search-range-apply");
+    const eventSearchBtn = document.getElementById("event-search-btn");
+    const setEventSearchOpen = (isOpen) => {
+      if(!eventSearchWrap) return;
+      eventSearchWrap.classList.toggle("is-open", !!isOpen);
+    };
+    const setRangeOpen = (isOpen) => {
+      if(!eventSearchWrap) return;
+      eventSearchWrap.classList.toggle("is-range-open", !!isOpen);
+      if(isOpen){
+        setEventSearchOpen(true);
+      }
+    };
+    const readRangeValue = (input) => {
+      if(!input) return 0;
+      const raw = (input.value || "").trim();
+      if(!raw) return 0;
+      const num = parseInt(raw, 10);
+      return Number.isFinite(num) ? num : 0;
+    };
+    const validateRangeInputs = () => {
+      const backYears = readRangeValue(eventSearchRangeBack);
+      const forwardYears = readRangeValue(eventSearchRangeForward);
+      if(backYears < 0 || forwardYears < 0){
+        showWarning("검색 범위는 0년 이상으로 입력해주세요.");
+        return false;
+      }
+      if(backYears + forwardYears > 10){
+        showWarning("검색 범위는 이전/이후 합산 10년까지 설정할 수 있습니다.");
+        return false;
+      }
+      return true;
+    };
+    const runEventSearch = async () => {
+      const query = normalizeSearchQuery(eventSearchInput?.value);
+      if(!query){
+        showWarning("검색어를 입력해주세요.");
+        return;
+      }
+      if(!validateRangeInputs()){
+        return;
+      }
+      const backYears = readRangeValue(eventSearchRangeBack);
+      const forwardYears = readRangeValue(eventSearchRangeForward);
+      const range = getCustomSearchRange(backYears, forwardYears);
+      let candidates = [];
+      try{
+        if(IS_GOOGLE_MODE){
+          const baseYear = calendar.getDate().getFullYear();
+          let years = [];
+          if(range && range.start && range.end){
+            years = getYearsFromRange(range.start, range.end);
+          }else{
+            years = extractSearchYears(query, baseYear);
+            if(years.length === 0 && Number.isFinite(baseYear)){
+              years.push(baseYear);
+            }
+          }
+          if(years.length === 0 && Number.isFinite(baseYear)){
+            years.push(baseYear);
+          }
+          await ensureGoogleEventsForYears(years);
+          candidates = years.flatMap((year) => (Array.isArray(googleEventCache[year]) ? googleEventCache[year] : []));
+          if(range && range.start && range.end){
+            candidates = candidates.filter((ev) => eventIntersectsRange(ev, range.start, range.end));
+          }
+        }else{
+          if(range && range.start && range.end){
+            candidates = await fetchLocalEventsBetween(range.start, range.end);
+          }else{
+            candidates = await fetchLocalEventsBetween(null, null);
+          }
+        }
+      }catch(err){
+        console.error(err);
+        showWarning("검색 중 오류가 발생했습니다.");
+        return;
+      }
+      const matches = candidates.filter((ev) => eventMatchesQuery(ev, query));
+      if(matches.length === 0){
+        showWarning("일정을 찾지 못했습니다.");
+        return;
+      }
+      const best = pickBestMatch(matches);
+      const targetDate = getEventDateStr(best);
+      if(!targetDate){
+        showWarning("이 일정의 날짜를 찾지 못했습니다.");
+        return;
+      }
+      calendar.gotoDate(targetDate);
+      setSelectedDate(targetDate);
+      loadEventListForDate(targetDate);
+    };
+    if(eventSearchBtn){
+      eventSearchBtn.addEventListener("click", () => {
+        if(eventSearchWrap && !eventSearchWrap.classList.contains("is-open")){
+          setEventSearchOpen(true);
+          eventSearchInput?.focus();
+          return;
+        }
+        runEventSearch();
+      });
+    }
+    if(eventSearchSettingsBtn){
+      eventSearchSettingsBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        setRangeOpen(!eventSearchWrap?.classList.contains("is-range-open"));
+      });
+    }
+    if(eventSearchRangeClose){
+      eventSearchRangeClose.addEventListener("click", () => {
+        setRangeOpen(false);
+      });
+    }
+    if(eventSearchRangeApply){
+      eventSearchRangeApply.addEventListener("click", () => {
+        if(!validateRangeInputs()){
+          return;
+        }
+        setRangeOpen(false);
+      });
+    }
+    if(eventSearchInput){
+      eventSearchInput.addEventListener("focus", () => {
+        setEventSearchOpen(true);
+      });
+      eventSearchInput.addEventListener("keydown", (e) => {
+        if(e.key === "Enter"){
+          e.preventDefault();
+          runEventSearch();
+        }else if(e.key === "Escape"){
+          setRangeOpen(false);
+          setEventSearchOpen(false);
+          eventSearchInput.blur();
+        }
+      });
+      eventSearchInput.addEventListener("blur", () => {
+        setTimeout(() => {
+          if(eventSearchWrap && document.activeElement && eventSearchWrap.contains(document.activeElement)){
+            return;
+          }
+          if(!normalizeSearchQuery(eventSearchInput.value) && !eventSearchWrap?.classList.contains("is-range-open")){
+            setEventSearchOpen(false);
+          }
+        }, 0);
+      });
+    }
+    [eventSearchRangeBack, eventSearchRangeForward].forEach((input) => {
+      if(!input) return;
+      input.addEventListener("focus", () => {
+        setEventSearchOpen(true);
+      });
+      input.addEventListener("blur", () => {
+        validateRangeInputs();
+      });
+    });
+    document.addEventListener("click", (event) => {
+      if(!eventSearchWrap) return;
+      if(eventSearchWrap.contains(event.target)) return;
+      if(eventSearchWrap.classList.contains("is-range-open")){
+        setRangeOpen(false);
+      }
+      if(eventSearchWrap.classList.contains("is-open") && !normalizeSearchQuery(eventSearchInput?.value)){
+        setEventSearchOpen(false);
+      }
+    });
+    document.addEventListener("keydown", (event) => {
+      if(event.key !== "Escape") return;
+      if(eventSearchWrap?.classList.contains("is-range-open")){
+        setRangeOpen(false);
+      }
     });
 
     document.querySelectorAll("[data-cal-view]").forEach(btn => {
       btn.addEventListener("click", () => {
         const view = btn.dataset.calView;
+        if(view === "year"){
+          setActiveView(view);
+          setYearViewVisible(true);
+          refreshYearView(calendar.getDate().getFullYear());
+          return;
+        }
+        setYearViewVisible(false);
         calendar.changeView(view);
         setActiveView(view);
       });
@@ -3677,6 +5145,15 @@
     // quick add
     // NLP auto-grow
     setupShadowAutoGrow("nlp-unified-text");
+    const composerWrap = document.querySelector(".composer-input-wrap");
+    if(composerWrap){
+      requestAnimationFrame(() => {
+        const rect = composerWrap.getBoundingClientRect();
+        if(rect.height){
+          composerWrap.style.setProperty("--composer-pill-radius", `${Math.round(rect.height / 2)}px`);
+        }
+      });
+    }
     setupImageComposer();
     initReasoningEffortControl();
     setupEventModalControls();
@@ -3700,6 +5177,31 @@
       recentBtn.style.display = "";
       recentBtn.addEventListener("click", openRecentModal);
     }
+
+    const toolBtn = document.getElementById("tool-menu-btn");
+    const toolDrawer = document.getElementById("tool-drawer");
+    const toolOverlay = document.getElementById("tool-overlay");
+    const toolClose = document.getElementById("tool-close-btn");
+    const openToolDrawer = () => {
+      if(!toolDrawer || !toolOverlay) return;
+      toolDrawer.classList.add("active");
+      toolOverlay.classList.add("active");
+      document.body.classList.add("drawer-open");
+    };
+    const closeToolDrawer = () => {
+      if(!toolDrawer || !toolOverlay) return;
+      toolDrawer.classList.remove("active");
+      toolOverlay.classList.remove("active");
+      document.body.classList.remove("drawer-open");
+    };
+    toolBtn?.addEventListener("click", openToolDrawer);
+    toolOverlay?.addEventListener("click", closeToolDrawer);
+    toolClose?.addEventListener("click", closeToolDrawer);
+    document.addEventListener("keydown", (e) => {
+      if(e.key === "Escape"){
+        closeToolDrawer();
+      }
+    });
 
     const ta = document.getElementById("nlp-unified-text");
     if(ta){
@@ -3795,7 +5297,7 @@
         const selected = selectedEntries.map(entry => entry.item);
 
         if(selected.length === 0){
-          alert("추가할 항목을 선택해주세요.");
+          showWarning("추가할 항목을 선택해주세요.");
           return;
         }
 
@@ -3804,15 +5306,15 @@
           if(original && original.requires_end_confirmation){
             const selection = getRecurrenceEndSelection(entry.idx);
             if(!selection){
-              alert("반복 종료 방식을 선택해주세요.");
+              showWarning("반복 종료 방식을 선택해주세요.");
               return;
             }
             if(selection.mode === "until" && !selection.value){
-              alert("반복 종료 날짜를 입력해주세요.");
+              showWarning("반복 종료 날짜를 입력해주세요.");
               return;
             }
             if(selection.mode === "count" && (!selection.value || selection.value <= 0)){
-              alert("반복 횟수를 1 이상으로 입력해주세요.");
+              showWarning("반복 횟수를 1 이상으로 입력해주세요.");
               return;
             }
             entry.item.recurring_end_override = selection;
@@ -3826,14 +5328,18 @@
         });
 
         if(!res.ok){
-          alert("일정 추가 적용에 실패했습니다.");
+          showWarning("일정 추가 적용에 실패했습니다.");
           return;
         }
         const created = await res.json();
         if(Array.isArray(created)){
           recordUndoBatch(created);
         }
-        markLocalCacheDirty();
+        if(IS_GOOGLE_MODE){
+          markGoogleCacheDirty();
+        }else{
+          markLocalCacheDirty();
+        }
 
         closeConfirm();
         resetNlpComposerInputs();
@@ -3848,7 +5354,7 @@
           .filter(n => Number.isFinite(n));
 
         if(ids.length === 0){
-          alert("삭제할 항목을 선택해주세요.");
+          showWarning("삭제할 항목을 선택해주세요.");
           return;
         }
 
@@ -3859,7 +5365,7 @@
         });
 
         if(!res.ok){
-          alert("일정 삭제 적용에 실패했습니다.");
+          showWarning("일정 삭제 적용에 실패했습니다.");
           return;
         }
         markLocalCacheDirty();

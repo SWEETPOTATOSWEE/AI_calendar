@@ -45,6 +45,8 @@ LLM_DEBUG = os.getenv("LLM_DEBUG", "0") == "1"
 ISO_DATETIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$")
 ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 ISO_DATETIME_24_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T24:00$")
+DATETIME_FLEX_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::\d{2})?$")
 
 
 def _log_debug(message: str) -> None:
@@ -85,6 +87,7 @@ def _load_frontend_html(filename: str) -> str:
 
 START_HTML = _load_frontend_html("start.html")
 CALENDAR_HTML_TEMPLATE = _load_frontend_html("calendar.html")
+SETTINGS_HTML = _load_frontend_html("settings.html")
 
 # -------------------------
 # 데이터 모델
@@ -334,8 +337,6 @@ def _normalize_end_datetime(raw_end: Any) -> Optional[str]:
     return None
   if ISO_DATETIME_RE.match(candidate):
     return candidate
-  if ISO_DATE_RE.match(candidate):
-    return candidate + "T23:59"
   if ISO_DATETIME_24_RE.match(candidate):
     base = candidate[:10]
     try:
@@ -344,7 +345,30 @@ def _normalize_end_datetime(raw_end: Any) -> Optional[str]:
       return None
     next_day = base_date + timedelta(days=1)
     return next_day.strftime("%Y-%m-%dT00:00")
+  if ISO_DATE_RE.match(candidate):
+    return candidate + "T23:59"
+  normalized = _normalize_datetime_minute(candidate)
+  if normalized:
+    return normalized
   return None
+
+
+def _normalize_datetime_minute(raw: str) -> Optional[str]:
+  candidate = raw.strip()
+  if not candidate:
+    return None
+  if ISO_DATETIME_RE.match(candidate):
+    return candidate
+  if candidate.endswith("Z"):
+    candidate = candidate[:-1] + "+00:00"
+  match = DATETIME_FLEX_RE.match(candidate)
+  if match:
+    return f"{match.group(1)}T{match.group(2)}"
+  try:
+    dt = datetime.fromisoformat(candidate)
+  except Exception:
+    return None
+  return dt.strftime("%Y-%m-%dT%H:%M")
 
 
 def is_all_day_span(start_iso: Optional[str],
@@ -444,10 +468,10 @@ def _normalize_single_event_times(
 
   if isinstance(start_raw, str):
     s = start_raw.strip()
-    if ISO_DATETIME_RE.match(s):
-      start_iso = s
-    elif ISO_DATE_RE.match(s):
+    if ISO_DATE_RE.match(s):
       start_iso = s + "T00:00"
+    else:
+      start_iso = _normalize_datetime_minute(s)
 
   if start_iso is None:
     return (None, None, False)
@@ -495,11 +519,14 @@ def _clean_optional_str(value: Any) -> Optional[str]:
 
 def _parse_scope_dates(start_str: Optional[str],
                        end_str: Optional[str],
-                       require: bool = False) -> Optional[Tuple[date, date]]:
+                       require: bool = False,
+                       max_days: Optional[int] = MAX_SCOPE_DAYS,
+                       label: Optional[str] = None) -> Optional[Tuple[date, date]]:
+  scope_label = label or ("삭제" if require else "조회")
   if not start_str or not end_str:
     if require:
       raise HTTPException(status_code=400,
-                          detail="삭제 범위의 시작/종료 날짜를 모두 입력해주세요.")
+                          detail=f"{scope_label} 범위의 시작/종료 날짜를 모두 입력해주세요.")
     return None
 
   try:
@@ -507,15 +534,15 @@ def _parse_scope_dates(start_str: Optional[str],
     end_date = datetime.strptime(end_str.strip(), "%Y-%m-%d").date()
   except Exception:
     raise HTTPException(status_code=400,
-                        detail="삭제 범위 날짜 형식이 잘못되었습니다.")
+                        detail=f"{scope_label} 범위 날짜 형식이 잘못되었습니다.")
 
   if end_date < start_date:
     raise HTTPException(status_code=400,
-                        detail="삭제 범위 종료일이 시작일보다 빠릅니다.")
+                        detail=f"{scope_label} 범위 종료일이 시작일보다 빠릅니다.")
 
-  if (end_date - start_date).days > MAX_SCOPE_DAYS:
+  if max_days is not None and (end_date - start_date).days > max_days:
     raise HTTPException(status_code=400,
-                        detail=f"삭제 범위는 최대 {MAX_SCOPE_DAYS}일까지만 설정할 수 있습니다.")
+                        detail=f"{scope_label} 범위는 최대 {max_days}일까지만 설정할 수 있습니다.")
 
   return (start_date, end_date)
 
@@ -3314,7 +3341,7 @@ def list_events(request: Request,
                 end_date: Optional[str] = Query(None)):
   if is_google_mode_active(request):
     return []
-  scope = _parse_scope_dates(start_date, end_date, require=False)
+  scope = _parse_scope_dates(start_date, end_date, require=False, max_days=3650)
   items = _list_local_events_for_api(scope=scope)
   items.sort(key=lambda ev: ev.start)
   return items
@@ -3395,7 +3422,11 @@ def list_recent_events(request: Request):
 @app.get("/api/google/events")
 def google_events(start_date: str = Query(..., alias="start_date"),
                   end_date: str = Query(..., alias="end_date")):
-  scope = _parse_scope_dates(start_date, end_date, require=True)
+  scope = _parse_scope_dates(start_date,
+                             end_date,
+                             require=True,
+                             max_days=3650,
+                             label="조회")
   return fetch_google_events_between(scope[0], scope[1])
 
 
@@ -3642,15 +3673,10 @@ def build_header_actions(request: Request, has_token: bool) -> str:
 
   if admin:
     parts.append('<span class="badge admin">ADMIN</span>')
-    if token:
-      parts.append('<span class="badge linked">Google 연동됨</span>')
     parts.append('<a class="header-btn" href="/admin/exit">Admin 해제</a>')
-    parts.append('<a class="header-btn" href="/logout">로그아웃</a>')
     return "\n".join(parts)
 
   if token:
-    parts.append('<span class="badge linked">Google 연동됨</span>')
-    parts.append('<a class="header-btn" href="/logout">로그아웃</a>')
     return "\n".join(parts)
 
   # 토큰 없음(이 경우는 보통 /calendar 접근이 막히지만, 혹시 ENABLE_GCAL=0 등)
@@ -3702,3 +3728,10 @@ def calendar_page(request: Request):
   else:
     html = context_script + html
   return HTMLResponse(html)
+
+
+@app.get("/settings", response_class=HTMLResponse)
+def settings_page(request: Request):
+  if not is_admin(request) and ENABLE_GCAL and load_gcal_token() is None:
+    return RedirectResponse("/")
+  return HTMLResponse(SETTINGS_HTML)
