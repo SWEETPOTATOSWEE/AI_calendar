@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException, Request, Query
+from fastapi import FastAPI, HTTPException, Request, Query, Response
 from fastapi.responses import RedirectResponse, JSONResponse, HTMLResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, Tuple
@@ -12,6 +12,8 @@ import time
 import pathlib
 import urllib.parse
 import copy
+import hashlib
+import secrets
 
 import requests
 from openai import OpenAI
@@ -64,7 +66,6 @@ ENABLE_GCAL = os.getenv("ENABLE_GCAL", "0") == "1"
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
-GOOGLE_TOKEN_FILE = os.getenv("GOOGLE_TOKEN_FILE", "google_token.json")
 GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary")
 GCAL_SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
 
@@ -72,6 +73,15 @@ ADMIN_COOKIE_NAME = "admin"
 ADMIN_COOKIE_VALUE = "1"
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
+GOOGLE_TOKEN_DIR = pathlib.Path(
+    os.getenv("GOOGLE_TOKEN_DIR", str(BASE_DIR / "gcal_tokens")))
+SESSION_COOKIE_NAME = "gcal_session"
+OAUTH_STATE_COOKIE_NAME = "gcal_oauth_state"
+SESSION_COOKIE_MAX_AGE_SECONDS = int(
+    os.getenv("GCAL_SESSION_MAX_AGE_SECONDS", str(60 * 60 * 24 * 30)))
+OAUTH_STATE_MAX_AGE_SECONDS = int(
+    os.getenv("GCAL_OAUTH_STATE_MAX_AGE_SECONDS", "600"))
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "0") == "1"
 FRONTEND_DIR = BASE_DIR / "frontend"
 EVENTS_DATA_FILE = pathlib.Path(
     os.getenv("EVENTS_DATA_FILE", str(BASE_DIR / "events_data.json")))
@@ -190,7 +200,7 @@ MODEL_PRICING = {
     },
 }
 
-google_events_cache: Dict[str, Dict[str, Any]] = {}
+google_events_cache: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
 
 def _serialize_events_payload() -> Dict[str, Any]:
@@ -757,8 +767,11 @@ def is_admin(request: Request) -> bool:
 
 
 def is_google_mode_active(request: Request, has_token: Optional[bool] = None) -> bool:
-  token_present = load_gcal_token() is not None if has_token is None else has_token
-  return (not is_admin(request)) and ENABLE_GCAL and token_present
+  if is_admin(request) or not ENABLE_GCAL:
+    return False
+  token_present = load_gcal_token_for_request(
+      request) is not None if has_token is None else has_token
+  return bool(token_present)
 
 
 # -------------------------
@@ -774,6 +787,8 @@ EVENTS_SYSTEM_PROMPT_TEMPLATE = """너는 한국어 일정 문장을 구조화�
   "needs_context": true | false,
   "days_before": number,
   "days_after": number,
+  "need_more_information": true | false,
+  "content": string,
   "items": [
     {
       "type": "single",
@@ -807,20 +822,29 @@ EVENTS_SYSTEM_PROMPT_TEMPLATE = """너는 한국어 일정 문장을 구조화�
   ]
 }
 
+우선 규칙(1이 2에 우선함):
+0. 필요하면 존재하는 일정 정보를 불러올 수 있으며 need_more_information보다 needs_context를 우선으로 사용한다.
+1. 기존 일정 컨텍스트가 필요하면 needs_context=true, need_more_information=false, items=[]로 바로 반환하고 days_before/days_after에 필요한 범위를 정수로 쓴다.
+2. 기존 일정 컨텍스트가 필요 없고 사용자에게 추가 질문이 필요하면 need_more_information=true, content에 질문만 작성, 이때 items=[], needs_context=false, days_before=0, days_after=0.
+
 규칙:
-- 기존 일정 컨텍스트가 반드시 필요하면 needs_context=true로 설정하고 items는 빈 배열로 반환.
-- needs_context=true일 때 days_before/days_after에 기준 날짜 기준으로 필요한 앞/뒤 일수를 정수로 작성.
-- 컨텍스트가 필요 없으면 needs_context=false, days_before/days_after는 0.
-- 여러 일정이면 single을 여러 개.
-- 반복이 있으면 recurring.
-- 단일+반복 혼합이면 둘 다 넣는다.
-- title에는 시간/장소를 넣지 않는다.
-- 상대 날짜는 기준 날짜로 계산
-- weekdays는 0=월요일, 6=일요일
-- 시간 정보가 없으면 recurring의 time과 duration_minutes는 null.
-- recurrence가 있으면 우선 사용한다. end_date/weekday는 이전 버전 호환용으로만 사용(필수 아님).
-- recurrence.end는 until 또는 count 중 하나만 사용한다. 둘 다 쓰지 않는다.
-- 사용자의 요청이 없다면 과거 이벤트는 생성하지 않음
+1. 반복은 recurrence를 우선 사용한다
+2. 여러 일정이면 single을 여러 개로 만들고, 반복이 있으면 recurring을 사용하며 혼합이면 둘 다 포함한다.
+3. weekdays: 0=월요일 … 6=일요일
+4. 입력에 사용자:/assistant: 대화가 섞일 수 있으니 전체 대화를 참고해 요청을 해석한다.
+5. title은 시간/장소를 넣지 않는다
+6. 상대 날짜는 기준 날짜로 계산한다.
+7. 시간 정보가 없으면 recurring.time과 recurring.duration_minutes는 null.
+8. 종일 일정이 명확하면 질문하지 않는다. 휴가/연차/휴무/기념일/생일/공휴일 등.
+9. recurrence.end는 until 또는 count 중 하나만 사용한다(동시 사용 금지).
+10. 사용자의 요청이 없다면 과거 이벤트는 생성하지 않는다.
+11. recurrence가 있으면 우선 사용한다. end_date/weekday는 이전 버전 호환용으로만 사용(필수 아님).
+12. 꼭 필요한 정보만 질문한다. 문맥상 알 수 있거나 예측 가능한 값은 묻지 않는다.
+13. need_more_information=false이면 content는 빈 문자열로 둔다.
+14. 마크다운은 need_more_information=true인 경우 content에서만 제한적으로 사용한다(**굵게**, *기울임*, - 리스트, 줄바꿈). 그 외 필드에는 마크다운을 쓰지 않는다.
+15. needs_context와 need_more_information은 동시에 true로 두지 않는다.
+16. 질문은 최대 3개까지만 작성한다.
+
 """
 
 
@@ -854,6 +878,8 @@ EVENTS_SYSTEM_PROMPT_WITH_CONTEXT_TEMPLATE = """너는 한국어 일정 문장�
 
 출력 스키마:
 {
+  "need_more_information": true | false,
+  "content": string,
   "items": [
     {
       "type": "single",
@@ -887,19 +913,30 @@ EVENTS_SYSTEM_PROMPT_WITH_CONTEXT_TEMPLATE = """너는 한국어 일정 문장�
   ]
 }
 
+우선 규칙:
+1. 사용자에게 추가 질문이 필요하면 need_more_information=true, content에 질문만 작성하고 items=[]로 둔다.
+
 규칙:
-- context.events는 이미 존재하는 일정이다. 요청이 기존 일정과의 관계(직후/직전/같은 시간/충돌 회피 등)를 요구할 때만 참고한다.
-- context.events 자체를 수정하거나 삭제하지 말고, 새로 추가할 일정만 만든다.
-- 여러 일정이면 single을 여러 개.
-- 반복이 있으면 recurring.
-- 단일+반복 혼합이면 둘 다 넣는다.
-- title에는 시간/장소를 넣지 않는다.
-- 상대 날짜는 context.today를 기준으로 계산
-- weekdays는 0=월요일, 6=일요일
-- 시간 정보가 없으면 recurring의 time과 duration_minutes는 null.
-- recurrence가 있으면 우선 사용한다. end_date/weekday는 이전 버전 호환용으로만 사용(필수 아님).
-- recurrence.end는 until 또는 count 중 하나만 사용한다. 둘 다 쓰지 않는다.
-- 사용자의 요청이 없다면 과거 이벤트는 생성하지 않음
+1. 반복은 recurrence를 우선 사용한다
+2. 여러 일정이면 single을 여러 개로 만들고, 반복이 있으면 recurring을 사용하며 혼합이면 둘 다 포함한다.
+3. weekdays: 0=월요일 … 6=일요일
+4. 입력에 사용자:/assistant: 대화가 섞일 수 있으니 전체 대화를 참고해 요청을 해석한다.
+5. title은 시간/장소를 넣지 않는다
+6. 상대 날짜는 기준 날짜로 계산한다.
+7. 시간 정보가 없으면 recurring.time과 recurring.duration_minutes는 null.
+8. 종일 일정이 명확하면 질문하지 않는다. 휴가/연차/휴무/기념일/생일/공휴일 등.
+9. recurrence.end는 until 또는 count 중 하나만 사용한다(동시 사용 금지).
+10. 사용자의 요청이 없다면 과거 이벤트는 생성하지 않는다.
+11. recurrence가 있으면 우선 사용한다. end_date/weekday는 이전 버전 호환용으로만 사용(필수 아님)
+12. context.events는 이미 존재하는 일정이다. 요청이 기존 일정과의 관계(직후/직전/같은 시간/충돌 회피 등)를 요구할 때만 참고한다.
+13. context.events 자체를 수정하거나 삭제하지 말고, 새로 추가할 일정만 만든다.
+14. 이미지 또는 텍스트에 정보가 없으면 null 처리
+15. 가려진 구간이나 알아볼 수 없는 내용은 제외
+16. 꼭 필요한 정보만 질문한다. 문맥이나 context.events로 알 수 있으면 묻지 않는다.
+17. need_more_information=false이면 content는 빈 문자열로 둔다.
+18. 마크다운은 need_more_information=true인 경우 content에서만 제한적으로 사용한다(**굵게**, *기울임*, - 리스트, 줄바꿈). 그 외 필드에는 마크다운을 쓰지 않는다.
+19. 질문은 최대 3개까지만 작성한다.
+
 """
 
 
@@ -922,6 +959,8 @@ EVENTS_MULTIMODAL_PROMPT_TEMPLATE = """너는 한국어 일정 정보를 텍스�
   "needs_context": true | false,
   "days_before": number,
   "days_after": number,
+  "need_more_information": true | false,
+  "content": string,
   "items": [
     {
       "type": "single",
@@ -955,21 +994,31 @@ EVENTS_MULTIMODAL_PROMPT_TEMPLATE = """너는 한국어 일정 정보를 텍스�
   ]
 }
 
+우선 규칙(1이 2에 우선함):
+0. 필요하면 존재하는 일정 정보를 불러올 수 있으며 need_more_information보다 needs_context를 우선으로 사용한다.
+1. 기존 일정 컨텍스트가 필요하면 needs_context=true, need_more_information=false, items=[]로 바로 반환하고 days_before/days_after에 필요한 범위를 정수로 쓴다.
+2. 기존 일정 컨텍스트가 필요 없고 사용자에게 추가 질문이 필요하면 need_more_information=true, content에 질문만 작성, 이때 items=[], needs_context=false, days_before=0, days_after=0.
+
 규칙:
-- 기존 일정 컨텍스트가 반드시 필요하면 needs_context=true로 설정하고 items는 빈 배열로 반환.
-- needs_context=true일 때 days_before/days_after에 기준 날짜 기준으로 필요한 앞/뒤 일수를 정수로 작성.
-- 컨텍스트가 필요 없으면 needs_context=false, days_before/days_after는 0.
-- 여러 일정이면 single을 여러 개.
-- 반복이 있으면 recurring.
-- 단일+반복 혼합이면 둘 다 넣는다.
-- title에는 시간/장소를 넣지 않는다.
-- 상대 날짜는 기준 날짜로 계산
-- weekdays는 0=월요일, 6=일요일
-- 이미지 또는 텍스트에 정보가 없으면 null 처리
-- 가려진 구간이나 알아볼 수 없는 내용은 제외
-- recurrence가 있으면 우선 사용한다. end_date/weekday는 이전 버전 호환용으로만 사용(필수 아님).
-- recurrence.end는 until 또는 count 중 하나만 사용한다. 둘 다 쓰지 않는다.
-- 사용자의 요청이 없다면 과거 이벤트는 생성하지 않음
+1. 반복은 recurrence를 우선 사용한다
+2. 여러 일정이면 single을 여러 개로 만들고, 반복이 있으면 recurring을 사용하며 혼합이면 둘 다 포함한다.
+3. weekdays: 0=월요일 … 6=일요일
+4. 입력에 사용자:/assistant: 대화가 섞일 수 있으니 전체 대화를 참고해 요청을 해석한다.
+5. title은 시간/장소를 넣지 않는다
+6. 상대 날짜는 기준 날짜로 계산한다.
+7. 시간 정보가 없으면 recurring.time과 recurring.duration_minutes는 null.
+8. 종일 일정이 명확하면 질문하지 않는다. 휴가/연차/휴무/기념일/생일/공휴일 등.
+9. recurrence.end는 until 또는 count 중 하나만 사용한다(동시 사용 금지).
+10. 사용자의 요청이 없다면 과거 이벤트는 생성하지 않는다.
+11. recurrence가 있으면 우선 사용한다. end_date/weekday는 이전 버전 호환용으로만 사용(필수 아님).
+12. 이미지 또는 텍스트에 정보가 없으면 null 처리
+13. 가려진 구간이나 알아볼 수 없는 내용은 제외
+14. 꼭 필요한 정보만 질문한다. 문맥상 알 수 있거나 예측 가능한 값은 묻지 않는다.
+15. need_more_information=false이면 content는 빈 문자열로 둔다.
+16. 마크다운은 need_more_information=true인 경우 content에서만 제한적으로 사용한다(**굵게**, *기울임*, - 리스트, 줄바꿈). 그 외 필드에는 마크다운을 쓰지 않는다.
+17. needs_context와 need_more_information은 동시에 true로 두지 않는다.
+18. 질문은 최대 3개까지만 작성한다.
+
 """
 
 
@@ -1008,6 +1057,8 @@ EVENTS_MULTIMODAL_PROMPT_WITH_CONTEXT_TEMPLATE = """너는 한국어 일정 정�
 
 출력 스키마:
 {
+  "need_more_information": true | false,
+  "content": string,
   "items": [
     {
       "type": "single",
@@ -1041,20 +1092,30 @@ EVENTS_MULTIMODAL_PROMPT_WITH_CONTEXT_TEMPLATE = """너는 한국어 일정 정�
   ]
 }
 
+우선 규칙:
+1. 사용자에게 추가 질문이 필요하면 need_more_information=true, content에 질문만 작성하고 items=[]로 둔다.
+
 규칙:
-- context.events는 이미 존재하는 일정이다. 요청이 기존 일정과의 관계(직후/직전/같은 시간/충돌 회피 등)를 요구할 때만 참고한다.
-- context.events 자체를 수정하거나 삭제하지 말고, 새로 추가할 일정만 만든다.
-- 여러 일정이면 single을 여러 개.
-- 반복이 있으면 recurring.
-- 단일+반복 혼합이면 둘 다 넣는다.
-- title에는 시간/장소를 넣지 않는다.
-- 상대 날짜는 context.today를 기준으로 계산
-- weekdays는 0=월요일, 6=일요일
-- 이미지 또는 텍스트에 정보가 없으면 null 처리
-- 가려진 구간이나 알아볼 수 없는 내용은 제외
-- recurrence가 있으면 우선 사용한다. end_date/weekday는 이전 버전 호환용으로만 사용(필수 아님).
-- recurrence.end는 until 또는 count 중 하나만 사용한다. 둘 다 쓰지 않는다.
-- 사용자의 요청이 없다면 과거 이벤트는 생성하지 않음
+1. 반복은 recurrence를 우선 사용한다
+2. 여러 일정이면 single을 여러 개로 만들고, 반복이 있으면 recurring을 사용하며 혼합이면 둘 다 포함한다.
+3. weekdays: 0=월요일 … 6=일요일
+4. 입력에 사용자:/assistant: 대화가 섞일 수 있으니 전체 대화를 참고해 요청을 해석한다.
+5. title은 시간/장소를 넣지 않는다
+6. 상대 날짜는 기준 날짜로 계산한다.
+7. 시간 정보가 없으면 recurring.time과 recurring.duration_minutes는 null.
+8. 종일 일정이 명확하면 질문하지 않는다. 휴가/연차/휴무/기념일/생일/공휴일 등.
+9. recurrence.end는 until 또는 count 중 하나만 사용한다(동시 사용 금지).
+10. 사용자의 요청이 없다면 과거 이벤트는 생성하지 않는다.
+11. recurrence가 있으면 우선 사용한다. end_date/weekday는 이전 버전 호환용으로만 사용(필수 아님)
+12. context.events는 이미 존재하는 일정이다. 요청이 기존 일정과의 관계(직후/직전/같은 시간/충돌 회피 등)를 요구할 때만 참고한다.
+13. context.events 자체를 수정하거나 삭제하지 말고, 새로 추가할 일정만 만든다.
+14. 이미지 또는 텍스트에 정보가 없으면 null 처리
+15. 가려진 구간이나 알아볼 수 없는 내용은 제외
+16. 꼭 필요한 정보만 질문한다. 문맥이나 context.events로 알 수 있으면 묻지 않는다.
+17. need_more_information=false이면 content는 빈 문자열로 둔다.
+18. 마크다운은 need_more_information=true인 경우 content에서만 제한적으로 사용한다(**굵게**, *기울임*, - 리스트, 줄바꿈). 그 외 필드에는 마크다운을 쓰지 않는다.
+19. 질문은 최대 3개까지만 작성한다.
+
 """
 
 
@@ -1606,22 +1667,29 @@ def _invoke_event_parser(kind: str,
 
   needs_context, days_before, days_after = _extract_context_request(data)
   if not needs_context:
+    if isinstance(data, dict):
+      data["context_used"] = False
     return data
 
   context = _build_events_context(days_before, days_after)
   payload_with_context = _build_events_user_payload(text, bool(images), context)
 
   if images:
-    return _chat_multimodal_json(
+    data = _chat_multimodal_json(
         kind,
         build_events_multimodal_prompt_with_context(),
         payload_with_context,
         images,
         reasoning_effort=reasoning_effort)
-  return _chat_json(kind,
-                    build_events_system_prompt_with_context(),
-                    payload_with_context,
-                    reasoning_effort=reasoning_effort)
+  else:
+    data = _chat_json(kind,
+                      build_events_system_prompt_with_context(),
+                      payload_with_context,
+                      reasoning_effort=reasoning_effort)
+
+  if isinstance(data, dict):
+    data["context_used"] = True
+  return data
 
 
 def build_delete_system_prompt() -> str:
@@ -2063,8 +2131,65 @@ def is_gcal_configured() -> bool:
               and GOOGLE_REDIRECT_URI)
 
 
-def load_gcal_token() -> Optional[Dict[str, Any]]:
-  path = pathlib.Path(GOOGLE_TOKEN_FILE)
+def _normalize_session_id(raw: Optional[str]) -> Optional[str]:
+  if not isinstance(raw, str):
+    return None
+  value = raw.strip()
+  if not value:
+    return None
+  if len(value) > 512:
+    return None
+  return value
+
+
+def _session_key(session_id: str) -> str:
+  return hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+
+
+def _session_token_path(session_id: str) -> pathlib.Path:
+  return GOOGLE_TOKEN_DIR / f"token_{_session_key(session_id)}.json"
+
+
+def _ensure_token_dir() -> None:
+  try:
+    GOOGLE_TOKEN_DIR.mkdir(parents=True, exist_ok=True)
+  except Exception:
+    pass
+
+
+def _get_session_id(request: Request) -> Optional[str]:
+  return _normalize_session_id(request.cookies.get(SESSION_COOKIE_NAME))
+
+
+def _new_session_id() -> str:
+  return secrets.token_urlsafe(32)
+
+
+def _new_oauth_state() -> str:
+  return secrets.token_urlsafe(16)
+
+
+def _set_cookie(response: Response,
+                name: str,
+                value: str,
+                max_age: Optional[int] = None) -> None:
+  response.set_cookie(name,
+                      value,
+                      httponly=True,
+                      samesite="lax",
+                      secure=COOKIE_SECURE,
+                      max_age=max_age,
+                      path="/")
+
+
+def _delete_cookie(response: Response, name: str) -> None:
+  response.delete_cookie(name, path="/")
+
+
+def load_gcal_token_for_session(session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+  if not session_id:
+    return None
+  path = _session_token_path(session_id)
   if not path.exists():
     return None
   try:
@@ -2074,26 +2199,62 @@ def load_gcal_token() -> Optional[Dict[str, Any]]:
     return None
 
 
-def clear_gcal_token() -> None:
+def load_gcal_token_for_request(request: Request) -> Optional[Dict[str, Any]]:
+  session_id = _get_session_id(request)
+  return load_gcal_token_for_session(session_id)
+
+
+def save_gcal_token_for_session(session_id: str, data: Dict[str, Any]) -> None:
+  if not session_id:
+    return
+  _ensure_token_dir()
+  path = _session_token_path(session_id)
+  path.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                  encoding="utf-8")
+
+
+def clear_gcal_token_for_session(session_id: Optional[str]) -> None:
+  if not session_id:
+    return
   try:
-    path = pathlib.Path(GOOGLE_TOKEN_FILE)
+    path = _session_token_path(session_id)
     if path.exists():
       path.unlink()
   except Exception:
     pass
 
 
-def save_gcal_token(data: Dict[str, Any]) -> None:
-  path = pathlib.Path(GOOGLE_TOKEN_FILE)
-  path.write_text(json.dumps(data, ensure_ascii=False, indent=2),
-                  encoding="utf-8")
+def _get_google_cache(session_id: str) -> Dict[str, Dict[str, Any]]:
+  key = _session_key(session_id)
+  cache = google_events_cache.get(key)
+  if cache is None:
+    cache = {}
+    google_events_cache[key] = cache
+  return cache
 
 
-def get_gcal_service():
+def _clear_google_cache(session_id: Optional[str]) -> None:
+  if not session_id:
+    return
+  google_events_cache.pop(_session_key(session_id), None)
+
+
+def get_google_session_id(request: Request) -> Optional[str]:
+  if is_admin(request) or not ENABLE_GCAL:
+    return None
+  session_id = _get_session_id(request)
+  if not session_id:
+    return None
+  if load_gcal_token_for_session(session_id) is None:
+    return None
+  return session_id
+
+
+def get_gcal_service(session_id: str):
   if not is_gcal_configured():
     raise RuntimeError("Google Calendar is not configured.")
 
-  token_data = load_gcal_token()
+  token_data = load_gcal_token_for_session(session_id)
   if not token_data:
     raise RuntimeError(
         "Google OAuth token not found. Run /auth/google/login first.")
@@ -2103,7 +2264,7 @@ def get_gcal_service():
   if creds.expired and creds.refresh_token:
     creds.refresh(GoogleRequest())
     new_data = json.loads(creds.to_json())
-    save_gcal_token(new_data)
+    save_gcal_token_for_session(session_id, new_data)
 
   service = build("calendar", "v3", credentials=creds)
   return service
@@ -2113,12 +2274,13 @@ def gcal_create_single_event(title: str,
                              start_iso: str,
                              end_iso: Optional[str],
                              location: Optional[str],
-                             all_day: Optional[bool] = None) -> Optional[str]:
-  if not is_gcal_configured():
+                             all_day: Optional[bool] = None,
+                             session_id: Optional[str] = None) -> Optional[str]:
+  if not is_gcal_configured() or not session_id:
     return None
 
   try:
-    service = get_gcal_service()
+    service = get_gcal_service(session_id)
   except Exception as e:
     _log_debug(f"[GCAL] get service error: {e}")
     return None
@@ -2209,21 +2371,25 @@ def gcal_update_event(event_id: str,
                       start_iso: Optional[str],
                       end_iso: Optional[str],
                       location: Optional[str],
-                      all_day: Optional[bool]) -> None:
+                      all_day: Optional[bool],
+                      session_id: Optional[str] = None) -> None:
   if not event_id:
     raise ValueError("event_id is empty")
   if not is_gcal_configured():
     raise RuntimeError("Google Calendar is not configured.")
+  if not session_id:
+    raise RuntimeError("Google OAuth session is missing.")
 
-  service = get_gcal_service()
+  service = get_gcal_service(session_id)
   body = _build_gcal_event_body(title, start_iso, end_iso, location, all_day)
   service.events().patch(calendarId=GOOGLE_CALENDAR_ID,
                          eventId=event_id,
                          body=body).execute()
 
 
-def gcal_create_recurring_event(item: Dict[str, Any]) -> Optional[str]:
-  if not is_gcal_configured():
+def gcal_create_recurring_event(item: Dict[str, Any],
+                                session_id: Optional[str] = None) -> Optional[str]:
+  if not is_gcal_configured() or not session_id:
     return None
 
   rrule_core = recurring_to_rrule(item)
@@ -2251,7 +2417,7 @@ def gcal_create_recurring_event(item: Dict[str, Any]) -> Optional[str]:
                  and re.match(r"^\d{2}:\d{2}$", time_str.strip()))
 
   try:
-    service = get_gcal_service()
+    service = get_gcal_service(session_id)
   except Exception as e:
     _log_debug(f"[GCAL] get service error: {e}")
     return None
@@ -2301,12 +2467,14 @@ def gcal_create_recurring_event(item: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def gcal_delete_event(event_id: str) -> None:
+def gcal_delete_event(event_id: str, session_id: Optional[str] = None) -> None:
   if not event_id:
     raise ValueError("event_id is empty")
   if not is_gcal_configured():
     raise RuntimeError("Google Calendar is not configured.")
-  service = get_gcal_service()
+  if not session_id:
+    raise RuntimeError("Google OAuth session is missing.")
+  service = get_gcal_service(session_id)
   service.events().delete(calendarId=GOOGLE_CALENDAR_ID, eventId=event_id).execute()
 
 
@@ -2496,19 +2664,23 @@ def _apply_gcal_items_to_cache(cache: Dict[str, Dict[str, Any]],
 
 
 def fetch_google_events_between(range_start: date,
-                                range_end: date) -> List[Dict[str, Any]]:
+                                range_end: date,
+                                session_id: str) -> List[Dict[str, Any]]:
   if not is_gcal_configured():
     raise HTTPException(status_code=400,
                         detail="Google Calendar 연동이 설정되지 않았습니다.")
+  if not session_id:
+    raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
 
   try:
-    service = get_gcal_service()
+    service = get_gcal_service(session_id)
   except Exception as exc:
     raise HTTPException(status_code=502,
                         detail=f"Google Calendar 인증에 실패했습니다: {exc}") from exc
 
+  session_cache = _get_google_cache(session_id)
   cache_key = _google_cache_key(range_start, range_end)
-  cache_entry = google_events_cache.get(cache_key)
+  cache_entry = session_cache.get(cache_key)
   if cache_entry and cache_entry.get("sync_token") and not cache_entry.get("sync_disabled"):
     try:
       raw_items, next_sync = _fetch_google_events_raw(service,
@@ -2534,7 +2706,7 @@ def fetch_google_events_between(range_start: date,
                                                   range_end)
   events_by_id: Dict[str, Dict[str, Any]] = {}
   _apply_gcal_items_to_cache(events_by_id, raw_items, range_start, range_end)
-  google_events_cache[cache_key] = {
+  session_cache[cache_key] = {
       "events": events_by_id,
       "sync_token": next_sync,
       "sync_disabled": False,
@@ -2543,16 +2715,19 @@ def fetch_google_events_between(range_start: date,
   return _sorted_google_cache_items(events_by_id)
 
 
-def fetch_recent_google_events(days: int = GOOGLE_RECENT_DAYS) -> List[Dict[str, Any]]:
+def fetch_recent_google_events(session_id: str,
+                               days: int = GOOGLE_RECENT_DAYS) -> List[Dict[str, Any]]:
   if days <= 0:
     days = GOOGLE_RECENT_DAYS
 
   if not is_gcal_configured():
     raise HTTPException(status_code=400,
                         detail="Google Calendar 연동이 설정되지 않았습니다.")
+  if not session_id:
+    raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
 
   try:
-    service = get_gcal_service()
+    service = get_gcal_service(session_id)
   except Exception as exc:
     raise HTTPException(status_code=502,
                         detail=f"Google Calendar 인증에 실패했습니다: {exc}") from exc
@@ -2615,7 +2790,8 @@ def fetch_recent_google_events(days: int = GOOGLE_RECENT_DAYS) -> List[Dict[str,
 def create_events_from_natural_text_core(
     text: str,
     images: Optional[List[str]] = None,
-    reasoning_effort: Optional[str] = None) -> List[Event]:
+    reasoning_effort: Optional[str] = None,
+    session_id: Optional[str] = None) -> List[Event]:
   images = images or []
   t = normalize_text(text)
   if not t and not images:
@@ -2627,6 +2803,14 @@ def create_events_from_natural_text_core(
         detail="LLM client is not configured (OPENAI_API_KEY 미설정)")
 
   data = _invoke_event_parser("preview", t, images, reasoning_effort)
+  if _parse_bool(data.get("need_more_information")):
+    content = (data.get("content") or "").strip()
+    raise HTTPException(
+        status_code=422,
+        detail={
+            "need_more_information": True,
+            "content": content or "추가로 확인할 정보가 필요합니다.",
+        })
   items = data.get("items")
   if not isinstance(items, list):
     raise HTTPException(status_code=502, detail="LLM 응답 형식 오류입니다.")
@@ -2712,7 +2896,8 @@ def create_events_from_natural_text_core(
 
     if ev.get("source_type") == "single":
       google_event_id = gcal_create_single_event(title, start, end, location,
-                                                 all_day_flag)
+                                                 all_day_flag,
+                                                 session_id=session_id)
 
     created.append(
         store_event(title=title,
@@ -2724,7 +2909,7 @@ def create_events_from_natural_text_core(
                     all_day=all_day_flag))
 
   for rec_item in recurring_items:
-    gcal_create_recurring_event(rec_item)
+    gcal_create_recurring_event(rec_item, session_id=session_id)
 
   return created
 
@@ -2747,6 +2932,15 @@ def preview_events_from_natural_text_core(
         detail="LLM client is not configured (OPENAI_API_KEY 미설정)")
 
   data = _invoke_event_parser("parse", t, images, reasoning_effort)
+  context_used = _parse_bool(data.get("context_used"))
+  if _parse_bool(data.get("need_more_information")):
+    content = (data.get("content") or "").strip()
+    return {
+        "need_more_information": True,
+        "content": content or "추가로 확인할 정보가 필요합니다.",
+        "items": [],
+        "context_used": context_used,
+    }
   items = data.get("items")
   if not isinstance(items, list) or len(items) == 0:
     raise HTTPException(status_code=422, detail="미리보기를 만들 수 없습니다.")
@@ -2866,13 +3060,14 @@ def preview_events_from_natural_text_core(
   if not out_items:
     raise HTTPException(status_code=422, detail="미리보기를 만들 수 없습니다.")
 
-  return {"items": out_items}
+  return {"items": out_items, "context_used": context_used}
 
 
 # -------------------------
 # 선택 적용: Add (모달에서 체크한 것만)
 # -------------------------
-def apply_add_items_core(items: List[Dict[str, Any]]) -> List[Event]:
+def apply_add_items_core(items: List[Dict[str, Any]],
+                         session_id: Optional[str] = None) -> List[Event]:
   created: List[Event] = []
 
   for item in items:
@@ -2896,7 +3091,9 @@ def apply_add_items_core(items: List[Dict[str, Any]]) -> List[Event]:
         all_day_flag = is_all_day_span(start, end_str)
 
       google_event_id = gcal_create_single_event(title, start, end_str,
-                                                 location, all_day_flag)
+                                                 location,
+                                                 all_day_flag,
+                                                 session_id=session_id)
 
       created.append(
           store_event(
@@ -2977,7 +3174,7 @@ def apply_add_items_core(items: List[Dict[str, Any]]) -> List[Event]:
       full_recurring = selected_idx is None or len(expanded) == len(expanded_all)
       google_recur_id: Optional[str] = None
       if full_recurring:
-        google_recur_id = gcal_create_recurring_event(item)
+        google_recur_id = gcal_create_recurring_event(item, session_id=session_id)
         start_date_value = item.get("start_date")
         if not isinstance(start_date_value, str):
           continue
@@ -2998,7 +3195,8 @@ def apply_add_items_core(items: List[Dict[str, Any]]) -> List[Event]:
         google_single_id = gcal_create_single_event(ev["title"], ev["start"],
                                                     ev.get("end"),
                                                     ev.get("location"),
-                                                    all_day_flag)
+                                                    all_day_flag,
+                                                    session_id=session_id)
         created.append(
             store_event(
                 title=ev["title"],
@@ -3215,7 +3413,7 @@ def delete_preview_groups(text: str,
 # Google OAuth 엔드포인트
 # -------------------------
 @app.get("/auth/google/login")
-def google_login():
+def google_login(request: Request):
   if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and GOOGLE_REDIRECT_URI):
     raise HTTPException(
         status_code=500,
@@ -3223,6 +3421,8 @@ def google_login():
         "Google OAuth 환경변수(GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI)가 설정되지 않았습니다.",
     )
 
+  session_id = _get_session_id(request) or _new_session_id()
+  state_value = _new_oauth_state()
   params = {
       "client_id": GOOGLE_CLIENT_ID,
       "redirect_uri": GOOGLE_REDIRECT_URI,
@@ -3230,21 +3430,35 @@ def google_login():
       "scope": "https://www.googleapis.com/auth/calendar.events",
       "access_type": "offline",
       "prompt": "consent",
+      "state": state_value,
   }
   url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(
       params)
-  return RedirectResponse(url)
+  resp = RedirectResponse(url)
+  _set_cookie(resp,
+              SESSION_COOKIE_NAME,
+              session_id,
+              max_age=SESSION_COOKIE_MAX_AGE_SECONDS)
+  _set_cookie(resp,
+              OAUTH_STATE_COOKIE_NAME,
+              state_value,
+              max_age=OAUTH_STATE_MAX_AGE_SECONDS)
+  return resp
 
 
 @app.get("/auth/google/callback")
 def google_callback(request: Request):
   code = request.query_params.get("code")
   error = request.query_params.get("error")
+  state = request.query_params.get("state")
+  expected_state = request.cookies.get(OAUTH_STATE_COOKIE_NAME)
   if error:
     return JSONResponse({"ok": False, "error": error})
 
   if not code:
     raise HTTPException(status_code=400, detail="code가 없습니다.")
+  if not state or not expected_state or state != expected_state:
+    raise HTTPException(status_code=400, detail="state 검증에 실패했습니다.")
 
   if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and GOOGLE_REDIRECT_URI):
     raise HTTPException(
@@ -3267,10 +3481,18 @@ def google_callback(request: Request):
     raise HTTPException(status_code=500,
                         detail=f"토큰 교환 실패: {resp.status_code} {resp.text}")
 
+  session_id = _get_session_id(request)
+  if not session_id:
+    raise HTTPException(status_code=400, detail="세션이 없습니다.")
+
   token_json = resp.json()
   access_token = token_json.get("access_token")
   refresh_token = token_json.get("refresh_token")
   expires_in = token_json.get("expires_in")
+
+  if not refresh_token:
+    existing = load_gcal_token_for_session(session_id) or {}
+    refresh_token = existing.get("refresh_token")
 
   if not access_token or not refresh_token:
     raise HTTPException(status_code=500,
@@ -3288,15 +3510,21 @@ def google_callback(request: Request):
       "expiry": expiry_dt.isoformat().replace("+00:00", "Z"),
   }
 
-  save_gcal_token(token_data)
+  save_gcal_token_for_session(session_id, token_data)
 
   # ✅ 성공 시 달력으로 이동
-  return RedirectResponse("/calendar")
+  resp = RedirectResponse("/calendar")
+  _set_cookie(resp,
+              SESSION_COOKIE_NAME,
+              session_id,
+              max_age=SESSION_COOKIE_MAX_AGE_SECONDS)
+  _delete_cookie(resp, OAUTH_STATE_COOKIE_NAME)
+  return resp
 
 
 @app.get("/auth/google/status")
-def google_status():
-  token_data = load_gcal_token()
+def google_status(request: Request):
+  token_data = load_gcal_token_for_request(request)
   return {
       "enabled": ENABLE_GCAL,
       "configured": is_gcal_configured(),
@@ -3325,10 +3553,14 @@ def exit_admin():
 
 
 @app.get("/logout")
-def logout():
-  clear_gcal_token()
+def logout(request: Request):
+  session_id = _get_session_id(request)
+  clear_gcal_token_for_session(session_id)
+  _clear_google_cache(session_id)
   resp = RedirectResponse("/")
-  resp.delete_cookie(ADMIN_COOKIE_NAME)
+  resp.delete_cookie(ADMIN_COOKIE_NAME, path="/")
+  _delete_cookie(resp, SESSION_COOKIE_NAME)
+  _delete_cookie(resp, OAUTH_STATE_COOKIE_NAME)
   return resp
 
 
@@ -3395,9 +3627,10 @@ def _format_recent_google_event(item: Dict[str, Any]) -> Dict[str, Any]:
 
 @app.get("/api/recent-events")
 def list_recent_events(request: Request):
-  if is_google_mode_active(request):
+  session_id = get_google_session_id(request)
+  if session_id:
     try:
-      data = fetch_recent_google_events()
+      data = fetch_recent_google_events(session_id)
       formatted = [_format_recent_google_event(item) for item in data]
       return formatted[:200]
     except HTTPException:
@@ -3420,22 +3653,29 @@ def list_recent_events(request: Request):
 
 
 @app.get("/api/google/events")
-def google_events(start_date: str = Query(..., alias="start_date"),
+def google_events(request: Request,
+                  start_date: str = Query(..., alias="start_date"),
                   end_date: str = Query(..., alias="end_date")):
   scope = _parse_scope_dates(start_date,
                              end_date,
                              require=True,
                              max_days=3650,
                              label="조회")
-  return fetch_google_events_between(scope[0], scope[1])
+  session_id = get_google_session_id(request)
+  if not session_id:
+    raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
+  return fetch_google_events_between(scope[0], scope[1], session_id)
 
 
 @app.delete("/api/google/events/{event_id}")
-def google_delete_event(event_id: str):
+def google_delete_event(request: Request, event_id: str):
   if not event_id:
     raise HTTPException(status_code=400, detail="event_id가 없습니다.")
+  session_id = get_google_session_id(request)
+  if not session_id:
+    raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
   try:
-    gcal_delete_event(event_id)
+    gcal_delete_event(event_id, session_id=session_id)
     return {"ok": True}
   except HTTPException:
     raise
@@ -3445,12 +3685,15 @@ def google_delete_event(event_id: str):
 
 
 @app.patch("/api/google/events/{event_id}")
-def google_update_event_api(event_id: str, payload: EventUpdate):
+def google_update_event_api(request: Request, event_id: str, payload: EventUpdate):
   if not event_id:
     raise HTTPException(status_code=400, detail="event_id가 없습니다.")
   if not is_gcal_configured():
     raise HTTPException(status_code=400,
                         detail="Google Calendar 연동이 설정되지 않았습니다.")
+  session_id = get_google_session_id(request)
+  if not session_id:
+    raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
 
   start_iso = _coerce_patch_start(payload.start)
   if not start_iso:
@@ -3476,8 +3719,13 @@ def google_update_event_api(event_id: str, payload: EventUpdate):
     all_day_flag = is_all_day_span(start_iso, end_iso)
 
   try:
-    gcal_update_event(event_id, title_value, start_iso, end_iso,
-                      location_value, bool(all_day_flag))
+    gcal_update_event(event_id,
+                      title_value,
+                      start_iso,
+                      end_iso,
+                      location_value,
+                      bool(all_day_flag),
+                      session_id=session_id)
   except Exception as exc:
     raise HTTPException(status_code=502,
                         detail=f"Google event 업데이트 실패: {exc}") from exc
@@ -3486,15 +3734,17 @@ def google_update_event_api(event_id: str, payload: EventUpdate):
 
 
 @app.post("/api/events", response_model=Event)
-def create_event(event_in: EventCreate):
+def create_event(request: Request, event_in: EventCreate):
   google_event_id: Optional[str] = None
   detected_all_day = event_in.all_day
   if detected_all_day is None:
     detected_all_day = is_all_day_span(event_in.start, event_in.end)
   try:
+    session_id = get_google_session_id(request)
     google_event_id = gcal_create_single_event(event_in.title, event_in.start,
                                                event_in.end, event_in.location,
-                                               detected_all_day)
+                                               detected_all_day,
+                                               session_id=session_id)
   except Exception:
     _log_debug("[GCAL] /api/events create: 실패 (무시)")
 
@@ -3519,7 +3769,7 @@ def delete_event(event_id: int):
 
 
 @app.patch("/api/events/{event_id}", response_model=Event)
-def update_event(event_id: int, payload: EventUpdate):
+def update_event(request: Request, event_id: int, payload: EventUpdate):
   recurrence_id = _decode_occurrence_id(event_id)
   if recurrence_id:
     raise HTTPException(status_code=400, detail="반복 일정은 개별 수정할 수 없습니다.")
@@ -3558,13 +3808,14 @@ def update_event(event_id: int, payload: EventUpdate):
   if new_all_day is None:
     new_all_day = is_all_day_span(new_start, new_end)
 
-  if target.google_event_id:
+  session_id = get_google_session_id(request)
+  if target.google_event_id and session_id:
     try:
       gcal_location = None
       if location_provided:
         gcal_location = "" if new_location is None else new_location
       gcal_update_event(target.google_event_id, new_title, new_start, new_end,
-                        gcal_location, bool(new_all_day))
+                        gcal_location, bool(new_all_day), session_id=session_id)
     except Exception as exc:
       _log_debug(f"[GCAL] local event update failed: {exc}")
 
@@ -3582,7 +3833,11 @@ def create_events_from_natural_text(body: NaturalText, request: Request):
   try:
     images = _validate_image_payload(body.images)
     effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
-    return create_events_from_natural_text_core(body.text, images, effort)
+    session_id = get_google_session_id(request)
+    return create_events_from_natural_text_core(body.text,
+                                                images,
+                                                effort,
+                                                session_id=session_id)
   except HTTPException:
     raise
   except Exception as e:
@@ -3595,7 +3850,11 @@ def create_event_from_natural_text_compat(body: NaturalText, request: Request):
   try:
     images = _validate_image_payload(body.images)
     effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
-    created = create_events_from_natural_text_core(body.text, images, effort)
+    session_id = get_google_session_id(request)
+    created = create_events_from_natural_text_core(body.text,
+                                                   images,
+                                                   effort,
+                                                   session_id=session_id)
     return created[0]
   except HTTPException:
     raise
@@ -3617,12 +3876,13 @@ def nlp_preview(body: NaturalText, request: Request):
 
 
 @app.post("/api/nlp-apply-add", response_model=List[Event])
-def nlp_apply_add(body: ApplyItems):
+def nlp_apply_add(body: ApplyItems, request: Request):
   try:
     items = body.items or []
     if not items:
       raise HTTPException(status_code=400, detail="items is empty")
-    return apply_add_items_core(items)
+    session_id = get_google_session_id(request)
+    return apply_add_items_core(items, session_id=session_id)
   except HTTPException:
     raise
   except Exception as e:
@@ -3698,7 +3958,7 @@ def start_page(request: Request):
     return RedirectResponse("/calendar")
   if not ENABLE_GCAL:
     return RedirectResponse("/calendar")
-  if load_gcal_token() is not None:
+  if load_gcal_token_for_request(request) is not None:
     return RedirectResponse("/calendar")
 
   # 그 외: 시작 페이지
@@ -3708,10 +3968,11 @@ def start_page(request: Request):
 @app.get("/calendar", response_class=HTMLResponse)
 def calendar_page(request: Request):
   # 접근 조건: admin or (gcal 비활성) or (token 있음)
-  if not is_admin(request) and ENABLE_GCAL and load_gcal_token() is None:
+  if not is_admin(request) and ENABLE_GCAL and load_gcal_token_for_request(
+      request) is None:
     return RedirectResponse("/")
 
-  token_present = load_gcal_token() is not None
+  token_present = load_gcal_token_for_request(request) is not None
   admin_mode = is_admin(request)
   actions_html = build_header_actions(request, token_present)
   context = {
@@ -3732,6 +3993,7 @@ def calendar_page(request: Request):
 
 @app.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request):
-  if not is_admin(request) and ENABLE_GCAL and load_gcal_token() is None:
+  if not is_admin(request) and ENABLE_GCAL and load_gcal_token_for_request(
+      request) is None:
     return RedirectResponse("/")
   return HTMLResponse(SETTINGS_HTML)
