@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException, Request, Query, Response
 from fastapi.responses import RedirectResponse, JSONResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, Tuple
 import os
@@ -82,7 +83,12 @@ SESSION_COOKIE_MAX_AGE_SECONDS = int(
 OAUTH_STATE_MAX_AGE_SECONDS = int(
     os.getenv("GCAL_OAUTH_STATE_MAX_AGE_SECONDS", "600"))
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "0") == "1"
-FRONTEND_DIR = BASE_DIR / "frontend"
+API_BASE = os.getenv("API_BASE", "/api")
+NEXT_FRONTEND_DIR = BASE_DIR / "frontend-next" / "out"
+LEGACY_FRONTEND_DIR = BASE_DIR / "frontend"
+USE_NEXT_FRONTEND = (NEXT_FRONTEND_DIR / "index.html").exists()
+FRONTEND_DIR = NEXT_FRONTEND_DIR if USE_NEXT_FRONTEND else LEGACY_FRONTEND_DIR
+FRONTEND_STATIC_DIR = NEXT_FRONTEND_DIR if USE_NEXT_FRONTEND else None
 EVENTS_DATA_FILE = pathlib.Path(
     os.getenv("EVENTS_DATA_FILE", str(BASE_DIR / "events_data.json")))
 
@@ -95,9 +101,14 @@ def _load_frontend_html(filename: str) -> str:
     raise RuntimeError(f"Front-end file not found: {path}") from exc
 
 
-START_HTML = _load_frontend_html("start.html")
-CALENDAR_HTML_TEMPLATE = _load_frontend_html("calendar.html")
-SETTINGS_HTML = _load_frontend_html("settings.html")
+if USE_NEXT_FRONTEND:
+  START_HTML = _load_frontend_html("index.html")
+  CALENDAR_HTML_TEMPLATE = _load_frontend_html("calendar/index.html")
+  SETTINGS_HTML = _load_frontend_html("settings/index.html")
+else:
+  START_HTML = _load_frontend_html("start.html")
+  CALENDAR_HTML_TEMPLATE = _load_frontend_html("calendar.html")
+  SETTINGS_HTML = _load_frontend_html("settings.html")
 
 # -------------------------
 # 데이터 모델
@@ -3983,7 +3994,10 @@ def calendar_page(request: Request):
   }
   html = CALENDAR_HTML_TEMPLATE.replace("__HEADER_ACTIONS__", actions_html)
   context_json = json.dumps(context, ensure_ascii=False)
-  context_script = f"<script>window.__APP_CONTEXT__ = {context_json};</script>"
+  api_base_json = json.dumps(API_BASE, ensure_ascii=False)
+  context_script = (
+      f"<script>window.__APP_CONTEXT__ = {context_json};"
+      f"window.__API_BASE__ = {api_base_json};</script>")
   if "</head>" in html:
     html = html.replace("</head>", f"{context_script}\n</head>", 1)
   else:
@@ -3997,3 +4011,9 @@ def settings_page(request: Request):
       request) is None:
     return RedirectResponse("/")
   return HTMLResponse(SETTINGS_HTML)
+
+
+if FRONTEND_STATIC_DIR and FRONTEND_STATIC_DIR.exists():
+  app.mount("/",
+            StaticFiles(directory=str(FRONTEND_STATIC_DIR), html=False),
+            name="frontend-static")

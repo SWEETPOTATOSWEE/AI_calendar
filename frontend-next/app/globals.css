@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+/* Minimal functional defaults; visual design will be reintroduced later. */
+body {
+  margin: 0;
+}
+
+#confirm-overlay,
+#event-modal-overlay,
+#recent-overlay,
+#image-editor-overlay,
+#global-loading-overlay,
+.tool-overlay,
+.tool-drawer,
+.event-search-field,
+.event-search-popover,
+#year-view {
+  display: none;
+}
+
+#confirm-overlay.active,
+#event-modal-overlay.active,
+#recent-overlay.active,
+#image-editor-overlay.active,
+#global-loading-overlay.active,
+.tool-overlay.active,
+.tool-drawer.active,
+.event-search.is-open .event-search-field,
+.event-search.is-range-open .event-search-popover,
+#year-view.active {
+  display: block;
+}
+
+.event-search.is-open .event-search-field {
+  display: flex;
+}
+
+#calendar-container.is-year-view #calendar {
+  display: none;
+}
+
+#calendar {
+  min-height: 600px;
+}
+
+.toast {
+  display: none;
+}
+
+.toast.show {
+  display: block;
+}
