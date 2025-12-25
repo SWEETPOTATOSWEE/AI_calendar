@@ -4002,6 +4002,31 @@ def calendar_page(request: Request):
     html = html.replace("</head>", f"{context_script}\n</head>", 1)
   else:
     html = context_script + html
+  def _has_script_src(text: str, src: str) -> bool:
+    return f'src="{src}"' in text or f"src='{src}'" in text
+
+  if "https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css" not in html:
+    css_tag = ('<link rel="stylesheet" '
+               'href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css">')
+    if "</head>" in html:
+      html = html.replace("</head>", f"{css_tag}\n</head>", 1)
+    else:
+      html = css_tag + html
+
+  if not _has_script_src(html, "https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"):
+    fullcalendar_tag = (
+        '<script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/'
+        'index.global.min.js" defer></script>')
+    if "</head>" in html:
+      html = html.replace("</head>", f"{fullcalendar_tag}\n</head>", 1)
+    else:
+      html = fullcalendar_tag + html
+  if not _has_script_src(html, "/calendar-app.js"):
+    app_tag = '<script src="/calendar-app.js" defer></script>'
+    if "</body>" in html:
+      html = html.replace("</body>", f"{app_tag}\n</body>", 1)
+    else:
+      html = html + app_tag
   return HTMLResponse(html)
 
 

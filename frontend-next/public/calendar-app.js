@@ -2677,7 +2677,9 @@ const apiBase = window.__API_BASE__ || "/api";
     }
   }
 
-  document.addEventListener("DOMContentLoaded", () => {
+  const onDomReady = () => {
+    if(window.__CALENDAR_APP_INIT__) return;
+    window.__CALENDAR_APP_INIT__ = true;
     // Calendar init
     let calendarFadeTimer = null;
     const calendarContent = document.querySelector("#calendar-container .calendar-main-content");
@@ -3346,4 +3348,10 @@ const apiBase = window.__API_BASE__ || "/api";
         return;
       }
     });
-  });
+  };
+
+  if(document.readyState === "loading"){
+    document.addEventListener("DOMContentLoaded", onDomReady);
+  }else{
+    onDomReady();
+  }

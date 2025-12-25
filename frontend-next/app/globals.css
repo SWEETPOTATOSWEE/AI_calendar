@@ -5,6 +5,72 @@ body {
   margin: 0;
 }
 
+:root {
+  --icon-size: 18px;
+  --control-h: 34px;
+}
+
+svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+.icon {
+  display: block;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  fill: currentColor;
+}
+
+.topbar,
+.topbar-left,
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.topbar {
+  justify-content: space-between;
+  padding: 10px 14px;
+}
+
+.nav-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.nav-btn {
+  height: var(--control-h);
+  padding: 0 10px;
+}
+
+.nav-btn.is-circle,
+.icon-btn,
+.menu-btn,
+#event-search-btn,
+.event-search-settings-btn {
+  width: var(--control-h);
+  height: var(--control-h);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.view-btn,
+.header-btn {
+  height: var(--control-h);
+  padding: 0 12px;
+}
+
+.event-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 #confirm-overlay,
 #event-modal-overlay,
 #recent-overlay,
