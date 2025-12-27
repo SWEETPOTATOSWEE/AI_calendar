@@ -1,8 +1,10 @@
+@config "../tailwind.config.ts";
 @import "tailwindcss";
 
 /* Minimal functional defaults; visual design will be reintroduced later. */
 body {
   margin: 0;
+  font-family: "Noto Sans KR", "Inter", sans-serif;
 }
 
 :root {
@@ -115,4 +117,66 @@ svg {
 
 .toast.show {
   display: block;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.truncate-2-lines {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #334155;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+.month-shell .rounded {
+  border-radius: 1rem;
+}
+
+.month-shell .rounded-lg {
+  border-radius: 1.5rem;
+}
+
+.month-shell .rounded-xl {
+  border-radius: 2rem;
+}
+
+.month-shell .rounded-2xl {
+  border-radius: 2.5rem;
+}
+
+.month-shell .rounded-full {
+  border-radius: 9999px;
 }

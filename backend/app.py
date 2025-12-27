@@ -5,6 +5,7 @@ from fastapi.responses import RedirectResponse, JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, Tuple
+import asyncio
 import os
 import json
 import calendar
@@ -17,7 +18,7 @@ import hashlib
 import secrets
 
 import requests
-from openai import OpenAI
+from openai import AsyncOpenAI
 from datetime import datetime, timedelta, timezone, date
 from zoneinfo import ZoneInfo
 
@@ -39,7 +40,7 @@ print("PWD:", __import__("os").getcwd())
 # OpenAI Client
 # -------------------------
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-client: Optional[OpenAI] = OpenAI(
+async_client: Optional[AsyncOpenAI] = AsyncOpenAI(
     api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 SEOUL = ZoneInfo("Asia/Seoul")
@@ -84,6 +85,7 @@ OAUTH_STATE_MAX_AGE_SECONDS = int(
     os.getenv("GCAL_OAUTH_STATE_MAX_AGE_SECONDS", "600"))
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "0") == "1"
 API_BASE = os.getenv("API_BASE", "/api")
+FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "").rstrip("/")
 NEXT_FRONTEND_DIR = BASE_DIR / "frontend-next" / "out"
 LEGACY_FRONTEND_DIR = BASE_DIR / "frontend"
 USE_NEXT_FRONTEND = (NEXT_FRONTEND_DIR / "index.html").exists()
@@ -119,6 +121,13 @@ class Event(BaseModel):
   start: str  # "YYYY-MM-DDTHH:MM"
   end: Optional[str] = None
   location: Optional[str] = None
+  description: Optional[str] = None
+  attendees: Optional[List[str]] = None
+  reminders: Optional[List[int]] = None
+  visibility: Optional[str] = None
+  transparency: Optional[str] = None
+  meeting_url: Optional[str] = None
+  color_id: Optional[str] = None
   recur: Optional[str] = None
   google_event_id: Optional[str] = None
   all_day: bool = False
@@ -135,6 +144,14 @@ class EventCreate(BaseModel):
   start: str
   end: Optional[str] = None
   location: Optional[str] = None
+  description: Optional[str] = None
+  attendees: Optional[List[str]] = None
+  reminders: Optional[List[int]] = None
+  visibility: Optional[str] = None
+  transparency: Optional[str] = None
+  meeting_url: Optional[str] = None
+  timezone: Optional[str] = None
+  color_id: Optional[str] = None
   recur: Optional[str] = None
   google_event_id: Optional[str] = None
   all_day: Optional[bool] = None
@@ -146,13 +163,23 @@ class EventUpdate(BaseModel):
   start: Optional[str] = None
   end: Optional[str] = None
   location: Optional[str] = None
+  description: Optional[str] = None
+  attendees: Optional[List[str]] = None
+  reminders: Optional[List[int]] = None
+  visibility: Optional[str] = None
+  transparency: Optional[str] = None
+  meeting_url: Optional[str] = None
+  timezone: Optional[str] = None
+  color_id: Optional[str] = None
   all_day: Optional[bool] = None
 
 
 class NaturalText(BaseModel):
   text: str
   images: Optional[List[str]] = None
+  request_id: Optional[str] = None
   reasoning_effort: Optional[str] = None
+  model: Optional[str] = None
 
 
 class NaturalTextWithScope(BaseModel):
@@ -160,7 +187,9 @@ class NaturalTextWithScope(BaseModel):
   start_date: Optional[str] = None
   end_date: Optional[str] = None
   images: Optional[List[str]] = None
+  request_id: Optional[str] = None
   reasoning_effort: Optional[str] = None
+  model: Optional[str] = None
 
 
 class DeleteResult(BaseModel):
@@ -177,6 +206,10 @@ class IdsPayload(BaseModel):
   ids: List[int]
 
 
+class InterruptRequest(BaseModel):
+  request_id: Optional[str] = None
+
+
 # 메모리 저장
 events: List[Event] = []
 recurring_events: List[Dict[str, Any]] = []
@@ -187,6 +220,8 @@ MAX_SCOPE_DAYS = 365
 MAX_CONTEXT_DAYS = 180
 DEFAULT_CONTEXT_DAYS = 120
 MAX_CONTEXT_EVENTS = 200
+MAX_CONTEXT_SLICES = 4
+MAX_CONTEXT_DATES = 8
 MAX_RECURRENCE_EXPANSION_DAYS = 365
 MAX_RECURRENCE_OCCURRENCES = 400
 RECURRENCE_OCCURRENCE_SCALE = 10000
@@ -194,8 +229,14 @@ MAX_IMAGE_ATTACHMENTS = 5
 MAX_IMAGE_DATA_URL_CHARS = 4_500_000  # 약 3.4MB base64
 IMAGE_TOO_LARGE_MESSAGE = "첨부한 이미지가 너무 큽니다. 이미지는 약 3MB 이하로 축소해 주세요."
 ALLOWED_REASONING_EFFORTS = {"low", "medium", "high"}
+ALLOWED_ASSISTANT_MODELS = {"nano": "gpt-5-nano", "mini": "gpt-5-mini"}
+DEFAULT_TEXT_MODEL = "gpt-5-nano"
+DEFAULT_MULTIMODAL_MODEL = "gpt-5-mini"
 DEFAULT_TEXT_REASONING_EFFORT = "low"
 DEFAULT_MULTIMODAL_REASONING_EFFORT = "medium"
+
+inflight_tasks: Dict[str, Dict[str, asyncio.Task]] = {}
+inflight_lock = asyncio.Lock()
 
 USD_TO_KRW = 1450.0
 MODEL_PRICING = {
@@ -212,6 +253,8 @@ MODEL_PRICING = {
 }
 
 google_events_cache: Dict[str, Dict[str, Dict[str, Any]]] = {}
+context_cache: Dict[str, Dict[str, Any]] = {}
+oauth_state_store: Dict[str, Dict[str, Any]] = {}
 
 
 def _serialize_events_payload() -> Dict[str, Any]:
@@ -275,6 +318,13 @@ def _load_events_from_disk() -> None:
             "time": item.get("time"),
             "duration_minutes": item.get("duration_minutes"),
             "location": item.get("location"),
+            "description": item.get("description"),
+            "attendees": item.get("attendees"),
+            "reminders": item.get("reminders"),
+            "visibility": item.get("visibility"),
+            "transparency": item.get("transparency"),
+            "meeting_url": item.get("meeting_url"),
+            "color_id": item.get("color_id"),
             "recurrence": normalized,
             "timezone": item.get("timezone") or "Asia/Seoul",
             "google_event_id": item.get("google_event_id"),
@@ -307,10 +357,10 @@ def _load_events_from_disk() -> None:
 # -------------------------
 # 공통 유틸
 # -------------------------
-def get_client() -> OpenAI:
-  if client is None:
+def get_async_client() -> AsyncOpenAI:
+  if async_client is None:
     raise RuntimeError("OPENAI_API_KEY is not set")
-  return client
+  return async_client
 
 
 def normalize_text(text: str) -> str:
@@ -588,6 +638,79 @@ def _normalize_google_timestamp(ts: Optional[str]) -> str:
     return _now_iso_minute()
 
 
+def _merge_description(description: Optional[str],
+                       meeting_url: Optional[str]) -> Optional[str]:
+  desc = (description or "").strip()
+  link = (meeting_url or "").strip()
+  if not link:
+    return desc or None
+  if link in desc:
+    return desc
+  if desc:
+    return f"{desc}\n\n회의 링크: {link}"
+  return f"회의 링크: {link}"
+
+
+def _build_gcal_attendees(attendees: Optional[List[str]]) -> Optional[List[Dict[str, str]]]:
+  if attendees is None:
+    return None
+  if len(attendees) == 0:
+    return []
+  results: List[Dict[str, str]] = []
+  for item in attendees:
+    if not isinstance(item, str):
+      continue
+    email = item.strip()
+    if email:
+      results.append({"email": email})
+  return results or None
+
+
+def _build_gcal_reminders(reminders: Optional[List[int]]) -> Optional[Dict[str, Any]]:
+  if reminders is None:
+    return None
+  if not reminders:
+    return {"useDefault": True}
+  overrides: List[Dict[str, Any]] = []
+  for raw in reminders:
+    try:
+      minutes = int(raw)
+    except Exception:
+      continue
+    if minutes < 0:
+      continue
+    overrides.append({"method": "popup", "minutes": minutes})
+  if not overrides:
+    return {"useDefault": True}
+  return {"useDefault": False, "overrides": overrides}
+
+
+def _normalize_visibility(value: Optional[str]) -> Optional[str]:
+  if value in {"default", "public", "private"}:
+    return value
+  return None
+
+
+def _normalize_transparency(value: Optional[str]) -> Optional[str]:
+  if value in {"opaque", "transparent"}:
+    return value
+  return None
+
+
+def _normalize_color_id(value: Optional[str]) -> Optional[str]:
+  if value is None:
+    return None
+  if isinstance(value, str):
+    cleaned = value.strip()
+    if cleaned.isdigit():
+      number = int(cleaned)
+      if 1 <= number <= 11:
+        return str(number)
+    if cleaned == "":
+      return None
+  return None
+
+
 def store_event(
     title: str,
     start: str,
@@ -597,6 +720,14 @@ def store_event(
     google_event_id: Optional[str] = None,
     all_day: bool = False,
     created_at: Optional[str] = None,
+    description: Optional[str] = None,
+    attendees: Optional[List[str]] = None,
+    reminders: Optional[List[int]] = None,
+    visibility: Optional[str] = None,
+    transparency: Optional[str] = None,
+    meeting_url: Optional[str] = None,
+    timezone_value: Optional[str] = None,
+    color_id: Optional[str] = None,
 ) -> Event:
   global next_id, events
   created_str = created_at or _now_iso_minute()
@@ -606,10 +737,18 @@ def store_event(
       start=start,
       end=end,
       location=location,
+      description=description,
+      attendees=attendees,
+      reminders=reminders,
+      visibility=visibility,
+      transparency=transparency,
+      meeting_url=meeting_url,
+      color_id=color_id,
       recur=recur,
       google_event_id=google_event_id,
       all_day=bool(all_day),
       created_at=created_str,
+      timezone=timezone_value or "Asia/Seoul",
   )
   next_id += 1
   events.append(new_event)
@@ -623,6 +762,13 @@ def store_recurring_event(title: str,
                           duration_minutes: Optional[int],
                           location: Optional[str],
                           recurrence: Dict[str, Any],
+                          description: Optional[str] = None,
+                          attendees: Optional[List[str]] = None,
+                          reminders: Optional[List[int]] = None,
+                          visibility: Optional[str] = None,
+                          transparency: Optional[str] = None,
+                          meeting_url: Optional[str] = None,
+                          color_id: Optional[str] = None,
                           timezone_value: str = "Asia/Seoul",
                           google_event_id: Optional[str] = None) -> Dict[str, Any]:
   global next_id, recurring_events
@@ -634,6 +780,13 @@ def store_recurring_event(title: str,
       "time": time,
       "duration_minutes": duration_minutes,
       "location": location,
+      "description": description,
+      "attendees": attendees,
+      "reminders": reminders,
+      "visibility": visibility,
+      "transparency": transparency,
+      "meeting_url": meeting_url,
+      "color_id": color_id,
       "recurrence": recurrence_copy,
       "timezone": timezone_value or "Asia/Seoul",
       "google_event_id": google_event_id,
@@ -688,6 +841,13 @@ def _recurring_definition_to_event(rec: Dict[str, Any]) -> Event:
       start=start_value,
       end=end_value,
       location=rec.get("location"),
+      description=rec.get("description"),
+      attendees=rec.get("attendees"),
+      reminders=rec.get("reminders"),
+      visibility=rec.get("visibility"),
+      transparency=rec.get("transparency"),
+      meeting_url=rec.get("meeting_url"),
+      color_id=rec.get("color_id"),
       recur="recurring",
       google_event_id=rec.get("google_event_id"),
       all_day=all_day,
@@ -708,6 +868,13 @@ def _build_recurring_occurrence_event(rec: Dict[str, Any], occ: Dict[str, Any],
       start=occ.get("start") or f"{rec['start_date']}T00:00",
       end=occ.get("end"),
       location=occ.get("location"),
+      description=rec.get("description"),
+      attendees=rec.get("attendees"),
+      reminders=rec.get("reminders"),
+      visibility=rec.get("visibility"),
+      transparency=rec.get("transparency"),
+      meeting_url=rec.get("meeting_url"),
+      color_id=rec.get("color_id"),
       recur="recurring",
       google_event_id=rec.get("google_event_id"),
       all_day=bool(occ.get("all_day")),
@@ -796,8 +963,13 @@ EVENTS_SYSTEM_PROMPT_TEMPLATE = """너는 한국어 일정 문장을 구조화�
 출력 스키마:
 {
   "needs_context": true | false,
-  "days_before": number,
-  "days_after": number,
+  "context_dates": ["YYYY-MM-DD"],
+  "context_slices": [
+    {
+      "start_date": "YYYY-MM-DD",
+      "end_date": "YYYY-MM-DD"
+    }
+  ],
   "need_more_information": true | false,
   "content": string,
   "items": [
@@ -835,8 +1007,10 @@ EVENTS_SYSTEM_PROMPT_TEMPLATE = """너는 한국어 일정 문장을 구조화�
 
 우선 규칙(1이 2에 우선함):
 0. 필요하면 존재하는 일정 정보를 불러올 수 있으며 need_more_information보다 needs_context를 우선으로 사용한다.
-1. 기존 일정 컨텍스트가 필요하면 needs_context=true, need_more_information=false, items=[]로 바로 반환하고 days_before/days_after에 필요한 범위를 정수로 쓴다.
-2. 기존 일정 컨텍스트가 필요 없고 사용자에게 추가 질문이 필요하면 need_more_information=true, content에 질문만 작성, 이때 items=[], needs_context=false, days_before=0, days_after=0.
+1. 이미 존재하는 일정 정보가 필요하면 needs_context=true, need_more_information=false, items=[]로 바로 반환한다.
+  - 특정 날짜만 필요하면 context_dates 배열로 요청한다.
+  - 범위가 필요하면 context_slices 배열로 요청한다.
+2. 이미 존재하는 일정 정보는 필요 없고 사용자에게 추가 질문이 필요하면 need_more_information=true, content에 질문만 작성, 이때 items=[], needs_context=false로 둔다.
 
 규칙:
 1. 반복은 recurrence를 우선 사용한다
@@ -850,11 +1024,10 @@ EVENTS_SYSTEM_PROMPT_TEMPLATE = """너는 한국어 일정 문장을 구조화�
 9. recurrence.end는 until 또는 count 중 하나만 사용한다(동시 사용 금지).
 10. 사용자의 요청이 없다면 과거 이벤트는 생성하지 않는다.
 11. recurrence가 있으면 우선 사용한다. end_date/weekday는 이전 버전 호환용으로만 사용(필수 아님).
-12. 꼭 필요한 정보만 질문한다. 문맥상 알 수 있거나 예측 가능한 값은 묻지 않는다.
-13. need_more_information=false이면 content는 빈 문자열로 둔다.
-14. 마크다운은 need_more_information=true인 경우 content에서만 제한적으로 사용한다(**굵게**, *기울임*, - 리스트, 줄바꿈). 그 외 필드에는 마크다운을 쓰지 않는다.
-15. needs_context와 need_more_information은 동시에 true로 두지 않는다.
-16. 질문은 최대 3개까지만 작성한다.
+12. need_more_information=false이면 content는 빈 문자열로 둔다.
+13. 마크다운은 need_more_information=true인 경우 content에서만 제한적으로 사용한다(**굵게**, *기울임*, - 리스트, 줄바꿈). 그 외 필드에는 마크다운을 쓰지 않는다.
+14. needs_context와 need_more_information은 동시에 true로 두지 않는다.
+15. 질문은 최대 3개까지만 작성한다.
 
 """
 
@@ -873,6 +1046,8 @@ EVENTS_SYSTEM_PROMPT_WITH_CONTEXT_TEMPLATE = """너는 한국어 일정 문장�
     "today": "YYYY-MM-DD",
     "timezone": "Asia/Seoul",
     "scope": {"start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD"},
+    "scopes": [{"start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD"}],
+    "dates": ["YYYY-MM-DD"],
     "events": [
       {
         "id": number,
@@ -968,8 +1143,13 @@ EVENTS_MULTIMODAL_PROMPT_TEMPLATE = """너는 한국어 일정 정보를 텍스�
 출력 스키마:
 {
   "needs_context": true | false,
-  "days_before": number,
-  "days_after": number,
+  "context_dates": ["YYYY-MM-DD"],
+  "context_slices": [
+    {
+      "start_date": "YYYY-MM-DD",
+      "end_date": "YYYY-MM-DD"
+    }
+  ],
   "need_more_information": true | false,
   "content": string,
   "items": [
@@ -1007,8 +1187,10 @@ EVENTS_MULTIMODAL_PROMPT_TEMPLATE = """너는 한국어 일정 정보를 텍스�
 
 우선 규칙(1이 2에 우선함):
 0. 필요하면 존재하는 일정 정보를 불러올 수 있으며 need_more_information보다 needs_context를 우선으로 사용한다.
-1. 기존 일정 컨텍스트가 필요하면 needs_context=true, need_more_information=false, items=[]로 바로 반환하고 days_before/days_after에 필요한 범위를 정수로 쓴다.
-2. 기존 일정 컨텍스트가 필요 없고 사용자에게 추가 질문이 필요하면 need_more_information=true, content에 질문만 작성, 이때 items=[], needs_context=false, days_before=0, days_after=0.
+1. 이미 존재하는 일정 정보가 필요하면 needs_context=true, need_more_information=false, items=[]로 바로 반환한다.
+  - 특정 날짜만 필요하면 context_dates 배열로 요청한다.
+  - 범위가 필요하면 context_slices 배열로 요청한다.
+2. 이미 존재하는 일정 정보는 필요 없고 사용자에게 추가 질문이 필요하면 need_more_information=true, content에 질문만 작성, 이때 items=[], needs_context=false로 둔다.
 
 규칙:
 1. 반복은 recurrence를 우선 사용한다
@@ -1024,11 +1206,10 @@ EVENTS_MULTIMODAL_PROMPT_TEMPLATE = """너는 한국어 일정 정보를 텍스�
 11. recurrence가 있으면 우선 사용한다. end_date/weekday는 이전 버전 호환용으로만 사용(필수 아님).
 12. 이미지 또는 텍스트에 정보가 없으면 null 처리
 13. 가려진 구간이나 알아볼 수 없는 내용은 제외
-14. 꼭 필요한 정보만 질문한다. 문맥상 알 수 있거나 예측 가능한 값은 묻지 않는다.
-15. need_more_information=false이면 content는 빈 문자열로 둔다.
-16. 마크다운은 need_more_information=true인 경우 content에서만 제한적으로 사용한다(**굵게**, *기울임*, - 리스트, 줄바꿈). 그 외 필드에는 마크다운을 쓰지 않는다.
-17. needs_context와 need_more_information은 동시에 true로 두지 않는다.
-18. 질문은 최대 3개까지만 작성한다.
+14. need_more_information=false이면 content는 빈 문자열로 둔다.
+15. 마크다운은 need_more_information=true인 경우 content에서만 제한적으로 사용한다(**굵게**, *기울임*, - 리스트, 줄바꿈). 그 외 필드에는 마크다운을 쓰지 않는다.
+16. needs_context와 need_more_information은 동시에 true로 두지 않는다.
+17. 질문은 최대 3개까지만 작성한다.
 
 """
 
@@ -1052,6 +1233,8 @@ EVENTS_MULTIMODAL_PROMPT_WITH_CONTEXT_TEMPLATE = """너는 한국어 일정 정�
     "today": "YYYY-MM-DD",
     "timezone": "Asia/Seoul",
     "scope": {"start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD"},
+    "scopes": [{"start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD"}],
+    "dates": ["YYYY-MM-DD"],
     "events": [
       {
         "id": number,
@@ -1165,13 +1348,29 @@ def _sanitize_reasoning_effort(value: Optional[str]) -> Optional[str]:
   return None
 
 
+def _sanitize_model(value: Optional[str]) -> Optional[str]:
+  if not value or not isinstance(value, str):
+    return None
+  normalized = value.strip().lower()
+  if normalized in ALLOWED_ASSISTANT_MODELS:
+    return ALLOWED_ASSISTANT_MODELS[normalized]
+  if normalized in ALLOWED_ASSISTANT_MODELS.values():
+    return normalized
+  return None
+
+
 def _resolve_request_reasoning_effort(request: Request,
                                       requested: Optional[str]) -> Optional[str]:
   if not requested:
     return None
-  if not is_admin(request):
-    return None
   return _sanitize_reasoning_effort(requested)
+
+
+def _resolve_request_model(request: Request,
+                           requested: Optional[str]) -> Optional[str]:
+  if not requested:
+    return None
+  return _sanitize_model(requested)
 
 
 def _pick_reasoning_effort(value: Optional[str], default_value: str) -> str:
@@ -1189,6 +1388,66 @@ def _sanitize_context_days(value: Any) -> int:
   return min(days, MAX_CONTEXT_DAYS)
 
 
+def _parse_iso_date(value: Any) -> Optional[date]:
+  if not isinstance(value, str):
+    return None
+  candidate = value.strip()
+  if len(candidate) < 10:
+    return None
+  date_part = candidate[:10]
+  if not ISO_DATE_RE.match(date_part):
+    return None
+  try:
+    return datetime.strptime(date_part, "%Y-%m-%d").date()
+  except Exception:
+    return None
+
+
+def _normalize_context_dates(value: Any) -> List[date]:
+  if not isinstance(value, list):
+    return []
+  out: List[date] = []
+  seen: set[str] = set()
+  for raw in value:
+    dt = _parse_iso_date(raw)
+    if not dt:
+      continue
+    key = dt.isoformat()
+    if key in seen:
+      continue
+    seen.add(key)
+    out.append(dt)
+    if len(out) >= MAX_CONTEXT_DATES:
+      break
+  return out
+
+
+def _normalize_context_slices(value: Any) -> List[Tuple[date, date]]:
+  if not isinstance(value, list):
+    return []
+  out: List[Tuple[date, date]] = []
+  seen: set[Tuple[str, str]] = set()
+  for raw in value:
+    if not isinstance(raw, dict):
+      continue
+    start = _parse_iso_date(raw.get("start_date"))
+    end = _parse_iso_date(raw.get("end_date"))
+    if not start or not end:
+      continue
+    if end < start:
+      continue
+    if (end - start).days > MAX_CONTEXT_DAYS:
+      continue
+    key = (start.isoformat(), end.isoformat())
+    if key in seen:
+      continue
+    seen.add(key)
+    out.append((start, end))
+    if len(out) >= MAX_CONTEXT_SLICES:
+      break
+  return out
+
+
 def _parse_bool(value: Any) -> bool:
   if isinstance(value, bool):
     return value
@@ -1199,10 +1458,20 @@ def _parse_bool(value: Any) -> bool:
   return False
 
 
-def _extract_context_request(data: Dict[str, Any]) -> Tuple[bool, int, int]:
-  needs = _parse_bool(data.get("needs_context"))
+def _extract_context_request(
+    data: Dict[str, Any]) -> Tuple[bool, List[Tuple[date, date]]]:
+  slices = _normalize_context_slices(data.get("context_slices"))
+  dates = _normalize_context_dates(data.get("context_dates"))
+  needs = _parse_bool(data.get("needs_context")) or bool(slices or dates)
   if not needs:
-    return False, 0, 0
+    return False, []
+
+  scopes: List[Tuple[date, date]] = list(slices)
+  for dt in dates:
+    scopes.append((dt, dt))
+
+  if scopes:
+    return True, scopes
 
   has_before = "days_before" in data
   has_after = "days_after" in data
@@ -1210,66 +1479,88 @@ def _extract_context_request(data: Dict[str, Any]) -> Tuple[bool, int, int]:
   days_after = _sanitize_context_days(data.get("days_after"))
 
   if not has_before and not has_after:
-    return True, DEFAULT_CONTEXT_DAYS, DEFAULT_CONTEXT_DAYS
-
-  if not has_before:
-    days_before = days_after
-  if not has_after:
-    days_after = days_before
-
-  if days_before == 0 and days_after == 0:
     days_before = DEFAULT_CONTEXT_DAYS
     days_after = DEFAULT_CONTEXT_DAYS
+  else:
+    if not has_before:
+      days_before = days_after
+    if not has_after:
+      days_after = days_before
+    if days_before == 0 and days_after == 0:
+      days_before = DEFAULT_CONTEXT_DAYS
+      days_after = DEFAULT_CONTEXT_DAYS
 
-  return True, days_before, days_after
-
-
-def _build_events_context(days_before: int,
-                          days_after: int) -> Dict[str, Any]:
   today = datetime.now(SEOUL).date()
   start_date = today - timedelta(days=days_before)
   end_date = today + timedelta(days=days_after)
-  scope = (start_date, end_date)
+  return True, [(start_date, end_date)]
+
+
+def _build_events_context(scopes: List[Tuple[date, date]]) -> Dict[str, Any]:
+  today = datetime.now(SEOUL).date()
+  if not scopes:
+    start_date = today - timedelta(days=DEFAULT_CONTEXT_DAYS)
+    end_date = today + timedelta(days=DEFAULT_CONTEXT_DAYS)
+    scopes = [(start_date, end_date)]
 
   snapshot: List[Dict[str, Any]] = []
-  for ev in events:
-    if not _event_within_scope(ev, scope):
-      continue
-    snapshot.append({
-        "id": ev.id,
-        "title": ev.title,
-        "start": ev.start,
-        "end": ev.end,
-        "location": ev.location,
-        "recur": ev.recur,
-        "all_day": ev.all_day,
-    })
+  seen_ids: set[int] = set()
+  for scope in scopes:
+    for ev in events:
+      if not _event_within_scope(ev, scope):
+        continue
+      if ev.id in seen_ids:
+        continue
+      seen_ids.add(ev.id)
+      snapshot.append({
+          "id": ev.id,
+          "title": ev.title,
+          "start": ev.start,
+          "end": ev.end,
+          "location": ev.location,
+          "recur": ev.recur,
+          "all_day": ev.all_day,
+      })
 
-  rec_occurrences = _collect_local_recurring_occurrences(scope=scope)
-  for occ in rec_occurrences:
-    snapshot.append({
-        "id": occ.id,
-        "title": occ.title,
-        "start": occ.start,
-        "end": occ.end,
-        "location": occ.location,
-        "recur": occ.recur,
-        "all_day": occ.all_day,
-    })
+    rec_occurrences = _collect_local_recurring_occurrences(scope=scope)
+    for occ in rec_occurrences:
+      if occ.id in seen_ids:
+        continue
+      seen_ids.add(occ.id)
+      snapshot.append({
+          "id": occ.id,
+          "title": occ.title,
+          "start": occ.start,
+          "end": occ.end,
+          "location": occ.location,
+          "recur": occ.recur,
+          "all_day": occ.all_day,
+      })
 
   snapshot.sort(key=lambda x: x.get("start") or "")
   if len(snapshot) > MAX_CONTEXT_EVENTS:
     snapshot = snapshot[:MAX_CONTEXT_EVENTS]
 
-  return {
+  scope_payload = [
+      {
+          "start_date": scope[0].isoformat(),
+          "end_date": scope[1].isoformat(),
+      } for scope in scopes
+  ]
+  date_payload = [
+      scope[0].isoformat() for scope in scopes if scope[0] == scope[1]
+  ]
+
+  payload: Dict[str, Any] = {
       "today": today.isoformat(),
       "timezone": "Asia/Seoul",
-      "scope": {
-          "start_date": start_date.isoformat(),
-          "end_date": end_date.isoformat(),
-      },
       "events": snapshot,
+      "scopes": scope_payload,
+      "dates": date_payload,
   }
+  if len(scope_payload) == 1:
+    payload["scope"] = scope_payload[0]
+  return payload
 
 
 def _normalize_int_list(value: Any,
@@ -1659,44 +1950,73 @@ def _estimate_llm_cost(model_name: str, prompt_tokens: Optional[int],
   return usd, krw
 
 
-def _invoke_event_parser(kind: str,
-                         text: str,
-                         images: List[str],
-                         reasoning_effort: Optional[str] = None) -> Dict[str, Any]:
+async def _invoke_event_parser(kind: str,
+                               text: str,
+                               images: List[str],
+                               reasoning_effort: Optional[str] = None,
+                               model_name: Optional[str] = None,
+                               context_cache_key: Optional[str] = None
+                               ) -> Dict[str, Any]:
   payload = _build_events_user_payload(text, bool(images))
+  cached_context = _get_context_cache(context_cache_key)
+  if cached_context and _should_use_cached_context(text):
+    payload_with_context = _build_events_user_payload(text, bool(images),
+                                                      cached_context)
+    if images:
+      data = await _chat_multimodal_json(
+          kind,
+          build_events_multimodal_prompt_with_context(),
+          payload_with_context,
+          images,
+          reasoning_effort=reasoning_effort,
+          model_name=model_name)
+    else:
+      data = await _chat_json(kind,
+                              build_events_system_prompt_with_context(),
+                              payload_with_context,
+                              reasoning_effort=reasoning_effort,
+                              model_name=model_name)
+    if isinstance(data, dict):
+      data["context_used"] = True
+    return data
   if images:
-    data = _chat_multimodal_json(kind,
-                                 build_events_multimodal_prompt(),
-                                 payload,
-                                 images,
-                                 reasoning_effort=reasoning_effort)
+    data = await _chat_multimodal_json(kind,
+                                       build_events_multimodal_prompt(),
+                                       payload,
+                                       images,
+                                       reasoning_effort=reasoning_effort,
+                                       model_name=model_name)
   else:
-    data = _chat_json(kind,
-                      build_events_system_prompt(),
-                      payload,
-                      reasoning_effort=reasoning_effort)
+    data = await _chat_json(kind,
+                            build_events_system_prompt(),
+                            payload,
+                            reasoning_effort=reasoning_effort,
+                            model_name=model_name)
 
-  needs_context, days_before, days_after = _extract_context_request(data)
+  needs_context, scopes = _extract_context_request(data)
   if not needs_context:
     if isinstance(data, dict):
       data["context_used"] = False
     return data
 
-  context = _build_events_context(days_before, days_after)
+  context = _build_events_context(scopes)
+  _set_context_cache(context_cache_key, context)
   payload_with_context = _build_events_user_payload(text, bool(images), context)
 
   if images:
-    data = _chat_multimodal_json(
+    data = await _chat_multimodal_json(
         kind,
         build_events_multimodal_prompt_with_context(),
         payload_with_context,
         images,
-        reasoning_effort=reasoning_effort)
+        reasoning_effort=reasoning_effort,
+        model_name=model_name)
   else:
-    data = _chat_json(kind,
-                      build_events_system_prompt_with_context(),
-                      payload_with_context,
-                      reasoning_effort=reasoning_effort)
+    data = await _chat_json(kind,
+                            build_events_system_prompt_with_context(),
+                            payload_with_context,
+                            reasoning_effort=reasoning_effort,
+                            model_name=model_name)
 
   if isinstance(data, dict):
     data["context_used"] = True
@@ -1735,6 +2055,8 @@ def _debug_print(
   _log_debug(f"[LLM DEBUG] input_text: {input_text}")
   _log_debug(f"[LLM DEBUG] system_prompt(head): {head}")
   _log_debug(f"[LLM DEBUG] raw_content: {raw_content}")
+  if model_name:
+    _log_debug(f"[LLM DEBUG] model: {model_name}")
 
   if latency_ms is not None:
     _log_debug(f"[LLM DEBUG] latency_ms: {latency_ms:.1f} ms")
@@ -1782,25 +2104,84 @@ def _current_reference_line() -> str:
   return f"기준 시각: {now.strftime('%Y-%m-%d')} (Asia/Seoul)\n"
 
 
-def _chat_json(kind: str,
-               system_prompt: str,
-               user_text: str,
-               reasoning_effort: Optional[str] = None) -> Dict[str, Any]:
+def _resolve_request_id(raw: Optional[str]) -> str:
+  if isinstance(raw, str) and raw.strip():
+    return raw.strip()
+  return secrets.token_hex(8)
+
+
+async def _register_inflight(session_id: str, request_id: str,
+                             task: asyncio.Task) -> None:
+  async with inflight_lock:
+    session_map = inflight_tasks.setdefault(session_id, {})
+    existing = session_map.pop(request_id, None)
+    if existing:
+      existing.cancel()
+    session_map[request_id] = task
+
+
+async def _clear_inflight(session_id: str, request_id: str) -> None:
+  async with inflight_lock:
+    session_map = inflight_tasks.get(session_id)
+    if not session_map:
+      return
+    session_map.pop(request_id, None)
+    if not session_map:
+      inflight_tasks.pop(session_id, None)
+
+
+async def _cancel_inflight(session_id: str,
+                           request_id: Optional[str] = None) -> int:
+  async with inflight_lock:
+    session_map = inflight_tasks.get(session_id)
+    if not session_map:
+      return 0
+    if request_id:
+      task = session_map.pop(request_id, None)
+      if task:
+        task.cancel()
+        return 1
+      return 0
+    count = 0
+    for task in list(session_map.values()):
+      task.cancel()
+      count += 1
+    inflight_tasks.pop(session_id, None)
+    return count
+
+
+async def _run_with_interrupt(session_id: str, request_id: str, coro):
+  task = asyncio.create_task(coro)
+  await _register_inflight(session_id, request_id, task)
+  try:
+    return await task
+  except asyncio.CancelledError:
+    raise HTTPException(status_code=499, detail="요청이 중단되었습니다.")
+  finally:
+    await _clear_inflight(session_id, request_id)
+
+
+async def _chat_json(kind: str,
+                     system_prompt: str,
+                     user_text: str,
+                     reasoning_effort: Optional[str] = None,
+                     model_name: Optional[str] = None) -> Dict[str, Any]:
   """
     gpt-5-nano를 Chat Completions로 호출하는 버전.
     - max_tokens 대신 max_completion_tokens 사용
     - temperature / reasoning 등 gpt-5-nano에서 에러나는 옵션은 보내지 않는다.
     """
-  c = get_client()
+  c = get_async_client()
 
   input_text = _current_reference_line() + user_text
 
   started = time.perf_counter()
   effort_value = _pick_reasoning_effort(reasoning_effort,
                                         DEFAULT_TEXT_REASONING_EFFORT)
+  model = _sanitize_model(model_name) or DEFAULT_TEXT_MODEL
   try:
-    completion = c.chat.completions.create(
-        model="gpt-5-nano",
+    completion = await c.chat.completions.create(
+        model=model,
         messages=[
             {
                 "role": "system",
@@ -1838,7 +2219,7 @@ def _chat_json(kind: str,
       }
 
     _debug_print(kind, user_text, system_prompt, raw_content, latency_ms,
-                 usage_dict, "gpt-5-nano")
+                 usage_dict, model)
     return _safe_json_loads(raw_content)
 
   except Exception as e:
@@ -1846,12 +2227,14 @@ def _chat_json(kind: str,
     raise
 
 
-def _chat_multimodal_json(kind: str,
-                          system_prompt: str,
-                          user_text: str,
-                          images: List[str],
-                          reasoning_effort: Optional[str] = None) -> Dict[str, Any]:
-  c = get_client()
+async def _chat_multimodal_json(kind: str,
+                                system_prompt: str,
+                                user_text: str,
+                                images: List[str],
+                                reasoning_effort: Optional[str] = None,
+                                model_name: Optional[str] = None) -> Dict[str,
+                                                                         Any]:
+  c = get_async_client()
 
   user_parts: List[Dict[str, Any]] = [{
       "type": "text",
@@ -1869,9 +2252,10 @@ def _chat_multimodal_json(kind: str,
   started = time.perf_counter()
   effort_value = _pick_reasoning_effort(reasoning_effort,
                                         DEFAULT_MULTIMODAL_REASONING_EFFORT)
+  model = _sanitize_model(model_name) or DEFAULT_MULTIMODAL_MODEL
   try:
-    completion = c.chat.completions.create(
-        model="gpt-5-mini",
+    completion = await c.chat.completions.create(
+        model=model,
         messages=[
             {
                 "role": "system",
@@ -1912,7 +2296,7 @@ def _chat_multimodal_json(kind: str,
       }
 
     _debug_print(kind, user_text, system_prompt, raw_content, latency_ms,
-                 usage_dict, "gpt-5-mini")
+                 usage_dict, model)
     return _safe_json_loads(raw_content)
 
   except Exception as e:
@@ -2176,8 +2560,41 @@ def _new_session_id() -> str:
   return secrets.token_urlsafe(32)
 
 
+def _ensure_session_id(request: Request, response: Response) -> str:
+  session_id = _get_session_id(request)
+  if session_id:
+    return session_id
+  session_id = _new_session_id()
+  _set_cookie(response,
+              SESSION_COOKIE_NAME,
+              session_id,
+              max_age=SESSION_COOKIE_MAX_AGE_SECONDS)
+  return session_id
+
+
 def _new_oauth_state() -> str:
   return secrets.token_urlsafe(16)
+
+
+def _store_oauth_state(state_value: str, session_id: str) -> None:
+  if not state_value or not session_id:
+    return
+  oauth_state_store[state_value] = {
+      "session_id": session_id,
+      "created_at": time.time(),
+  }
+
+
+def _pop_oauth_state(state_value: Optional[str]) -> Optional[str]:
+  if not state_value:
+    return None
+  entry = oauth_state_store.pop(state_value, None)
+  if not entry:
+    return None
+  created_at = entry.get("created_at")
+  if created_at and (time.time() - float(created_at)) > OAUTH_STATE_MAX_AGE_SECONDS:
+    return None
+  return entry.get("session_id")
 
 
 def _set_cookie(response: Response,
@@ -2195,6 +2612,14 @@ def _set_cookie(response: Response,
 
 def _delete_cookie(response: Response, name: str) -> None:
   response.delete_cookie(name, path="/")
+
+
+def _frontend_url(path: str) -> str:
+  if not FRONTEND_BASE_URL:
+    return path
+  if not path.startswith("/"):
+    path = f"/{path}"
+  return f"{FRONTEND_BASE_URL}{path}"
 
 
 def load_gcal_token_for_session(session_id: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -2250,6 +2675,42 @@ def _clear_google_cache(session_id: Optional[str]) -> None:
   google_events_cache.pop(_session_key(session_id), None)
 
 
+def _context_cache_key_for_session(session_id: Optional[str]) -> Optional[str]:
+  if not session_id:
+    return None
+  return _session_key(session_id)
+
+
+def _get_context_cache(cache_key: Optional[str]) -> Optional[Dict[str, Any]]:
+  if not cache_key:
+    return None
+  entry = context_cache.get(cache_key)
+  if not entry:
+    return None
+  return entry.get("context")
+
+
+def _set_context_cache(cache_key: Optional[str], context: Dict[str, Any]) -> None:
+  if not cache_key:
+    return
+  context_cache[cache_key] = {
+      "context": context,
+  }
+
+
+def _clear_context_cache(cache_key: Optional[str]) -> None:
+  if not cache_key:
+    return
+  context_cache.pop(cache_key, None)
+
+
+def _should_use_cached_context(text: str) -> bool:
+  if not text:
+    return False
+  lowered = text.lower()
+  return "assistant:" in lowered or "user:" in lowered or "사용자:" in text
+
+
 def get_google_session_id(request: Request) -> Optional[str]:
   if is_admin(request) or not ENABLE_GCAL:
     return None
@@ -2286,7 +2747,15 @@ def gcal_create_single_event(title: str,
                              end_iso: Optional[str],
                              location: Optional[str],
                              all_day: Optional[bool] = None,
-                             session_id: Optional[str] = None) -> Optional[str]:
+                             session_id: Optional[str] = None,
+                             description: Optional[str] = None,
+                             attendees: Optional[List[str]] = None,
+                             reminders: Optional[List[int]] = None,
+                             visibility: Optional[str] = None,
+                             transparency: Optional[str] = None,
+                             meeting_url: Optional[str] = None,
+                             timezone_value: Optional[str] = None,
+                             color_id: Optional[str] = None) -> Optional[str]:
   if not is_gcal_configured() or not session_id:
     return None
 
@@ -2302,6 +2771,24 @@ def gcal_create_single_event(title: str,
       use_all_day = is_all_day_span(start_iso, end_iso)
 
     event_body: Dict[str, Any] = {"summary": title}
+    merged_description = _merge_description(description, meeting_url)
+    if merged_description is not None:
+      event_body["description"] = merged_description
+    attendees_value = _build_gcal_attendees(attendees)
+    if attendees_value is not None:
+      event_body["attendees"] = attendees_value
+    reminders_value = _build_gcal_reminders(reminders)
+    if reminders_value is not None:
+      event_body["reminders"] = reminders_value
+    visibility_value = _normalize_visibility(visibility)
+    if visibility_value is not None:
+      event_body["visibility"] = visibility_value
+    transparency_value = _normalize_transparency(transparency)
+    if transparency_value is not None:
+      event_body["transparency"] = transparency_value
+    color_value = _normalize_color_id(color_id)
+    if color_value is not None:
+      event_body["colorId"] = color_value
 
     if use_all_day:
       start_date_obj, end_exclusive = _compute_all_day_bounds(start_iso, end_iso)
@@ -2316,14 +2803,9 @@ def gcal_create_single_event(title: str,
       else:
         end_dt = start_dt + timedelta(hours=1)
 
-      event_body["start"] = {
-          "dateTime": start_dt.isoformat(),
-          "timeZone": "Asia/Seoul"
-      }
-      event_body["end"] = {
-          "dateTime": end_dt.isoformat(),
-          "timeZone": "Asia/Seoul"
-      }
+    tz_value = timezone_value or "Asia/Seoul"
+    event_body["start"] = {"dateTime": start_dt.isoformat(), "timeZone": tz_value}
+    event_body["end"] = {"dateTime": end_dt.isoformat(), "timeZone": tz_value}
 
     if location:
       event_body["location"] = location
@@ -2340,7 +2822,15 @@ def _build_gcal_event_body(title: Optional[str],
                            start_iso: Optional[str],
                            end_iso: Optional[str],
                            location: Optional[str],
-                           all_day: Optional[bool]) -> Dict[str, Any]:
+                           all_day: Optional[bool],
+                           description: Optional[str] = None,
+                           attendees: Optional[List[str]] = None,
+                           reminders: Optional[List[int]] = None,
+                           visibility: Optional[str] = None,
+                           transparency: Optional[str] = None,
+                           meeting_url: Optional[str] = None,
+                           timezone_value: Optional[str] = None,
+                           color_id: Optional[str] = None) -> Dict[str, Any]:
   if not isinstance(start_iso, str) or not ISO_DATETIME_RE.match(start_iso):
     raise ValueError("Invalid start time for Google Calendar update.")
 
@@ -2353,6 +2843,27 @@ def _build_gcal_event_body(title: Optional[str],
     body["summary"] = title
   if location is not None:
     body["location"] = location
+  merged_description = _merge_description(description, meeting_url)
+  if merged_description is not None:
+    body["description"] = merged_description
+  attendees_value = _build_gcal_attendees(attendees)
+  if attendees_value is not None:
+    body["attendees"] = attendees_value
+  reminders_value = _build_gcal_reminders(reminders)
+  if reminders_value is not None:
+    body["reminders"] = reminders_value
+  visibility_value = _normalize_visibility(visibility)
+  if visibility_value is not None:
+    body["visibility"] = visibility_value
+  transparency_value = _normalize_transparency(transparency)
+  if transparency_value is not None:
+    body["transparency"] = transparency_value
+  if color_id is not None:
+    color_value = _normalize_color_id(color_id)
+    if color_value is not None:
+      body["colorId"] = color_value
+    elif isinstance(color_id, str) and color_id.strip().lower() in {"default", ""}:
+      body["colorId"] = None
 
   if use_all_day:
     start_date, end_exclusive = _compute_all_day_bounds(start_iso, end_iso)
@@ -2366,14 +2877,9 @@ def _build_gcal_event_body(title: Optional[str],
                                  "%Y-%m-%dT%H:%M").replace(tzinfo=SEOUL)
     else:
       end_dt = start_dt + timedelta(hours=1)
-    body["start"] = {
-        "dateTime": start_dt.isoformat(),
-        "timeZone": "Asia/Seoul"
-    }
-    body["end"] = {
-        "dateTime": end_dt.isoformat(),
-        "timeZone": "Asia/Seoul"
-    }
+    tz_value = timezone_value or "Asia/Seoul"
+    body["start"] = {"dateTime": start_dt.isoformat(), "timeZone": tz_value}
+    body["end"] = {"dateTime": end_dt.isoformat(), "timeZone": tz_value}
   return body
 
 
@@ -2383,7 +2889,15 @@ def gcal_update_event(event_id: str,
                       end_iso: Optional[str],
                       location: Optional[str],
                       all_day: Optional[bool],
-                      session_id: Optional[str] = None) -> None:
+                      session_id: Optional[str] = None,
+                      description: Optional[str] = None,
+                      attendees: Optional[List[str]] = None,
+                      reminders: Optional[List[int]] = None,
+                      visibility: Optional[str] = None,
+                      transparency: Optional[str] = None,
+                      meeting_url: Optional[str] = None,
+                      timezone_value: Optional[str] = None,
+                      color_id: Optional[str] = None) -> None:
   if not event_id:
     raise ValueError("event_id is empty")
   if not is_gcal_configured():
@@ -2392,7 +2906,19 @@ def gcal_update_event(event_id: str,
     raise RuntimeError("Google OAuth session is missing.")
 
   service = get_gcal_service(session_id)
-  body = _build_gcal_event_body(title, start_iso, end_iso, location, all_day)
+  body = _build_gcal_event_body(title,
+                                start_iso,
+                                end_iso,
+                                location,
+                                all_day,
+                                description=description,
+                                attendees=attendees,
+                                reminders=reminders,
+                                visibility=visibility,
+                                transparency=transparency,
+                                meeting_url=meeting_url,
+                                timezone_value=timezone_value,
+                                color_id=color_id)
   service.events().patch(calendarId=GOOGLE_CALENDAR_ID,
                          eventId=event_id,
                          body=body).execute()
@@ -2415,6 +2941,14 @@ def gcal_create_recurring_event(item: Dict[str, Any],
   time_str = item.get("time")
   duration_minutes = item.get("duration_minutes")
   location = item.get("location")
+  description = item.get("description")
+  attendees = item.get("attendees")
+  reminders = item.get("reminders")
+  visibility = item.get("visibility")
+  transparency = item.get("transparency")
+  meeting_url = item.get("meeting_url")
+  color_id = item.get("color_id")
+  timezone_value = item.get("timezone") or "Asia/Seoul"
 
   if not isinstance(start_date_str, str):
     return None
@@ -2438,6 +2972,24 @@ def gcal_create_recurring_event(item: Dict[str, Any],
         "summary": title,
         "recurrence": [f"RRULE:{rrule_core}"]
     }
+    merged_description = _merge_description(description, meeting_url)
+    if merged_description is not None:
+      event_body["description"] = merged_description
+    attendees_value = _build_gcal_attendees(attendees)
+    if attendees_value is not None:
+      event_body["attendees"] = attendees_value
+    reminders_value = _build_gcal_reminders(reminders)
+    if reminders_value is not None:
+      event_body["reminders"] = reminders_value
+    visibility_value = _normalize_visibility(visibility)
+    if visibility_value is not None:
+      event_body["visibility"] = visibility_value
+    transparency_value = _normalize_transparency(transparency)
+    if transparency_value is not None:
+      event_body["transparency"] = transparency_value
+    color_value = _normalize_color_id(color_id)
+    if color_value is not None:
+      event_body["colorId"] = color_value
 
     if all_day:
       start_date_str2 = start_date.strftime("%Y-%m-%d")
@@ -2460,11 +3012,11 @@ def gcal_create_recurring_event(item: Dict[str, Any],
 
       event_body["start"] = {
           "dateTime": start_dt.isoformat(),
-          "timeZone": "Asia/Seoul"
+          "timeZone": timezone_value
       }
       event_body["end"] = {
           "dateTime": end_dt.isoformat(),
-          "timeZone": "Asia/Seoul"
+          "timeZone": timezone_value
       }
 
     if location:
@@ -2556,12 +3108,68 @@ def _normalize_gcal_event(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return None
   end_raw = raw.get("end") or {}
   end_iso, _ = _convert_gcal_time(end_raw, True, start_iso)
+  attendees_raw = raw.get("attendees")
+  attendees: Optional[List[str]] = None
+  if isinstance(attendees_raw, list):
+    cleaned_attendees: List[str] = []
+    for item in attendees_raw:
+      if not isinstance(item, dict):
+        continue
+      email = item.get("email")
+      if isinstance(email, str) and email.strip():
+        cleaned_attendees.append(email.strip())
+    attendees = cleaned_attendees or None
+
+  reminders: Optional[List[int]] = None
+  reminders_raw = raw.get("reminders") or {}
+  overrides = reminders_raw.get("overrides")
+  if isinstance(overrides, list):
+    cleaned_reminders: List[int] = []
+    for item in overrides:
+      if not isinstance(item, dict):
+        continue
+      minutes = item.get("minutes")
+      try:
+        minutes_value = int(minutes)
+      except Exception:
+        continue
+      if minutes_value >= 0:
+        cleaned_reminders.append(minutes_value)
+    reminders = cleaned_reminders or None
+
+  meeting_url = raw.get("hangoutLink")
+  if not meeting_url:
+    conference = raw.get("conferenceData") or {}
+    entry_points = conference.get("entryPoints")
+    if isinstance(entry_points, list):
+      for entry in entry_points:
+        if not isinstance(entry, dict):
+          continue
+        uri = entry.get("uri")
+        if isinstance(uri, str) and uri.strip():
+          meeting_url = uri.strip()
+          break
+
+  timezone_value = None
+  if isinstance(start_raw, dict):
+    tz_raw = start_raw.get("timeZone")
+    if isinstance(tz_raw, str) and tz_raw.strip():
+      timezone_value = tz_raw.strip()
+
   return {
       "id": raw.get("id"),
       "title": raw.get("summary") or "(제목 없음)",
       "start": start_iso,
       "end": end_iso,
       "location": raw.get("location"),
+      "description": raw.get("description"),
+      "attendees": attendees,
+      "reminders": reminders,
+      "visibility": raw.get("visibility"),
+      "transparency": raw.get("transparency"),
+      "meeting_url": meeting_url,
+      "timezone": timezone_value,
+      "color_id": raw.get("colorId"),
       "all_day": all_day_flag,
       "status": raw.get("status"),
       "html_link": raw.get("htmlLink"),
@@ -2798,22 +3406,29 @@ def fetch_recent_google_events(session_id: str,
 # -------------------------
 # 자연어 → 일정 생성(기존)
 # -------------------------
-def create_events_from_natural_text_core(
+async def create_events_from_natural_text_core(
     text: str,
     images: Optional[List[str]] = None,
     reasoning_effort: Optional[str] = None,
+    model_name: Optional[str] = None,
+    context_cache_key: Optional[str] = None,
     session_id: Optional[str] = None) -> List[Event]:
   images = images or []
   t = normalize_text(text)
   if not t and not images:
     raise HTTPException(status_code=400, detail="문장이나 이미지를 입력해주세요.")
 
-  if client is None:
+  if async_client is None:
     raise HTTPException(
         status_code=500,
         detail="LLM client is not configured (OPENAI_API_KEY 미설정)")
 
-  data = _invoke_event_parser("preview", t, images, reasoning_effort)
+  data = await _invoke_event_parser("preview",
+                                    t,
+                                    images,
+                                    reasoning_effort,
+                                    model_name=model_name,
+                                    context_cache_key=context_cache_key)
   if _parse_bool(data.get("need_more_information")):
     content = (data.get("content") or "").strip()
     raise HTTPException(
@@ -2908,7 +3523,14 @@ def create_events_from_natural_text_core(
     if ev.get("source_type") == "single":
       google_event_id = gcal_create_single_event(title, start, end, location,
                                                  all_day_flag,
-                                                 session_id=session_id)
+                                                 session_id=session_id,
+                                                 description=ev.get("description"),
+                                                 attendees=ev.get("attendees"),
+                                                 reminders=ev.get("reminders"),
+                                                 visibility=ev.get("visibility"),
+                                                 transparency=ev.get("transparency"),
+                                                 meeting_url=ev.get("meeting_url"),
+                                                 timezone_value=ev.get("timezone"))
 
     created.append(
         store_event(title=title,
@@ -2917,7 +3539,14 @@ def create_events_from_natural_text_core(
                     location=location,
                     recur=recur,
                     google_event_id=google_event_id,
-                    all_day=all_day_flag))
+                    all_day=all_day_flag,
+                    description=ev.get("description"),
+                    attendees=ev.get("attendees"),
+                    reminders=ev.get("reminders"),
+                    visibility=ev.get("visibility"),
+                    transparency=ev.get("transparency"),
+                    meeting_url=ev.get("meeting_url"),
+                    timezone_value=ev.get("timezone")))
 
   for rec_item in recurring_items:
     gcal_create_recurring_event(rec_item, session_id=session_id)
@@ -2928,21 +3557,28 @@ def create_events_from_natural_text_core(
 # -------------------------
 # NLP Preview (추가 미리보기)
 # -------------------------
-def preview_events_from_natural_text_core(
+async def preview_events_from_natural_text_core(
     text: str,
     images: Optional[List[str]] = None,
-    reasoning_effort: Optional[str] = None) -> Dict[str, Any]:
+    reasoning_effort: Optional[str] = None,
+    model_name: Optional[str] = None,
+    context_cache_key: Optional[str] = None) -> Dict[str, Any]:
   images = images or []
   t = normalize_text(text)
   if not t and not images:
     raise HTTPException(status_code=400, detail="문장이나 이미지를 입력해주세요.")
 
-  if client is None:
+  if async_client is None:
     raise HTTPException(
         status_code=500,
         detail="LLM client is not configured (OPENAI_API_KEY 미설정)")
 
-  data = _invoke_event_parser("parse", t, images, reasoning_effort)
+  data = await _invoke_event_parser("parse",
+                                    t,
+                                    images,
+                                    reasoning_effort,
+                                    model_name=model_name,
+                                    context_cache_key=context_cache_key)
   context_used = _parse_bool(data.get("context_used"))
   if _parse_bool(data.get("need_more_information")):
     content = (data.get("content") or "").strip()
@@ -3104,7 +3740,15 @@ def apply_add_items_core(items: List[Dict[str, Any]],
       google_event_id = gcal_create_single_event(title, start, end_str,
                                                  location,
                                                  all_day_flag,
-                                                 session_id=session_id)
+                                                 session_id=session_id,
+                                                 description=item.get("description"),
+                                                 attendees=item.get("attendees"),
+                                                 reminders=item.get("reminders"),
+                                                 visibility=item.get("visibility"),
+                                                 transparency=item.get("transparency"),
+                                                 meeting_url=item.get("meeting_url"),
+                                                 timezone_value=item.get("timezone"),
+                                                 color_id=item.get("color_id"))
 
       created.append(
           store_event(
@@ -3115,6 +3759,14 @@ def apply_add_items_core(items: List[Dict[str, Any]],
               recur=None,
               google_event_id=google_event_id,
               all_day=all_day_flag,
+              description=item.get("description"),
+              attendees=item.get("attendees"),
+              reminders=item.get("reminders"),
+              visibility=item.get("visibility"),
+              transparency=item.get("transparency"),
+              meeting_url=item.get("meeting_url"),
+              timezone_value=item.get("timezone"),
+              color_id=_normalize_color_id(item.get("color_id")),
           ))
 
     elif typ == "recurring":
@@ -3195,7 +3847,15 @@ def apply_add_items_core(items: List[Dict[str, Any]],
             time=item.get("time"),
             duration_minutes=item.get("duration_minutes"),
             location=(item.get("location") or "").strip() or None,
+            description=item.get("description"),
+            attendees=item.get("attendees"),
+            reminders=item.get("reminders"),
+            visibility=item.get("visibility"),
+            transparency=item.get("transparency"),
+            meeting_url=item.get("meeting_url"),
             recurrence=recurrence_spec,
+            timezone_value=item.get("timezone") or "Asia/Seoul",
+            color_id=_normalize_color_id(item.get("color_id")),
             google_event_id=google_recur_id,
         )
         created.append(_recurring_definition_to_event(stored))
@@ -3207,7 +3867,15 @@ def apply_add_items_core(items: List[Dict[str, Any]],
                                                     ev.get("end"),
                                                     ev.get("location"),
                                                     all_day_flag,
-                                                    session_id=session_id)
+                                                    session_id=session_id,
+                                                    description=item.get("description"),
+                                                    attendees=item.get("attendees"),
+                                                    reminders=item.get("reminders"),
+                                                    visibility=item.get("visibility"),
+                                                    transparency=item.get("transparency"),
+                                                    meeting_url=item.get("meeting_url"),
+                                                    timezone_value=item.get("timezone"),
+                                                    color_id=item.get("color_id"))
         created.append(
             store_event(
                 title=ev["title"],
@@ -3217,6 +3885,14 @@ def apply_add_items_core(items: List[Dict[str, Any]],
                 recur=None,
                 google_event_id=google_single_id,
                 all_day=all_day_flag,
+                description=item.get("description"),
+                attendees=item.get("attendees"),
+                reminders=item.get("reminders"),
+                visibility=item.get("visibility"),
+                transparency=item.get("transparency"),
+                meeting_url=item.get("meeting_url"),
+                timezone_value=item.get("timezone"),
+                color_id=_normalize_color_id(item.get("color_id")),
             ))
 
   if not created:
@@ -3228,11 +3904,13 @@ def apply_add_items_core(items: List[Dict[str, Any]],
 # -------------------------
 # 삭제 NLP (기존)
 # -------------------------
-def create_delete_ids_from_natural_text(text: str,
-                                        scope: Optional[Tuple[date, date]] = None,
-                                        reasoning_effort: Optional[str] = None
-                                        ) -> List[int]:
-  if client is None:
+async def create_delete_ids_from_natural_text(
+    text: str,
+    scope: Optional[Tuple[date, date]] = None,
+    reasoning_effort: Optional[str] = None,
+    model_name: Optional[str] = None,
+) -> List[int]:
+  if async_client is None:
     return []
 
   snapshot = [{
@@ -3279,10 +3957,11 @@ def create_delete_ids_from_natural_text(text: str,
       "timezone": "Asia/Seoul"
   }
 
-  data = _chat_json("delete",
-                    build_delete_system_prompt(),
-                    json.dumps(user_payload, ensure_ascii=False),
-                    reasoning_effort=reasoning_effort)
+  data = await _chat_json("delete",
+                          build_delete_system_prompt(),
+                          json.dumps(user_payload, ensure_ascii=False),
+                          reasoning_effort=reasoning_effort,
+                          model_name=model_name)
 
   ids = data.get("ids")
   if not isinstance(ids, list):
@@ -3345,17 +4024,19 @@ def delete_events_by_ids(ids: List[int]) -> List[int]:
 # -------------------------
 # 삭제 미리보기(그룹화)
 # -------------------------
-def delete_preview_groups(text: str,
-                          scope: Optional[Tuple[date, date]] = None,
-                          reasoning_effort: Optional[str] = None
-                          ) -> Dict[str, Any]:
+async def delete_preview_groups(text: str,
+                                scope: Optional[Tuple[date, date]] = None,
+                                reasoning_effort: Optional[str] = None,
+                                model_name: Optional[str] = None
+                                ) -> Dict[str, Any]:
   text = normalize_text(text)
   if not text:
     return {"groups": []}
 
-  ids = create_delete_ids_from_natural_text(text,
-                                            scope=scope,
-                                            reasoning_effort=reasoning_effort)
+  ids = await create_delete_ids_from_natural_text(text,
+                                                  scope=scope,
+                                                  reasoning_effort=reasoning_effort,
+                                                  model_name=model_name)
   if not ids:
     return {"groups": []}
 
@@ -3454,6 +4135,7 @@ def google_login(request: Request):
               OAUTH_STATE_COOKIE_NAME,
               state_value,
               max_age=OAUTH_STATE_MAX_AGE_SECONDS)
+  _store_oauth_state(state_value, session_id)
   return resp
 
 
@@ -3468,7 +4150,8 @@ def google_callback(request: Request):
 
   if not code:
     raise HTTPException(status_code=400, detail="code가 없습니다.")
-  if not state or not expected_state or state != expected_state:
+  stored_session_id = _pop_oauth_state(state)
+  if not state or (expected_state and state != expected_state and not stored_session_id):
     raise HTTPException(status_code=400, detail="state 검증에 실패했습니다.")
 
   if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and GOOGLE_REDIRECT_URI):
@@ -3492,7 +4175,7 @@ def google_callback(request: Request):
     raise HTTPException(status_code=500,
                         detail=f"토큰 교환 실패: {resp.status_code} {resp.text}")
 
-  session_id = _get_session_id(request)
+  session_id = _get_session_id(request) or stored_session_id
   if not session_id:
     raise HTTPException(status_code=400, detail="세션이 없습니다.")
 
@@ -3524,7 +4207,7 @@ def google_callback(request: Request):
   save_gcal_token_for_session(session_id, token_data)
 
   # ✅ 성공 시 달력으로 이동
-  resp = RedirectResponse("/calendar")
+  resp = RedirectResponse(_frontend_url("/calendar"))
   _set_cookie(resp,
               SESSION_COOKIE_NAME,
               session_id,
@@ -3725,6 +4408,49 @@ def google_update_event_api(request: Request, event_id: str, payload: EventUpdat
     cleaned = _clean_optional_str(payload.location)
     location_value = "" if cleaned is None else cleaned
 
+  description_value: Optional[str] = None
+  if payload.description is not None:
+    cleaned = _clean_optional_str(payload.description)
+    description_value = "" if cleaned is None else cleaned
+
+  attendees_value: Optional[List[str]] = None
+  if payload.attendees is not None:
+    cleaned_attendees: List[str] = []
+    if isinstance(payload.attendees, list):
+      for item in payload.attendees:
+        if not isinstance(item, str):
+          continue
+        email = item.strip()
+        if email:
+          cleaned_attendees.append(email)
+    attendees_value = cleaned_attendees
+
+  reminders_value: Optional[List[int]] = None
+  if payload.reminders is not None:
+    cleaned_reminders: List[int] = []
+    if isinstance(payload.reminders, list):
+      for item in payload.reminders:
+        try:
+          minutes = int(item)
+        except Exception:
+          continue
+        if minutes >= 0:
+          cleaned_reminders.append(minutes)
+    reminders_value = cleaned_reminders
+
+  visibility_value: Optional[str] = payload.visibility if payload.visibility is not None else None
+  transparency_value: Optional[str] = payload.transparency if payload.transparency is not None else None
+
+  meeting_url_value: Optional[str] = None
+  if payload.meeting_url is not None:
+    cleaned = _clean_optional_str(payload.meeting_url)
+    meeting_url_value = "" if cleaned is None else cleaned
+
+  timezone_value: Optional[str] = payload.timezone if payload.timezone is not None else None
+  color_value: Optional[str] = None
+  if payload.color_id is not None:
+    color_value = payload.color_id
+
   all_day_flag = payload.all_day
   if all_day_flag is None:
     all_day_flag = is_all_day_span(start_iso, end_iso)
@@ -3736,7 +4462,15 @@ def google_update_event_api(request: Request, event_id: str, payload: EventUpdat
                       end_iso,
                       location_value,
                       bool(all_day_flag),
-                      session_id=session_id)
+                      session_id=session_id,
+                      description=description_value,
+                      attendees=attendees_value,
+                      reminders=reminders_value,
+                      visibility=visibility_value,
+                      transparency=transparency_value,
+                      meeting_url=meeting_url_value,
+                      timezone_value=timezone_value,
+                      color_id=color_value)
   except Exception as exc:
     raise HTTPException(status_code=502,
                         detail=f"Google event 업데이트 실패: {exc}") from exc
@@ -3755,7 +4489,15 @@ def create_event(request: Request, event_in: EventCreate):
     google_event_id = gcal_create_single_event(event_in.title, event_in.start,
                                                event_in.end, event_in.location,
                                                detected_all_day,
-                                               session_id=session_id)
+                                               session_id=session_id,
+                                               description=event_in.description,
+                                               attendees=event_in.attendees,
+                                               reminders=event_in.reminders,
+                                               visibility=event_in.visibility,
+                                               transparency=event_in.transparency,
+                                               meeting_url=event_in.meeting_url,
+                                               timezone_value=event_in.timezone,
+                                               color_id=event_in.color_id)
   except Exception:
     _log_debug("[GCAL] /api/events create: 실패 (무시)")
 
@@ -3768,6 +4510,14 @@ def create_event(request: Request, event_in: EventCreate):
       google_event_id=google_event_id,
       all_day=bool(detected_all_day),
       created_at=event_in.created_at or _now_iso_minute(),
+      description=event_in.description,
+      attendees=event_in.attendees,
+      reminders=event_in.reminders,
+      visibility=event_in.visibility,
+      transparency=event_in.transparency,
+      meeting_url=event_in.meeting_url,
+      timezone_value=event_in.timezone,
+      color_id=_normalize_color_id(event_in.color_id),
   )
 
 
@@ -3812,6 +4562,63 @@ def update_event(request: Request, event_id: int, payload: EventUpdate):
   if location_provided:
     new_location = _clean_optional_str(payload.location)
 
+  description_provided = payload.description is not None
+  new_description = target.description
+  if description_provided:
+    new_description = _clean_optional_str(payload.description)
+
+  attendees_provided = payload.attendees is not None
+  new_attendees = target.attendees
+  if attendees_provided:
+    cleaned_attendees: List[str] = []
+    if isinstance(payload.attendees, list):
+      for item in payload.attendees:
+        if not isinstance(item, str):
+          continue
+        cleaned = item.strip()
+        if cleaned:
+          cleaned_attendees.append(cleaned)
+    new_attendees = cleaned_attendees
+
+  reminders_provided = payload.reminders is not None
+  new_reminders = target.reminders
+  if reminders_provided:
+    cleaned_reminders: List[int] = []
+    if isinstance(payload.reminders, list):
+      for item in payload.reminders:
+        try:
+          val = int(item)
+        except Exception:
+          continue
+        if val >= 0:
+          cleaned_reminders.append(val)
+    new_reminders = cleaned_reminders
+
+  visibility_provided = payload.visibility is not None
+  new_visibility = target.visibility
+  if visibility_provided:
+    new_visibility = payload.visibility
+
+  transparency_provided = payload.transparency is not None
+  new_transparency = target.transparency
+  if transparency_provided:
+    new_transparency = payload.transparency
+
+  color_provided = payload.color_id is not None
+  new_color_id = target.color_id
+  if color_provided:
+    new_color_id = _normalize_color_id(payload.color_id)
+
+  meeting_url_provided = payload.meeting_url is not None
+  new_meeting_url = target.meeting_url
+  if meeting_url_provided:
+    new_meeting_url = _clean_optional_str(payload.meeting_url)
+
+  timezone_provided = payload.timezone is not None
+  new_timezone = target.timezone
+  if timezone_provided:
+    new_timezone = payload.timezone or "Asia/Seoul"
+
   if not new_start:
     raise HTTPException(status_code=400, detail="시작 시각을 설정할 수 없습니다.")
 
@@ -3825,8 +4632,31 @@ def update_event(request: Request, event_id: int, payload: EventUpdate):
       gcal_location = None
       if location_provided:
         gcal_location = "" if new_location is None else new_location
-      gcal_update_event(target.google_event_id, new_title, new_start, new_end,
-                        gcal_location, bool(new_all_day), session_id=session_id)
+      gcal_description = None
+      if description_provided:
+        gcal_description = "" if new_description is None else new_description
+      gcal_attendees = new_attendees if attendees_provided else None
+      gcal_reminders = new_reminders if reminders_provided else None
+      gcal_visibility = new_visibility if visibility_provided else None
+      gcal_transparency = new_transparency if transparency_provided else None
+      gcal_meeting_url = new_meeting_url if meeting_url_provided else None
+      gcal_timezone = new_timezone if timezone_provided else None
+      gcal_color_id = payload.color_id if color_provided else None
+      gcal_update_event(target.google_event_id,
+                        new_title,
+                        new_start,
+                        new_end,
+                        gcal_location,
+                        bool(new_all_day),
+                        session_id=session_id,
+                        description=gcal_description,
+                        attendees=gcal_attendees,
+                        reminders=gcal_reminders,
+                        visibility=gcal_visibility,
+                        transparency=gcal_transparency,
+                        meeting_url=gcal_meeting_url,
+                        timezone_value=gcal_timezone,
+                        color_id=gcal_color_id)
     except Exception as exc:
       _log_debug(f"[GCAL] local event update failed: {exc}")
 
@@ -3834,21 +4664,41 @@ def update_event(request: Request, event_id: int, payload: EventUpdate):
   target.start = new_start
   target.end = new_end
   target.location = new_location
+  target.description = new_description
+  target.attendees = new_attendees
+  target.reminders = new_reminders
+  target.visibility = new_visibility
+  target.transparency = new_transparency
+  target.meeting_url = new_meeting_url
+  target.timezone = new_timezone
+  target.color_id = new_color_id
   target.all_day = bool(new_all_day)
   _save_events_to_disk()
   return target
 
 
 @app.post("/api/nlp-events", response_model=List[Event])
-def create_events_from_natural_text(body: NaturalText, request: Request):
+async def create_events_from_natural_text(body: NaturalText,
+                                          request: Request,
+                                          response: Response):
   try:
+    session_id = _ensure_session_id(request, response)
+    request_id = _resolve_request_id(body.request_id)
     images = _validate_image_payload(body.images)
     effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
-    session_id = get_google_session_id(request)
-    return create_events_from_natural_text_core(body.text,
-                                                images,
-                                                effort,
-                                                session_id=session_id)
+    model_name = _resolve_request_model(request, body.model)
+    cache_key = _context_cache_key_for_session(session_id)
+    gcal_session_id = get_google_session_id(request)
+    return await _run_with_interrupt(
+        session_id,
+        request_id,
+        create_events_from_natural_text_core(body.text,
+                                             images,
+                                             effort,
+                                             model_name=model_name,
+                                             context_cache_key=cache_key,
+                                             session_id=gcal_session_id),
+    )
   except HTTPException:
     raise
   except Exception as e:
@@ -3857,15 +4707,27 @@ def create_events_from_natural_text(body: NaturalText, request: Request):
 
 
 @app.post("/api/nlp-event", response_model=Event)
-def create_event_from_natural_text_compat(body: NaturalText, request: Request):
+async def create_event_from_natural_text_compat(body: NaturalText,
+                                                request: Request,
+                                                response: Response):
   try:
+    session_id = _ensure_session_id(request, response)
+    request_id = _resolve_request_id(body.request_id)
     images = _validate_image_payload(body.images)
     effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
-    session_id = get_google_session_id(request)
-    created = create_events_from_natural_text_core(body.text,
-                                                   images,
-                                                   effort,
-                                                   session_id=session_id)
+    model_name = _resolve_request_model(request, body.model)
+    cache_key = _context_cache_key_for_session(session_id)
+    gcal_session_id = get_google_session_id(request)
+    created = await _run_with_interrupt(
+        session_id,
+        request_id,
+        create_events_from_natural_text_core(body.text,
+                                             images,
+                                             effort,
+                                             model_name=model_name,
+                                             context_cache_key=cache_key,
+                                             session_id=gcal_session_id),
+    )
     return created[0]
   except HTTPException:
     raise
@@ -3875,11 +4737,26 @@ def create_event_from_natural_text_compat(body: NaturalText, request: Request):
 
 
 @app.post("/api/nlp-preview")
-def nlp_preview(body: NaturalText, request: Request):
+async def nlp_preview(body: NaturalText, request: Request, response: Response):
   try:
+    session_id = _ensure_session_id(request, response)
+    request_id = _resolve_request_id(body.request_id)
     images = _validate_image_payload(body.images)
     effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
-    return preview_events_from_natural_text_core(body.text, images, effort)
+    model_name = _resolve_request_model(request, body.model)
+    cache_key = _context_cache_key_for_session(session_id)
+    data = await _run_with_interrupt(
+        session_id,
+        request_id,
+        preview_events_from_natural_text_core(body.text,
+                                              images,
+                                              effort,
+                                              model_name=model_name,
+                                              context_cache_key=cache_key),
+    )
+    if isinstance(data, dict):
+      data["request_id"] = request_id
+    return data
   except HTTPException:
     raise
   except Exception as e:
@@ -3901,16 +4778,48 @@ def nlp_apply_add(body: ApplyItems, request: Request):
 
 
 @app.post("/api/nlp-delete-preview")
-def nlp_delete_preview(body: NaturalTextWithScope, request: Request):
+async def nlp_delete_preview(body: NaturalTextWithScope,
+                             request: Request,
+                             response: Response):
   try:
+    session_id = _ensure_session_id(request, response)
+    request_id = _resolve_request_id(body.request_id)
     scope = _parse_scope_dates(body.start_date, body.end_date, require=True)
     effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
-    return delete_preview_groups(body.text, scope=scope, reasoning_effort=effort)
+    model_name = _resolve_request_model(request, body.model)
+    data = await _run_with_interrupt(
+        session_id,
+        request_id,
+        delete_preview_groups(body.text,
+                              scope=scope,
+                              reasoning_effort=effort,
+                              model_name=model_name),
+    )
+    if isinstance(data, dict):
+      data["request_id"] = request_id
+    return data
   except HTTPException:
     raise
   except Exception as e:
     raise HTTPException(status_code=502,
                         detail=f"Delete Preview error: {str(e)}")
+
+
+@app.post("/api/nlp-context/reset")
+def nlp_context_reset(request: Request, response: Response):
+  session_id = _ensure_session_id(request, response)
+  cache_key = _context_cache_key_for_session(session_id)
+  _clear_context_cache(cache_key)
+  return {"ok": True}
+
+
+@app.post("/api/nlp-interrupt")
+async def nlp_interrupt(body: InterruptRequest,
+                        request: Request,
+                        response: Response):
+  session_id = _ensure_session_id(request, response)
+  cancelled = await _cancel_inflight(session_id, body.request_id)
+  return {"ok": True, "cancelled": cancelled}
 
 
 @app.post("/api/delete-by-ids", response_model=DeleteResult)
@@ -3920,14 +4829,23 @@ def delete_by_ids(body: IdsPayload):
 
 
 @app.post("/api/nlp-delete-events", response_model=DeleteResult)
-def delete_events_from_natural_text(body: NaturalTextWithScope,
-                                    request: Request):
+async def delete_events_from_natural_text(body: NaturalTextWithScope,
+                                          request: Request,
+                                          response: Response):
   try:
+    session_id = _ensure_session_id(request, response)
+    request_id = _resolve_request_id(body.request_id)
     scope = _parse_scope_dates(body.start_date, body.end_date, require=True)
     effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
-    ids = create_delete_ids_from_natural_text(body.text,
-                                              scope=scope,
-                                              reasoning_effort=effort)
+    model_name = _resolve_request_model(request, body.model)
+    ids = await _run_with_interrupt(
+        session_id,
+        request_id,
+        create_delete_ids_from_natural_text(body.text,
+                                            scope=scope,
+                                            reasoning_effort=effort,
+                                            model_name=model_name),
+    )
     deleted = delete_events_by_ids(ids)
     return DeleteResult(ok=True, deleted_ids=deleted, count=len(deleted))
   except HTTPException:
