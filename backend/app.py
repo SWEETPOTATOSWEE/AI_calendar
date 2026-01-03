@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException, Request, Query, Response
 from fastapi.responses import RedirectResponse, JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any, Tuple, Union
 import asyncio
 import os
 import json
@@ -194,7 +194,7 @@ class NaturalTextWithScope(BaseModel):
 
 class DeleteResult(BaseModel):
   ok: bool
-  deleted_ids: List[int]
+  deleted_ids: List[Union[int, str]]
   count: int
 
 
@@ -1496,7 +1496,8 @@ def _extract_context_request(
   return True, [(start_date, end_date)]
 
 
-def _build_events_context(scopes: List[Tuple[date, date]]) -> Dict[str, Any]:
+def _build_events_context(scopes: List[Tuple[date, date]],
+                          session_id: Optional[str] = None) -> Dict[str, Any]:
   today = datetime.now(SEOUL).date()
   if not scopes:
     start_date = today - timedelta(days=DEFAULT_CONTEXT_DAYS)
@@ -1504,38 +1505,61 @@ def _build_events_context(scopes: List[Tuple[date, date]]) -> Dict[str, Any]:
     scopes = [(start_date, end_date)]
 
   snapshot: List[Dict[str, Any]] = []
-  seen_ids: set[int] = set()
-  for scope in scopes:
-    for ev in events:
-      if not _event_within_scope(ev, scope):
-        continue
-      if ev.id in seen_ids:
-        continue
-      seen_ids.add(ev.id)
-      snapshot.append({
-          "id": ev.id,
-          "title": ev.title,
-          "start": ev.start,
-          "end": ev.end,
-          "location": ev.location,
-          "recur": ev.recur,
-          "all_day": ev.all_day,
-      })
+  seen_ids: set[str] = set()
+  if session_id:
+    for scope in scopes:
+      google_items = fetch_google_events_between(scope[0], scope[1], session_id)
+      for item in google_items:
+        raw_id = item.get("id")
+        if not raw_id:
+          continue
+        id_key = str(raw_id)
+        if id_key in seen_ids:
+          continue
+        seen_ids.add(id_key)
+        snapshot.append({
+            "id": raw_id,
+            "title": item.get("title"),
+            "start": item.get("start"),
+            "end": item.get("end"),
+            "location": item.get("location"),
+            "recur": None,
+            "all_day": item.get("all_day"),
+        })
+  else:
+    for scope in scopes:
+      for ev in events:
+        if not _event_within_scope(ev, scope):
+          continue
+        id_key = str(ev.id)
+        if id_key in seen_ids:
+          continue
+        seen_ids.add(id_key)
+        snapshot.append({
+            "id": ev.id,
+            "title": ev.title,
+            "start": ev.start,
+            "end": ev.end,
+            "location": ev.location,
+            "recur": ev.recur,
+            "all_day": ev.all_day,
+        })
 
-    rec_occurrences = _collect_local_recurring_occurrences(scope=scope)
-    for occ in rec_occurrences:
-      if occ.id in seen_ids:
-        continue
-      seen_ids.add(occ.id)
-      snapshot.append({
-          "id": occ.id,
-          "title": occ.title,
-          "start": occ.start,
-          "end": occ.end,
-          "location": occ.location,
-          "recur": occ.recur,
-          "all_day": occ.all_day,
-      })
+      rec_occurrences = _collect_local_recurring_occurrences(scope=scope)
+      for occ in rec_occurrences:
+        id_key = str(occ.id)
+        if id_key in seen_ids:
+          continue
+        seen_ids.add(id_key)
+        snapshot.append({
+            "id": occ.id,
+            "title": occ.title,
+            "start": occ.start,
+            "end": occ.end,
+            "location": occ.location,
+            "recur": occ.recur,
+            "all_day": occ.all_day,
+        })
 
   snapshot.sort(key=lambda x: x.get("start") or "")
   if len(snapshot) > MAX_CONTEXT_EVENTS:
@@ -1955,7 +1979,8 @@ async def _invoke_event_parser(kind: str,
                                images: List[str],
                                reasoning_effort: Optional[str] = None,
                                model_name: Optional[str] = None,
-                               context_cache_key: Optional[str] = None
+                               context_cache_key: Optional[str] = None,
+                               context_session_id: Optional[str] = None
                                ) -> Dict[str, Any]:
   payload = _build_events_user_payload(text, bool(images))
   cached_context = _get_context_cache(context_cache_key)
@@ -1999,7 +2024,7 @@ async def _invoke_event_parser(kind: str,
       data["context_used"] = False
     return data
 
-  context = _build_events_context(scopes)
+  context = _build_events_context(scopes, session_id=context_session_id)
   _set_context_cache(context_cache_key, context)
   payload_with_context = _build_events_user_payload(text, bool(images), context)
 
@@ -2027,7 +2052,7 @@ def build_delete_system_prompt() -> str:
   return ("역할: '기존 일정 목록'과 '삭제 요청 문장'을 보고 삭제할 일정 id 목록만 고른다.\n"
           "항상 아래 형식의 JSON 한 개만 출력해라. 설명·코드블록·마크다운은 금지.\n\n"
           "{\n"
-          '  \"ids\": [number]\n'
+          '  \"ids\": [string | number]\n'
           "}\n\n"
           "규칙:\n"
           "- 문장과 명확히 매칭되는 일정의 id만 넣는다.\n"
@@ -2681,6 +2706,14 @@ def _context_cache_key_for_session(session_id: Optional[str]) -> Optional[str]:
   return _session_key(session_id)
 
 
+def _context_cache_key_for_session_mode(session_id: Optional[str],
+                                        use_google: bool) -> Optional[str]:
+  base = _context_cache_key_for_session(session_id)
+  if not base:
+    return None
+  return f"{base}:{'google' if use_google else 'local'}"
+
+
 def _get_context_cache(cache_key: Optional[str]) -> Optional[Dict[str, Any]]:
   if not cache_key:
     return None
@@ -2803,9 +2836,9 @@ def gcal_create_single_event(title: str,
       else:
         end_dt = start_dt + timedelta(hours=1)
 
-    tz_value = timezone_value or "Asia/Seoul"
-    event_body["start"] = {"dateTime": start_dt.isoformat(), "timeZone": tz_value}
-    event_body["end"] = {"dateTime": end_dt.isoformat(), "timeZone": tz_value}
+      tz_value = timezone_value or "Asia/Seoul"
+      event_body["start"] = {"dateTime": start_dt.isoformat(), "timeZone": tz_value}
+      event_body["end"] = {"dateTime": end_dt.isoformat(), "timeZone": tz_value}
 
     if location:
       event_body["location"] = location
@@ -3412,6 +3445,7 @@ async def create_events_from_natural_text_core(
     reasoning_effort: Optional[str] = None,
     model_name: Optional[str] = None,
     context_cache_key: Optional[str] = None,
+    context_session_id: Optional[str] = None,
     session_id: Optional[str] = None) -> List[Event]:
   images = images or []
   t = normalize_text(text)
@@ -3428,7 +3462,8 @@ async def create_events_from_natural_text_core(
                                     images,
                                     reasoning_effort,
                                     model_name=model_name,
-                                    context_cache_key=context_cache_key)
+                                    context_cache_key=context_cache_key,
+                                    context_session_id=context_session_id)
   if _parse_bool(data.get("need_more_information")):
     content = (data.get("content") or "").strip()
     raise HTTPException(
@@ -3562,7 +3597,8 @@ async def preview_events_from_natural_text_core(
     images: Optional[List[str]] = None,
     reasoning_effort: Optional[str] = None,
     model_name: Optional[str] = None,
-    context_cache_key: Optional[str] = None) -> Dict[str, Any]:
+    context_cache_key: Optional[str] = None,
+    context_session_id: Optional[str] = None) -> Dict[str, Any]:
   images = images or []
   t = normalize_text(text)
   if not t and not images:
@@ -3578,7 +3614,8 @@ async def preview_events_from_natural_text_core(
                                     images,
                                     reasoning_effort,
                                     model_name=model_name,
-                                    context_cache_key=context_cache_key)
+                                    context_cache_key=context_cache_key,
+                                    context_session_id=context_session_id)
   context_used = _parse_bool(data.get("context_used"))
   if _parse_bool(data.get("need_more_information")):
     content = (data.get("content") or "").strip()
@@ -3716,6 +3753,7 @@ async def preview_events_from_natural_text_core(
 def apply_add_items_core(items: List[Dict[str, Any]],
                          session_id: Optional[str] = None) -> List[Event]:
   created: List[Event] = []
+  touched_google = False
 
   for item in items:
     if not isinstance(item, dict):
@@ -3749,6 +3787,8 @@ def apply_add_items_core(items: List[Dict[str, Any]],
                                                  meeting_url=item.get("meeting_url"),
                                                  timezone_value=item.get("timezone"),
                                                  color_id=item.get("color_id"))
+      if session_id and google_event_id:
+        touched_google = True
 
       created.append(
           store_event(
@@ -3838,6 +3878,8 @@ def apply_add_items_core(items: List[Dict[str, Any]],
       google_recur_id: Optional[str] = None
       if full_recurring:
         google_recur_id = gcal_create_recurring_event(item, session_id=session_id)
+        if session_id and google_recur_id:
+          touched_google = True
         start_date_value = item.get("start_date")
         if not isinstance(start_date_value, str):
           continue
@@ -3876,6 +3918,8 @@ def apply_add_items_core(items: List[Dict[str, Any]],
                                                     meeting_url=item.get("meeting_url"),
                                                     timezone_value=item.get("timezone"),
                                                     color_id=item.get("color_id"))
+        if session_id and google_single_id:
+          touched_google = True
         created.append(
             store_event(
                 title=ev["title"],
@@ -3898,6 +3942,9 @@ def apply_add_items_core(items: List[Dict[str, Any]],
   if not created:
     raise HTTPException(status_code=422, detail="No valid items to create")
 
+  if touched_google and session_id:
+    _clear_google_cache(session_id)
+
   return created
 
 
@@ -3909,47 +3956,60 @@ async def create_delete_ids_from_natural_text(
     scope: Optional[Tuple[date, date]] = None,
     reasoning_effort: Optional[str] = None,
     model_name: Optional[str] = None,
-) -> List[int]:
+    session_id: Optional[str] = None,
+) -> List[Union[int, str]]:
   if async_client is None:
     return []
 
-  snapshot = [{
-      "id": e.id,
-      "title": e.title,
-      "start": e.start,
-      "end": e.end,
-      "location": e.location,
-      "recur": e.recur
-  } for e in events if _event_within_scope(e, scope)][:50]
+  if session_id and scope:
+    google_items = fetch_google_events_between(scope[0], scope[1], session_id)
+    snapshot = [{
+        "id": item.get("id"),
+        "title": item.get("title"),
+        "start": item.get("start"),
+        "end": item.get("end"),
+        "location": item.get("location"),
+        "recur": None,
+    } for item in google_items][:50]
+  else:
+    snapshot = [{
+        "id": e.id,
+        "title": e.title,
+        "start": e.start,
+        "end": e.end,
+        "location": e.location,
+        "recur": e.recur
+    } for e in events if _event_within_scope(e, scope)][:50]
 
-  if len(snapshot) < 50:
-    rec_occurrences = _collect_local_recurring_occurrences(scope=scope)
-    for occ in rec_occurrences:
-      snapshot.append({
-          "id": occ.id,
-          "title": occ.title,
-          "start": occ.start,
-          "end": occ.end,
-          "location": occ.location,
-          "recur": occ.recur
-      })
-      if len(snapshot) >= 50:
-        break
-
-  if len(snapshot) < 50:
-    for rec in recurring_events:
-      rec_ev = _recurring_definition_to_event(rec)
-      if not scope or _event_within_scope(rec_ev, scope):
+  if not session_id:
+    if len(snapshot) < 50:
+      rec_occurrences = _collect_local_recurring_occurrences(scope=scope)
+      for occ in rec_occurrences:
         snapshot.append({
-            "id": rec_ev.id,
-            "title": rec_ev.title,
-            "start": rec_ev.start,
-            "end": rec_ev.end,
-            "location": rec_ev.location,
-            "recur": rec_ev.recur
+            "id": occ.id,
+            "title": occ.title,
+            "start": occ.start,
+            "end": occ.end,
+            "location": occ.location,
+            "recur": occ.recur
         })
         if len(snapshot) >= 50:
           break
+
+    if len(snapshot) < 50:
+      for rec in recurring_events:
+        rec_ev = _recurring_definition_to_event(rec)
+        if not scope or _event_within_scope(rec_ev, scope):
+          snapshot.append({
+              "id": rec_ev.id,
+              "title": rec_ev.title,
+              "start": rec_ev.start,
+              "end": rec_ev.end,
+              "location": rec_ev.location,
+              "recur": rec_ev.recur
+          })
+          if len(snapshot) >= 50:
+            break
 
   user_payload = {
       "existing_events": snapshot,
@@ -3966,6 +4026,21 @@ async def create_delete_ids_from_natural_text(
   ids = data.get("ids")
   if not isinstance(ids, list):
     return []
+
+  if session_id:
+    cleaned: List[str] = []
+    seen = set()
+    for x in ids:
+      if x is None:
+        continue
+      value = str(x).strip()
+      if not value:
+        continue
+      if value in seen:
+        continue
+      seen.add(value)
+      cleaned.append(value)
+    return cleaned
 
   cleaned: List[int] = []
   seen = set()
@@ -4027,7 +4102,8 @@ def delete_events_by_ids(ids: List[int]) -> List[int]:
 async def delete_preview_groups(text: str,
                                 scope: Optional[Tuple[date, date]] = None,
                                 reasoning_effort: Optional[str] = None,
-                                model_name: Optional[str] = None
+                                model_name: Optional[str] = None,
+                                session_id: Optional[str] = None
                                 ) -> Dict[str, Any]:
   text = normalize_text(text)
   if not text:
@@ -4036,58 +4112,97 @@ async def delete_preview_groups(text: str,
   ids = await create_delete_ids_from_natural_text(text,
                                                   scope=scope,
                                                   reasoning_effort=reasoning_effort,
-                                                  model_name=model_name)
+                                                  model_name=model_name,
+                                                  session_id=session_id)
   if not ids:
     return {"groups": []}
 
-  id_set = set(ids)
-  combined_events = list(events)
-  combined_events.extend(_collect_local_recurring_occurrences(scope=scope))
-  for rec in recurring_events:
-    event_obj = _recurring_definition_to_event(rec)
-    if _event_within_scope(event_obj, scope):
-      combined_events.append(event_obj)
-  targets = [
-      e for e in combined_events if e.id in id_set and _event_within_scope(e, scope)
-  ]
+  if session_id and scope:
+    id_set = {str(x) for x in ids}
+    combined_events = fetch_google_events_between(scope[0], scope[1], session_id)
+    targets = [
+        e for e in combined_events
+        if str(e.get("id")) in id_set
+    ]
 
-  def group_key(e: Event) -> str:
-    t = (e.start or
-         "")[11:16] if isinstance(e.start, str) and len(e.start) >= 16 else ""
-    loc = e.location or ""
-    if e.recur == "recurring":
-      return f"recur::{e.title}::{t}::{loc}"
-    return f"single::{e.id}"
+    groups_map: Dict[str, Dict[str, Any]] = {}
+    for e in targets:
+      event_id = str(e.get("id"))
+      key = f"single::{event_id}"
+      g = groups_map.get(key)
+      if g is None:
+        t = (e.get("start") or "")[11:16] if isinstance(
+            e.get("start"), str) and len(e.get("start")) >= 16 else None
+        g = {
+            "group_key": key,
+            "kind": "single",
+            "title": e.get("title"),
+            "time": t,
+            "location": e.get("location"),
+            "ids": [],
+            "items": [],
+        }
+        groups_map[key] = g
 
-  groups_map: Dict[str, Dict[str, Any]] = {}
+      g["ids"].append(event_id)
+      g["items"].append({
+          "id": event_id,
+          "title": e.get("title"),
+          "start": e.get("start"),
+          "end": e.get("end"),
+          "location": e.get("location"),
+          "recur": None,
+          "all_day": e.get("all_day"),
+      })
+  else:
+    id_set = set(ids)
+    combined_events = list(events)
+    combined_events.extend(_collect_local_recurring_occurrences(scope=scope))
+    for rec in recurring_events:
+      event_obj = _recurring_definition_to_event(rec)
+      if _event_within_scope(event_obj, scope):
+        combined_events.append(event_obj)
+    targets = [
+        e for e in combined_events if e.id in id_set and _event_within_scope(e, scope)
+    ]
 
-  for e in targets:
-    key = group_key(e)
-    g = groups_map.get(key)
-    if g is None:
-      t = (e.start or "")[11:16] if isinstance(e.start, str) and len(
-          e.start) >= 16 else None
-      g = {
-          "group_key": key,
-          "kind": "recurring" if e.recur == "recurring" else "single",
+    def group_key(e: Event) -> str:
+      t = (e.start or
+           "")[11:16] if isinstance(e.start, str) and len(e.start) >= 16 else ""
+      loc = e.location or ""
+      if e.recur == "recurring":
+        return f"recur::{e.title}::{t}::{loc}"
+      return f"single::{e.id}"
+
+    groups_map: Dict[str, Dict[str, Any]] = {}
+
+    for e in targets:
+      key = group_key(e)
+      g = groups_map.get(key)
+      if g is None:
+        t = (e.start or "")[11:16] if isinstance(e.start, str) and len(
+            e.start) >= 16 else None
+        g = {
+            "group_key": key,
+            "kind": "recurring" if e.recur == "recurring" else "single",
+            "title": e.title,
+            "time": t,
+            "location": e.location,
+            "ids": [],
+            "items": [],
+        }
+        groups_map[key] = g
+
+      g["ids"].append(e.id)
+      g["items"].append({
+          "id": e.id,
           "title": e.title,
-          "time": t,
+          "start": e.start,
+          "end": e.end,
           "location": e.location,
-          "ids": [],
-          "items": [],
-      }
-      groups_map[key] = g
-
-    g["ids"].append(e.id)
-    g["items"].append({
-        "id": e.id,
-        "title": e.title,
-        "start": e.start,
-        "end": e.end,
-        "location": e.location,
-        "recur": e.recur,
-        "all_day": e.all_day,
-    })
+          "recur": e.recur,
+          "all_day": e.all_day,
+      })
 
   groups = list(groups_map.values())
   groups.sort(
@@ -4370,6 +4485,7 @@ def google_delete_event(request: Request, event_id: str):
     raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
   try:
     gcal_delete_event(event_id, session_id=session_id)
+    _clear_google_cache(session_id)
     return {"ok": True}
   except HTTPException:
     raise
@@ -4471,6 +4587,7 @@ def google_update_event_api(request: Request, event_id: str, payload: EventUpdat
                       meeting_url=meeting_url_value,
                       timezone_value=timezone_value,
                       color_id=color_value)
+    _clear_google_cache(session_id)
   except Exception as exc:
     raise HTTPException(status_code=502,
                         detail=f"Google event 업데이트 실패: {exc}") from exc
@@ -4482,10 +4599,10 @@ def google_update_event_api(request: Request, event_id: str, payload: EventUpdat
 def create_event(request: Request, event_in: EventCreate):
   google_event_id: Optional[str] = None
   detected_all_day = event_in.all_day
+  session_id = get_google_session_id(request)
   if detected_all_day is None:
     detected_all_day = is_all_day_span(event_in.start, event_in.end)
   try:
-    session_id = get_google_session_id(request)
     google_event_id = gcal_create_single_event(event_in.title, event_in.start,
                                                event_in.end, event_in.location,
                                                detected_all_day,
@@ -4498,6 +4615,8 @@ def create_event(request: Request, event_in: EventCreate):
                                                meeting_url=event_in.meeting_url,
                                                timezone_value=event_in.timezone,
                                                color_id=event_in.color_id)
+    if session_id and google_event_id:
+      _clear_google_cache(session_id)
   except Exception:
     _log_debug("[GCAL] /api/events create: 실패 (무시)")
 
@@ -4687,7 +4806,9 @@ async def create_events_from_natural_text(body: NaturalText,
     images = _validate_image_payload(body.images)
     effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
     model_name = _resolve_request_model(request, body.model)
-    cache_key = _context_cache_key_for_session(session_id)
+    use_google_context = is_google_mode_active(request)
+    cache_key = _context_cache_key_for_session_mode(session_id,
+                                                    use_google_context)
     gcal_session_id = get_google_session_id(request)
     return await _run_with_interrupt(
         session_id,
@@ -4697,6 +4818,7 @@ async def create_events_from_natural_text(body: NaturalText,
                                              effort,
                                              model_name=model_name,
                                              context_cache_key=cache_key,
+                                             context_session_id=gcal_session_id if use_google_context else None,
                                              session_id=gcal_session_id),
     )
   except HTTPException:
@@ -4716,7 +4838,9 @@ async def create_event_from_natural_text_compat(body: NaturalText,
     images = _validate_image_payload(body.images)
     effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
     model_name = _resolve_request_model(request, body.model)
-    cache_key = _context_cache_key_for_session(session_id)
+    use_google_context = is_google_mode_active(request)
+    cache_key = _context_cache_key_for_session_mode(session_id,
+                                                    use_google_context)
     gcal_session_id = get_google_session_id(request)
     created = await _run_with_interrupt(
         session_id,
@@ -4726,6 +4850,7 @@ async def create_event_from_natural_text_compat(body: NaturalText,
                                              effort,
                                              model_name=model_name,
                                              context_cache_key=cache_key,
+                                             context_session_id=gcal_session_id if use_google_context else None,
                                              session_id=gcal_session_id),
     )
     return created[0]
@@ -4744,7 +4869,10 @@ async def nlp_preview(body: NaturalText, request: Request, response: Response):
     images = _validate_image_payload(body.images)
     effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
     model_name = _resolve_request_model(request, body.model)
-    cache_key = _context_cache_key_for_session(session_id)
+    use_google_context = is_google_mode_active(request)
+    cache_key = _context_cache_key_for_session_mode(session_id,
+                                                    use_google_context)
+    gcal_session_id = get_google_session_id(request)
     data = await _run_with_interrupt(
         session_id,
         request_id,
@@ -4752,7 +4880,8 @@ async def nlp_preview(body: NaturalText, request: Request, response: Response):
                                               images,
                                               effort,
                                               model_name=model_name,
-                                              context_cache_key=cache_key),
+                                              context_cache_key=cache_key,
+                                              context_session_id=gcal_session_id if use_google_context else None),
     )
     if isinstance(data, dict):
       data["request_id"] = request_id
@@ -4787,13 +4916,16 @@ async def nlp_delete_preview(body: NaturalTextWithScope,
     scope = _parse_scope_dates(body.start_date, body.end_date, require=True)
     effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
     model_name = _resolve_request_model(request, body.model)
+    use_google_context = is_google_mode_active(request)
+    gcal_session_id = get_google_session_id(request)
     data = await _run_with_interrupt(
         session_id,
         request_id,
         delete_preview_groups(body.text,
                               scope=scope,
                               reasoning_effort=effort,
-                              model_name=model_name),
+                              model_name=model_name,
+                              session_id=gcal_session_id if use_google_context else None),
     )
     if isinstance(data, dict):
       data["request_id"] = request_id
@@ -4808,8 +4940,10 @@ async def nlp_delete_preview(body: NaturalTextWithScope,
 @app.post("/api/nlp-context/reset")
 def nlp_context_reset(request: Request, response: Response):
   session_id = _ensure_session_id(request, response)
-  cache_key = _context_cache_key_for_session(session_id)
-  _clear_context_cache(cache_key)
+  base_key = _context_cache_key_for_session(session_id)
+  if base_key:
+    _clear_context_cache(f"{base_key}:local")
+    _clear_context_cache(f"{base_key}:google")
   return {"ok": True}
 
 
@@ -4838,15 +4972,35 @@ async def delete_events_from_natural_text(body: NaturalTextWithScope,
     scope = _parse_scope_dates(body.start_date, body.end_date, require=True)
     effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
     model_name = _resolve_request_model(request, body.model)
+    use_google_context = is_google_mode_active(request)
+    gcal_session_id = get_google_session_id(request)
     ids = await _run_with_interrupt(
         session_id,
         request_id,
         create_delete_ids_from_natural_text(body.text,
                                             scope=scope,
                                             reasoning_effort=effort,
-                                            model_name=model_name),
+                                            model_name=model_name,
+                                            session_id=gcal_session_id if use_google_context else None),
     )
-    deleted = delete_events_by_ids(ids)
+    if use_google_context and gcal_session_id:
+      deleted: List[Union[int, str]] = []
+      for raw_id in ids:
+        event_id = str(raw_id)
+        if not event_id:
+          continue
+        try:
+          gcal_delete_event(event_id, session_id=gcal_session_id)
+          deleted.append(event_id)
+        except HTTPException:
+          raise
+        except Exception as exc:
+          raise HTTPException(status_code=502,
+                              detail=f"Google event 삭제 실패: {exc}") from exc
+      _clear_google_cache(gcal_session_id)
+      return DeleteResult(ok=True, deleted_ids=deleted, count=len(deleted))
+
+    deleted = delete_events_by_ids([int(x) for x in ids if isinstance(x, int)])
     return DeleteResult(ok=True, deleted_ids=deleted, count=len(deleted))
   except HTTPException:
     raise

@@ -3,15 +3,27 @@
 import type { AuthStatus } from "../lib/types";
 import { enterAdmin, exitAdmin, loginGoogle, logout } from "../lib/api";
 
-export default function CalendarHeaderActions({ status }: { status: AuthStatus | null }) {
+type CalendarHeaderActionsProps = {
+  status: AuthStatus | null;
+  className?: string;
+  buttonClassName?: string;
+};
+
+export default function CalendarHeaderActions({
+  status,
+  className,
+  buttonClassName,
+}: CalendarHeaderActionsProps) {
   const googleEnabled = Boolean(status?.enabled && status?.configured);
   const hasToken = Boolean(status?.has_token);
+  const containerClassName = className ?? "flex items-center gap-2";
+  const buttonSuffix = buttonClassName ? ` ${buttonClassName}` : "";
 
   return (
-    <div className="flex items-center gap-2">
+    <div className={containerClassName}>
       {googleEnabled && !hasToken && (
         <button
-          className="px-3 py-1 rounded-full text-xs font-semibold border border-blue-200 text-blue-600 hover:bg-blue-50"
+          className={`px-3 py-1 rounded-full text-sm font-semibold border border-blue-200 text-blue-600 hover:bg-blue-50${buttonSuffix}`}
           type="button"
           onClick={loginGoogle}
         >
@@ -20,7 +32,7 @@ export default function CalendarHeaderActions({ status }: { status: AuthStatus |
       )}
       {hasToken && (
         <button
-          className="px-3 py-1 rounded-full text-xs font-semibold border border-gray-200 text-slate-600 hover:bg-gray-50"
+          className={`px-3 py-1 rounded-full text-sm font-semibold border border-gray-200 text-gray-700 hover:bg-gray-50${buttonSuffix}`}
           type="button"
           onClick={logout}
         >
@@ -30,14 +42,14 @@ export default function CalendarHeaderActions({ status }: { status: AuthStatus |
       {!hasToken && (
         <>
           <button
-            className="px-3 py-1 rounded-full text-xs font-semibold border border-gray-200 text-slate-600 hover:bg-gray-50"
+            className={`px-3 py-1 rounded-full text-sm font-semibold border border-gray-200 text-gray-700 hover:bg-gray-50${buttonSuffix}`}
             type="button"
             onClick={enterAdmin}
           >
             관리자
           </button>
           <button
-            className="px-3 py-1 rounded-full text-xs font-semibold border border-gray-200 text-slate-400 hover:bg-gray-50"
+            className={`px-3 py-1 rounded-full text-sm font-semibold border border-gray-200 text-gray-700 hover:bg-gray-50${buttonSuffix}`}
             type="button"
             onClick={exitAdmin}
           >

@@ -164,6 +164,21 @@ const buildIndexes = (events: CalendarEvent[]): CachedYear => {
   return { events: sorted, indexes };
 };
 
+const getYearsInRange = (startIso: string, endIso: string) => {
+  const startDate = toDateOnly(startIso);
+  const endDate = toDateOnly(endIso);
+  if (!startDate || !endDate) return [];
+  const startYear = startDate.getFullYear();
+  const endYear = endDate.getFullYear();
+  const from = Math.min(startYear, endYear);
+  const to = Math.max(startYear, endYear);
+  const years: number[] = [];
+  for (let year = from; year <= to; year += 1) {
+    years.push(year);
+  }
+  return years;
+};
+
 export type CalendarDataState = {
   events: CalendarEvent[];
   allEvents: CalendarEvent[];
@@ -174,13 +189,14 @@ export type CalendarDataState = {
 };
 
 export type CalendarActions = {
-  refresh: () => Promise<void>;
+  refresh: (force?: boolean) => Promise<void>;
   create: (payload: EventPayload) => Promise<CalendarEvent | null>;
   createRecurring: (payload: RecurringEventPayload) => Promise<CalendarEvent[] | null>;
   update: (event: CalendarEvent, payload: EventPayload) => Promise<void>;
   remove: (event: CalendarEvent) => Promise<void>;
   ingest: (events: CalendarEvent[]) => void;
   removeByIds: (ids: Array<string | number>) => void;
+  ensureRangeLoaded: (rangeStart: string, rangeEnd: string) => Promise<CalendarEvent[]>;
 };
 
 export const useCalendarData = (rangeStart: string, rangeEnd: string) => {
@@ -295,13 +311,13 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string) => {
     [updateCache]
   );
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (force = false) => {
     if (!rangeStart || !rangeEnd) return;
     setLoading(true);
     setError(null);
     try {
       const cached = cacheRef.current[activeKey];
-      if (cached) {
+      if (cached && !force) {
         setEvents(cached.events);
         setIndexes(cached.indexes);
         setAllEvents(buildAllEvents());
@@ -425,20 +441,17 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string) => {
       setError(null);
       try {
         const created = await applyNlpAdd([payload as unknown as Record<string, unknown>]);
+        const years = new Set<number>();
         created.forEach((item) => {
           const year = toYearFromIso(item.start) ?? activeYear;
-          const localKey = `local:${year}`;
-          upsertEvent(localKey, { ...item, source: "local" });
-          if (useGoogle && item.google_event_id) {
-            const googleKey = `google:${year}`;
-            upsertEvent(googleKey, {
-              ...item,
-              id: item.google_event_id,
-              google_event_id: item.google_event_id,
-              source: "google",
-            });
-          }
+          years.add(year);
         });
+        for (const year of years) {
+          const { start, end } = getYearRange(year);
+          const data = await listEvents(start, end, useGoogle);
+          const key = `${useGoogle ? "google" : "local"}:${year}`;
+          updateCache(key, buildIndexes(data));
+        }
         return created;
       } catch (err) {
         const message = err instanceof Error ? err.message : "반복 일정 생성에 실패했습니다.";
@@ -448,7 +461,7 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string) => {
         setLoading(false);
       }
     },
-    [activeYear, upsertEvent, useGoogle]
+    [activeYear, updateCache, useGoogle]
   );
 
   const handleRemove = useCallback(
@@ -472,6 +485,17 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string) => {
 
   const ingestEvents = useCallback(
     (items: CalendarEvent[]) => {
+      if (useGoogle) {
+        refresh(true);
+        return;
+      }
+      const hasRecurring = items.some(
+        (event) => event.recur === "recurring" || Boolean(event.recurrence)
+      );
+      if (hasRecurring) {
+        refresh(true);
+        return;
+      }
       items.forEach((event) => {
         const year = toYearFromIso(event.start) ?? activeYear;
         const localKey = `local:${year}`;
@@ -488,7 +512,7 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string) => {
         }
       });
     },
-    [activeYear, upsertEvent, useGoogle]
+    [activeYear, refresh, upsertEvent, useGoogle]
   );
 
   const removeByIds = useCallback(
@@ -507,6 +531,26 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string) => {
     [removeEvent]
   );
 
+  const ensureRangeLoaded = useCallback(
+    async (searchStart: string, searchEnd: string) => {
+      const years = getYearsInRange(searchStart, searchEnd);
+      if (!years.length) return buildAllEvents();
+      const prefix = useGoogle ? "google" : "local";
+      const missing = years.filter((year) => !cacheRef.current[`${prefix}:${year}`]);
+      if (!missing.length) return buildAllEvents();
+      await Promise.all(
+        missing.map(async (year) => {
+          const key = `${prefix}:${year}`;
+          const { start, end } = getYearRange(year);
+          const data = await listEvents(start, end, useGoogle);
+          updateCache(key, buildIndexes(data));
+        })
+      );
+      return buildAllEvents();
+    },
+    [buildAllEvents, updateCache, useGoogle]
+  );
+
   const state: CalendarDataState = { events, allEvents, indexes, loading, error, authStatus };
   const actions: CalendarActions = {
     refresh,
@@ -516,6 +560,7 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string) => {
     remove: handleRemove,
     ingest: ingestEvents,
     removeByIds,
+    ensureRangeLoaded,
   };
 
   return { state, actions, useGoogle };

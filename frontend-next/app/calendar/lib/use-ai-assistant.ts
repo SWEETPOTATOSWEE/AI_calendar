@@ -4,27 +4,42 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   applyNlpAdd,
   deleteEventsByIds,
+  deleteGoogleEventById,
   interruptNlp,
   previewNlp,
   previewNlpDelete,
   resetNlpContext,
 } from "./api";
-import type { CalendarEvent } from "./types";
+import type { CalendarEvent, EventRecurrence } from "./types";
 
 type AiMode = "add" | "delete";
 type AiModel = "nano" | "mini";
 
-type AddPreviewItem = {
+export type AddPreviewItem = {
   type: "single" | "recurring";
   title: string;
   start?: string;
   end?: string | null;
+  start_date?: string;
+  end_date?: string | null;
+  weekdays?: number[];
+  recurrence?: EventRecurrence | null;
   location?: string | null;
+  description?: string | null;
+  attendees?: string[] | null;
+  reminders?: number[] | null;
+  visibility?: "public" | "private" | "default" | null;
+  transparency?: "opaque" | "transparent" | null;
+  meeting_url?: string | null;
+  timezone?: string | null;
+  color_id?: string | null;
   all_day?: boolean;
   time?: string | null;
+  duration_minutes?: number | null;
   count?: number | null;
   samples?: string[];
   occurrences?: Array<{ start?: string; end?: string | null }>;
+  requires_end_confirmation?: boolean;
 };
 
 type AddPreviewResponse = {
@@ -39,7 +54,7 @@ type DeletePreviewGroup = {
   title: string;
   time?: string | null;
   location?: string | null;
-  ids: number[];
+  ids: Array<number | string>;
   count?: number;
   samples?: string[];
 };
@@ -101,7 +116,7 @@ const trimConversation = (messages: ConversationMessage[]) => {
 type AiAssistantOptions = {
   onApplied?: () => void;
   onAddApplied?: (events: CalendarEvent[]) => void;
-  onDeleteApplied?: (ids: number[]) => void;
+  onDeleteApplied?: (ids: Array<number | string>) => void;
 };
 
 export const useAiAssistant = (options?: AiAssistantOptions) => {
@@ -113,7 +128,7 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
   const [endDate, setEndDate] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [conversation, setConversation] = useState<ConversationMessage[]>([]);
-  const [model, setModel] = useState<AiModel>("mini");
+  const model: AiModel = "mini";
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<null | "thinking" | "context">(null);
@@ -322,13 +337,22 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
     appendConversation,
   ]);
 
+  const updateAddPreviewItem = useCallback((index: number, patch: Partial<AddPreviewItem>) => {
+    setAddPreview((prev) => {
+      if (!prev || !Array.isArray(prev.items)) return prev;
+      if (!prev.items[index]) return prev;
+      const nextItems = [...prev.items];
+      nextItems[index] = { ...nextItems[index], ...patch };
+      return { ...prev, items: nextItems };
+    });
+  }, []);
+
   const interrupt = useCallback(async () => {
     const activeRequestId = requestIdRef.current;
     if (!activeRequestId) return;
     requestIdRef.current = null;
     setLoading(false);
     setProgress(null);
-    setError("요청이 중단되었습니다.");
     const pendingText = pendingUserTextRef.current;
     setConversation((prev) => {
       const next = [...prev];
@@ -341,7 +365,6 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
           }
         }
       }
-      next.push({ role: "assistant", text: "요청을 중단했습니다.", includeInPrompt: false });
       return trimConversation(next);
     });
     pendingUserTextRef.current = null;
@@ -370,13 +393,20 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
         const ids = groups
           .filter((group) => selectedDeleteGroups[group.group_key])
           .flatMap((group) => group.ids || [])
-          .filter((id) => Number.isFinite(id));
+          .filter((id) => (typeof id === "number" ? Number.isFinite(id) : Boolean(id)));
         if (!ids.length) {
           setError("삭제할 항목을 선택해주세요.");
           return;
         }
-        await deleteEventsByIds(ids as number[]);
-        options?.onDeleteApplied?.(ids as number[]);
+        const numericIds = ids.filter((id) => typeof id === "number") as number[];
+        const stringIds = ids.filter((id) => typeof id === "string") as string[];
+        if (numericIds.length) {
+          await deleteEventsByIds(numericIds);
+        }
+        for (const id of stringIds) {
+          await deleteGoogleEventById(id);
+        }
+        options?.onDeleteApplied?.(ids);
       }
       setOpen(false);
       setAddPreview(null);
@@ -421,7 +451,6 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
     setReasoningEffort,
     setStartDate,
     setEndDate,
-    setModel,
     setOpen,
     openWithText,
     close,
@@ -433,5 +462,6 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
     removeAttachment,
     setSelectedAddItems,
     setSelectedDeleteGroups,
+    updateAddPreviewItem,
   };
 };

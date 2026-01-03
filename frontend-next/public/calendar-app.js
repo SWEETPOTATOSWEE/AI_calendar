@@ -361,7 +361,7 @@ const apiBase = window.__API_BASE__ || "/api";
     }
   }
 
-  function setYearViewVisible(isVisible, targetView = "dayGridMonth"){
+  function setYearViewVisible(isVisible, targetView = "timeGridWeek"){
     const container = document.getElementById("calendar-container");
     const yearView = document.getElementById("year-view");
     if(!container || !yearView) return;
@@ -441,12 +441,12 @@ const apiBase = window.__API_BASE__ || "/api";
       card.addEventListener("click", () => {
         const mm = String(month + 1).padStart(2, "0");
         const targetDate = `${year}-${mm}-01`;
-        calendar.changeView("dayGridMonth");
+        calendar.changeView("timeGridWeek");
         calendar.gotoDate(targetDate);
-        setActiveView("dayGridMonth");
+        setActiveView("timeGridWeek");
         setSelectedDate(targetDate);
         loadEventListForDate(targetDate);
-        setYearViewVisible(false, "dayGridMonth");
+        setYearViewVisible(false, "timeGridWeek");
       });
 
       grid.appendChild(card);
@@ -2690,7 +2690,7 @@ const apiBase = window.__API_BASE__ || "/api";
     requestAnimationFrame(updateViewSwitchIndicators);
 
     calendar = new FullCalendar.Calendar(calendarEl, {
-      initialView:"dayGridMonth",
+      initialView:"timeGridWeek",
       locale:"ko",
       height:"auto",
       headerToolbar:false,

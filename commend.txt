@@ -1,0 +1,9 @@
+pkill -f uvicorn
+
+python -m uvicorn backend.app:app --reload --port 8000
+
+---
+
+lsof -ti:3000 | xargs -r kill -9
+cd /workspaces/AI_calendar/frontend-next
+npm run dev
