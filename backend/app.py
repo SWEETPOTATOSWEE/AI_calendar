@@ -107,10 +107,12 @@ if USE_NEXT_FRONTEND:
   START_HTML = _load_frontend_html("index.html")
   CALENDAR_HTML_TEMPLATE = _load_frontend_html("calendar/index.html")
   SETTINGS_HTML = _load_frontend_html("settings/index.html")
+  LOGIN_HTML = _load_frontend_html("login/index.html")
 else:
   START_HTML = _load_frontend_html("start.html")
   CALENDAR_HTML_TEMPLATE = _load_frontend_html("calendar.html")
   SETTINGS_HTML = _load_frontend_html("settings.html")
+  LOGIN_HTML = START_HTML
 
 # -------------------------
 # 데이터 모델
@@ -4230,15 +4232,24 @@ def google_login(request: Request):
 
   session_id = _get_session_id(request) or _new_session_id()
   state_value = _new_oauth_state()
+  existing_token = load_gcal_token_for_session(session_id) or {}
+  has_refresh_token = bool(existing_token.get("refresh_token"))
+  prompt = request.query_params.get("prompt")
+  if not prompt:
+    if request.query_params.get("force") == "1":
+      prompt = "consent"
+    elif not has_refresh_token:
+      prompt = "consent"
   params = {
       "client_id": GOOGLE_CLIENT_ID,
       "redirect_uri": GOOGLE_REDIRECT_URI,
       "response_type": "code",
       "scope": "https://www.googleapis.com/auth/calendar.events",
       "access_type": "offline",
-      "prompt": "consent",
       "state": state_value,
   }
+  if prompt:
+    params["prompt"] = prompt
   url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(
       params)
   resp = RedirectResponse(url)
@@ -4304,8 +4315,10 @@ def google_callback(request: Request):
     refresh_token = existing.get("refresh_token")
 
   if not access_token or not refresh_token:
-    raise HTTPException(status_code=500,
-                        detail=f"access_token/refresh_token 누락: {token_json}")
+    raise HTTPException(
+        status_code=500,
+        detail="access_token/refresh_token missing. Retry with /auth/google/login?force=1",
+    )
 
   expiry_dt = datetime.now(
       timezone.utc) + timedelta(seconds=int(expires_in or 0))
@@ -5032,15 +5045,7 @@ def build_header_actions(request: Request, has_token: bool) -> str:
 
 @app.get("/", response_class=HTMLResponse)
 def start_page(request: Request):
-  # ✅ 조건:
-  # - admin 이거나
-  # - gcal 비활성 이거나
-  # - 토큰이 있으면
-  # => 바로 캘린더로
-  if is_admin(request):
-    return RedirectResponse("/calendar")
-  if not ENABLE_GCAL:
-    return RedirectResponse("/calendar")
+  # Redirect to calendar only when a login token is present.
   if load_gcal_token_for_request(request) is not None:
     return RedirectResponse("/calendar")
 
@@ -5108,6 +5113,13 @@ def settings_page(request: Request):
       request) is None:
     return RedirectResponse("/")
   return HTMLResponse(SETTINGS_HTML)
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request):
+  if load_gcal_token_for_request(request) is not None:
+    return RedirectResponse("/calendar")
+  return HTMLResponse(LOGIN_HTML)
 
 
 if FRONTEND_STATIC_DIR and FRONTEND_STATIC_DIR.exists():

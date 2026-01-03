@@ -11,8 +11,16 @@ const config: Config = {
         "background-dark": "#101922",
       },
       fontFamily: {
-        display: ["Noto Sans KR", "sans-serif"],
+        display: ["\"Space Grotesk\"", "Noto Sans KR", "sans-serif"],
         sans: ["Noto Sans KR", "sans-serif"],
+        plex: ["\"IBM Plex Sans\"", "Noto Sans KR", "sans-serif"],
+        mono: [
+          "\"IBM Plex Mono\"",
+          "ui-monospace",
+          "SFMono-Regular",
+          "Menlo",
+          "monospace",
+        ],
       },
     },
   },

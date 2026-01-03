@@ -7,6 +7,7 @@ body {
   font-family: "Noto Sans KR", "Inter", sans-serif;
 }
 
+
 :root {
   --icon-size: 18px;
   --control-h: 34px;
@@ -119,6 +120,7 @@ svg {
   display: block;
 }
 
+
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
@@ -179,4 +181,33 @@ svg {
 
 .month-shell .rounded-full {
   border-radius: 9999px;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+.animate-fade-up {
+  animation: fade-up 0.7s ease forwards;
+}
+
+.animate-float {
+  animation: float 8s ease-in-out infinite;
 }

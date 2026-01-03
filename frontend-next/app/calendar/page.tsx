@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
@@ -259,7 +259,7 @@ const getInitialSearchRange = (baseDate: Date) =>
 const getInitialAppliedSearchRange = (baseDate: Date) =>
   cachedAppliedSearchRange ?? buildDefaultSearchRange(baseDate);
 
-export default function CalendarPage() {
+function CalendarPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const today = new Date();
@@ -308,7 +308,7 @@ export default function CalendarPage() {
   const selectedWeekEndDay = useMemo(() => addDays(selectedWeekStartDay, 6), [selectedWeekStartDay]);
   const toggleMiniWeekHover = (weekKey: string, active: boolean) => {
     const api = miniCalendarRef.current?.getApi();
-    const root = api?.el;
+    const root = (api as unknown as { el?: HTMLElement } | undefined)?.el;
     if (!root) return;
     root.querySelectorAll(`[data-week-key="${weekKey}"]`).forEach((node) => {
       node.classList.toggle("mini-week-hover", active);
@@ -544,12 +544,11 @@ export default function CalendarPage() {
       return;
     }
     setSearchAdvancedOpen(false);
-    const defaultRange = buildDefaultSearchRange(nowSnapshot);
-    setSearchRange(defaultRange);
+    const appliedRange = searchRange;
     let ensuredEvents: CalendarEvent[] | null = null;
     setIsSearching(true);
     try {
-      ensuredEvents = await actions.ensureRangeLoaded(defaultRange.start, defaultRange.end);
+      ensuredEvents = await actions.ensureRangeLoaded(appliedRange.start, appliedRange.end);
     } catch {
       // ignore fetch errors during search range expansion
     } finally {
@@ -560,7 +559,7 @@ export default function CalendarPage() {
       locationQuery: searchLocationQuery,
       descriptionQuery: searchDescriptionQuery,
       attendeesQuery: searchAttendeesQuery,
-      range: defaultRange,
+      range: appliedRange,
       includeAll: true,
       matchMode: searchMatchMode,
       events: ensuredEvents ?? state.allEvents,
@@ -569,7 +568,7 @@ export default function CalendarPage() {
     setSearchAppliedLocation(searchLocationQuery);
     setSearchAppliedDescription(searchDescriptionQuery);
     setSearchAppliedAttendees(searchAttendeesQuery);
-    setSearchAppliedRange(defaultRange);
+    setSearchAppliedRange(appliedRange);
     setSearchAppliedMatchMode(searchMatchMode);
     setSearchAllEnabled(true);
     if (matches.length === 0) {
@@ -1000,7 +999,7 @@ export default function CalendarPage() {
               timezone: payload.timezone ?? null,
               color_id: payload.color_id ?? null,
               recurrence: payload.recurrence,
-              weekdays: payload.recurrence.byweekday ?? null,
+              weekdays: payload.recurrence.byweekday ?? undefined,
               end_date: end?.until ?? null,
               count: end?.count ?? null,
             });
@@ -1332,7 +1331,10 @@ export default function CalendarPage() {
                             {event.title}
                           </p>
                         </div>
-                        <p className="text-xs text-slate-500">{formatSearchResultMeta(event)}</p>
+                        <p className="text-xs text-slate-500 flex items-center gap-1">
+                          <Calendar className="size-3.5 text-slate-400" />
+                          {formatSearchResultMeta(event)}
+                        </p>
                         <p className="text-xs text-slate-500 flex items-center gap-1">
                           <Clock className="size-3.5 text-slate-400" />
                           {formatSearchResultTime(event)}
@@ -1823,5 +1825,13 @@ export default function CalendarPage() {
         <Sparkles className="size-6" />
       </button>
     </div>
+  );
+}
+
+export default function CalendarPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#f7f7f5]" />}>
+      <CalendarPageInner />
+    </Suspense>
   );
 }
