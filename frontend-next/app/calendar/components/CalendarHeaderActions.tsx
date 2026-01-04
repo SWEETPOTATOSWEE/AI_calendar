@@ -16,12 +16,13 @@ export default function CalendarHeaderActions({
 }: CalendarHeaderActionsProps) {
   const googleEnabled = Boolean(status?.enabled && status?.configured);
   const hasToken = Boolean(status?.has_token);
+  const isAdmin = Boolean(status?.admin);
   const containerClassName = className ?? "flex items-center gap-2";
   const buttonSuffix = buttonClassName ? ` ${buttonClassName}` : "";
 
   return (
     <div className={containerClassName}>
-      {googleEnabled && !hasToken && (
+      {googleEnabled && !hasToken && !isAdmin && (
         <button
           className={`px-3 py-1 rounded-full text-sm font-semibold border border-blue-200 text-blue-600 hover:bg-blue-50${buttonSuffix}`}
           type="button"
@@ -39,23 +40,23 @@ export default function CalendarHeaderActions({
           로그아웃
         </button>
       )}
-      {!hasToken && (
-        <>
-          <button
-            className={`px-3 py-1 rounded-full text-sm font-semibold border border-gray-200 text-gray-700 hover:bg-gray-50${buttonSuffix}`}
-            type="button"
-            onClick={enterAdmin}
-          >
-            관리자
-          </button>
-          <button
-            className={`px-3 py-1 rounded-full text-sm font-semibold border border-gray-200 text-gray-700 hover:bg-gray-50${buttonSuffix}`}
-            type="button"
-            onClick={exitAdmin}
-          >
-            관리자 해제
-          </button>
-        </>
+      {!hasToken && !isAdmin && (
+        <button
+          className={`px-3 py-1 rounded-full text-sm font-semibold border border-gray-200 text-gray-700 hover:bg-gray-50${buttonSuffix}`}
+          type="button"
+          onClick={enterAdmin}
+        >
+          관리자
+        </button>
+      )}
+      {isAdmin && (
+        <button
+          className={`px-3 py-1 rounded-full text-sm font-semibold border border-gray-200 text-gray-700 hover:bg-gray-50${buttonSuffix}`}
+          type="button"
+          onClick={exitAdmin}
+        >
+          관리자 해제
+        </button>
       )}
     </div>
   );

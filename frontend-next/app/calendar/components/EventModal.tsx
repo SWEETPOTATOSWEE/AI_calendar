@@ -1,14 +1,43 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Calendar, Check, ChevronDown, ChevronUp, ChevronsUpDown, Clock, Plus } from "lucide-react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type AnimationEvent,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
+import { createPortal } from "react-dom";
+import {
+  Calendar,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  ChevronsUpDown,
+  Clock,
+  Plus,
+} from "lucide-react";
 import type {
   CalendarEvent,
   EventPayload,
   EventRecurrence,
   RecurringEventPayload,
 } from "../lib/types";
-import { formatTime, parseISODateTime, toISODate } from "../lib/date";
+import {
+  addDays,
+  addMonths,
+  formatTime,
+  isSameDay,
+  parseISODateTime,
+  startOfMonth,
+  startOfWeek,
+  toISODate,
+} from "../lib/date";
 
 const WEEKDAY_OPTIONS = [
   { label: "월", value: 0 },
@@ -26,6 +55,8 @@ const REMINDER_OPTIONS = [
   { label: "1시간 전", value: 60 },
   { label: "1일 전", value: 1440 },
 ];
+
+const EVENT_MODAL_TABS = ["basic", "advanced"] as const;
 
 const COLOR_OPTIONS = [
   { id: "default", label: "기본", chip: "bg-slate-300" },
@@ -228,6 +259,7 @@ const CustomSelect = <T extends string | number>({
   iconClassName,
 }: CustomSelectProps<T>) => {
   const [open, setOpen] = useState(false);
+  const [closing, setClosing] = useState(false);
   const [openUp, setOpenUp] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -237,10 +269,16 @@ const CustomSelect = <T extends string | number>({
     if (!open) return;
     const handleClick = (event: MouseEvent) => {
       if (!containerRef.current || containerRef.current.contains(event.target as Node)) return;
-      setOpen(false);
+      closeMenu();
     };
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  useEffect(() => {
+    if (open) {
+      setClosing(false);
+    }
   }, [open]);
 
   useLayoutEffect(() => {
@@ -271,8 +309,23 @@ const CustomSelect = <T extends string | number>({
   }, [open, options.length]);
 
   useEffect(() => {
-    if (disabled && open) setOpen(false);
+    if (disabled && open) {
+      setOpen(false);
+      setClosing(false);
+    }
   }, [disabled, open]);
+
+  const closeMenu = () => {
+    if (!open || closing) return;
+    setClosing(true);
+  };
+
+  const handleMenuAnimationEnd = (event: AnimationEvent<HTMLDivElement>) => {
+    if (!closing || event.currentTarget !== event.target) return;
+    if (event.animationName !== "popover-out") return;
+    setOpen(false);
+    setClosing(false);
+  };
 
   return (
     <div ref={containerRef} className={`relative ${wrapperClassName ?? ""}`}>
@@ -281,7 +334,17 @@ const CustomSelect = <T extends string | number>({
         className={`inline-flex items-center justify-start gap-2 rounded-lg border border-transparent bg-transparent text-left focus:outline-none focus:ring-0 ${
           disabled ? "text-slate-400" : "text-[#111827]"
         } px-3 py-2 text-[15px] font-medium ${buttonClassName ?? ""}`}
-        onClick={() => setOpen((prev) => !prev)}
+        onClick={() => {
+          if (open) {
+            if (closing) {
+              setClosing(false);
+            } else {
+              setClosing(true);
+            }
+            return;
+          }
+          setOpen(true);
+        }}
         disabled={disabled}
         aria-expanded={open}
         aria-haspopup="listbox"
@@ -291,35 +354,545 @@ const CustomSelect = <T extends string | number>({
       </button>
       {open && !disabled && (
         <div
-          ref={menuRef}
-          className={`absolute left-0 z-20 min-w-full overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-[#111418] ${
+          className={`absolute left-1/2 z-20 min-w-full -translate-x-1/2 ${
             openUp ? "bottom-full mb-2" : "top-full mt-2"
-          } ${menuClassName ?? ""}`}
-          role="listbox"
+          }`}
         >
-          <div className="max-h-60 overflow-y-auto pr-1">
-            {options.map((option) => {
+          <div
+            ref={menuRef}
+            className={`min-w-full overflow-hidden popover-surface popover-animate border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-[#111418] ${
+              closing ? "is-closing" : ""
+            } ${menuClassName ?? ""}`}
+            role="listbox"
+            data-side={openUp ? "top" : "bottom"}
+            data-align="center"
+            onAnimationEnd={handleMenuAnimationEnd}
+          >
+            <div className="max-h-60 overflow-y-auto">
+              {options.map((option) => {
+                const active = option.value === value;
+                return (
+                <button
+                  key={String(option.value)}
+                  type="button"
+                  className={`flex w-full justify-start rounded-md px-3 py-2 text-[15px] text-left transition-colors hover:bg-gray-50 dark:hover:bg-[#1a2632] ${
+                    active ? "font-semibold text-[#2563EB]" : "font-medium text-[#111827]"
+                  } ${optionClassName ?? ""}`}
+                    onClick={() => {
+                      onChange(option.value);
+                      closeMenu();
+                    }}
+                    role="option"
+                    aria-selected={active}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const parseISODate = (value: string) => {
+  if (!value) return null;
+  const [yearText, monthText, dayText] = value.split("-");
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day);
+};
+
+const formatYearMonthLabel = (date: Date) => {
+  return `${date.getFullYear()}년 ${date.getMonth() + 1}월`;
+};
+
+const formatTimeLabel = (value: string) => {
+  if (!value) return "";
+  const [hourText, minuteText] = value.split(":");
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return value;
+  const date = new Date(2020, 0, 1, hour, minute);
+  return date.toLocaleTimeString("ko-KR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
+};
+
+const buildTimeOptions = (stepMinutes: number) => {
+  const options: Array<{ value: string; label: string }> = [];
+  for (let hour = 0; hour < 24; hour += 1) {
+    for (let minute = 0; minute < 60; minute += stepMinutes) {
+      const value = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+      options.push({ value, label: formatTimeLabel(value) });
+    }
+  }
+  return options;
+};
+
+type DatePopoverProps = {
+  value: string;
+  onChange: (value: string) => void;
+  label: string;
+  icon: ReactNode;
+  disabled?: boolean;
+  placeholder?: string;
+};
+
+const DatePopover = ({
+  value,
+  onChange,
+  label,
+  icon,
+  disabled = false,
+  placeholder = "날짜 선택",
+}: DatePopoverProps) => {
+  const [open, setOpen] = useState(false);
+  const [scrollMode, setScrollMode] = useState(false);
+  const [viewDate, setViewDate] = useState<Date>(() => parseISODate(value) ?? new Date());
+  const [position, setPosition] = useState({ top: 0, left: 0 });
+  const [ready, setReady] = useState(false);
+  const [openUp, setOpenUp] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const positionRef = useRef(position);
+  const prevScrollModeRef = useRef(scrollMode);
+  const yearRefs = useRef<Record<number, HTMLButtonElement | null>>({});
+  const monthRefs = useRef<Record<number, HTMLButtonElement | null>>({});
+
+  const selectedDate = parseISODate(value);
+  const today = new Date();
+
+  const yearRange = useMemo(() => {
+    const baseYear = viewDate.getFullYear();
+    return Array.from({ length: 21 }, (_, idx) => baseYear - 10 + idx);
+  }, [viewDate]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (wrapperRef.current?.contains(target)) return;
+      if (popoverRef.current?.contains(target)) return;
+      closePopover();
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  useEffect(() => {
+    if (open) {
+      setReady(false);
+      setClosing(false);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    setViewDate(parseISODate(value) ?? new Date());
+  }, [open, value]);
+
+  useEffect(() => {
+    positionRef.current = position;
+  }, [position]);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const scrollModeChanged = prevScrollModeRef.current !== scrollMode;
+    prevScrollModeRef.current = scrollMode;
+    const scrollParent = getScrollParent(wrapperRef.current);
+    const scrollTarget =
+      scrollParent === document.body || scrollParent === document.documentElement ? window : scrollParent;
+    const updatePlacement = () => {
+      if (!wrapperRef.current || !popoverRef.current) return;
+      const rect = wrapperRef.current.getBoundingClientRect();
+      const popoverRect = popoverRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const spaceAbove = rect.top;
+      const shouldOpenUp = spaceBelow < popoverRect.height && spaceAbove > spaceBelow;
+      const top = shouldOpenUp
+        ? Math.max(8, rect.top - popoverRect.height - 8)
+        : Math.min(window.innerHeight - popoverRect.height - 8, rect.bottom + 8);
+      const maxLeft = window.innerWidth - popoverRect.width - 8;
+      const preferredLeft = rect.right - popoverRect.width;
+      const left = scrollModeChanged
+        ? Math.min(Math.max(positionRef.current.left, 8), maxLeft)
+        : Math.min(Math.max(preferredLeft, 8), maxLeft);
+      setPosition({ top, left });
+      setOpenUp(shouldOpenUp);
+      setReady(true);
+    };
+    const frame = window.requestAnimationFrame(updatePlacement);
+    window.addEventListener("resize", updatePlacement);
+    scrollTarget.addEventListener("scroll", updatePlacement, { passive: true });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", updatePlacement);
+      scrollTarget.removeEventListener("scroll", updatePlacement);
+    };
+  }, [open, scrollMode]);
+
+  useEffect(() => {
+    if (!open || !scrollMode) return;
+    yearRefs.current[viewDate.getFullYear()]?.scrollIntoView({ block: "center" });
+    monthRefs.current[viewDate.getMonth() + 1]?.scrollIntoView({ block: "center" });
+  }, [open, scrollMode, viewDate]);
+
+  const monthStart = startOfMonth(viewDate);
+  const calendarStart = startOfWeek(monthStart);
+  const days = Array.from({ length: 42 }, (_, idx) => addDays(calendarStart, idx));
+
+  const handleDateSelect = (date: Date) => {
+    onChange(toISODate(date));
+    closePopover();
+  };
+
+  const closePopover = () => {
+    if (!open || closing) return;
+    setClosing(true);
+    setScrollMode(false);
+  };
+
+  const handlePopoverAnimationEnd = (event: AnimationEvent<HTMLDivElement>) => {
+    if (!closing || event.currentTarget !== event.target) return;
+    if (event.animationName !== "popover-out") return;
+    setOpen(false);
+    setClosing(false);
+  };
+
+  return (
+    <div ref={wrapperRef} className="relative flex-none">
+      <button
+        type="button"
+        className="flex items-center gap-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#0f141a] px-3 py-1 text-[15px] font-medium text-[#111827] disabled:opacity-60 disabled:cursor-not-allowed"
+        onClick={() => {
+          if (open) {
+            if (closing) {
+              setClosing(false);
+            } else {
+              setClosing(true);
+            }
+            return;
+          }
+          setOpen(true);
+        }}
+        disabled={disabled}
+        aria-label={label}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+      >
+        <span className={value ? "" : "text-[#9CA3AF]"}>{value || placeholder}</span>
+        <span className="text-slate-400">{icon}</span>
+      </button>
+      {open &&
+        !disabled &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            ref={popoverRef}
+            className={`fixed z-[9999] w-72 overflow-hidden popover-surface border border-gray-100 dark:border-gray-700 bg-white dark:bg-[#111418] p-4 shadow-lg ${
+              ready || closing ? "popover-animate" : ""
+            } ${closing ? "is-closing" : ""}`}
+            style={{
+              top: position.top,
+              left: position.left,
+              visibility: ready ? "visible" : "hidden",
+              pointerEvents: ready ? "auto" : "none",
+            }}
+            data-side={openUp ? "top" : "bottom"}
+            data-align="end"
+            onAnimationEnd={handlePopoverAnimationEnd}
+          >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center">
+              <button
+                type="button"
+                className="flex h-7 items-center justify-center gap-0.5 pr-1 text-sm font-semibold text-[#111827] hover:text-blue-600"
+                onClick={() => setScrollMode((prev) => !prev)}
+                aria-label="월/년도 이동"
+              >
+                <span>{formatYearMonthLabel(viewDate)}</span>
+                <ChevronRight className={`size-4 translate-y-[1px] transition-transform ${scrollMode ? "rotate-90" : ""}`} />
+              </button>
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                className="flex size-7 items-center justify-center rounded-full border border-gray-200 text-slate-500 hover:border-blue-200 hover:text-blue-600"
+                onClick={() => setViewDate((prev) => addMonths(prev, -1))}
+                aria-label="이전 달"
+              >
+                <ChevronLeft className="size-4" />
+              </button>
+              <button
+                type="button"
+                className="flex size-7 items-center justify-center rounded-full border border-gray-200 text-slate-500 hover:border-blue-200 hover:text-blue-600"
+                onClick={() => setViewDate((prev) => addMonths(prev, 1))}
+                aria-label="다음 달"
+              >
+                <ChevronRight className="size-4" />
+              </button>
+            </div>
+          </div>
+          {scrollMode && (
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-100 bg-gray-50 dark:border-gray-700 dark:bg-[#0f141a] py-2">
+                {yearRange.map((year) => {
+                  const active = year === viewDate.getFullYear();
+                  return (
+                    <button
+                      key={year}
+                      type="button"
+                      ref={(node) => {
+                        yearRefs.current[year] = node;
+                      }}
+                      className={`flex w-full items-center justify-center px-3 py-2 text-sm font-medium transition-colors ${
+                        active ? "text-blue-600" : "text-slate-600 hover:text-slate-900"
+                      }`}
+                      onClick={() => setViewDate(new Date(year, viewDate.getMonth(), 1))}
+                    >
+                      {year}년
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-100 bg-gray-50 dark:border-gray-700 dark:bg-[#0f141a] py-2">
+                {Array.from({ length: 12 }, (_, idx) => idx + 1).map((month) => {
+                  const active = month === viewDate.getMonth() + 1;
+                  return (
+                    <button
+                      key={month}
+                      type="button"
+                      ref={(node) => {
+                        monthRefs.current[month] = node;
+                      }}
+                      className={`flex w-full items-center justify-center px-3 py-2 text-sm font-medium transition-colors ${
+                        active ? "text-blue-600" : "text-slate-600 hover:text-slate-900"
+                      }`}
+                      onClick={() => setViewDate(new Date(viewDate.getFullYear(), month - 1, 1))}
+                    >
+                      {month}월
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {!scrollMode && (
+            <>
+              <div className="mt-3 grid grid-cols-7 text-xs text-slate-400">
+                {["월", "화", "수", "목", "금", "토", "일"].map((day) => (
+                  <span key={day} className="text-center">
+                    {day}
+                  </span>
+                ))}
+              </div>
+              <div className="mt-2 grid grid-cols-7 gap-1 text-sm">
+                {days.map((date) => {
+                  const isCurrentMonth = date.getMonth() === viewDate.getMonth();
+                  const isSelected = selectedDate ? isSameDay(selectedDate, date) : false;
+                  const isToday = isSameDay(today, date);
+                  return (
+                    <button
+                      key={date.toISOString()}
+                      type="button"
+                      className={`flex h-8 w-full items-center justify-center rounded-full transition-colors ${
+                        isSelected
+                          ? "bg-blue-600 text-white"
+                          : isToday
+                            ? "border border-blue-200 text-blue-600"
+                            : isCurrentMonth
+                              ? "text-slate-700 hover:bg-slate-100"
+                              : "text-slate-300"
+                      }`}
+                      onClick={() => handleDateSelect(date)}
+                    >
+                      {date.getDate()}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+};
+
+type TimePopoverProps = {
+  value: string;
+  onChange: (value: string) => void;
+  label: string;
+  icon: ReactNode;
+  disabled?: boolean;
+  placeholder?: string;
+};
+
+const TimePopover = ({
+  value,
+  onChange,
+  label,
+  icon,
+  disabled = false,
+  placeholder = "시간 선택",
+}: TimePopoverProps) => {
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const selectedRef = useRef<HTMLButtonElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const [position, setPosition] = useState({ top: 0, left: 0 });
+  const [ready, setReady] = useState(false);
+  const [openUp, setOpenUp] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const timeOptions = useMemo(() => buildTimeOptions(15), []);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (wrapperRef.current?.contains(target)) return;
+      if (popoverRef.current?.contains(target)) return;
+      closePopover();
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  useEffect(() => {
+    if (open) {
+      setReady(false);
+      setClosing(false);
+    }
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const scrollParent = getScrollParent(wrapperRef.current);
+    const scrollTarget =
+      scrollParent === document.body || scrollParent === document.documentElement ? window : scrollParent;
+    const updatePlacement = () => {
+      if (!wrapperRef.current || !popoverRef.current) return;
+      const rect = wrapperRef.current.getBoundingClientRect();
+      const popoverRect = popoverRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const spaceAbove = rect.top;
+      const shouldOpenUp = spaceBelow < popoverRect.height && spaceAbove > spaceBelow;
+      const top = shouldOpenUp
+        ? Math.max(8, rect.top - popoverRect.height - 8)
+        : Math.min(window.innerHeight - popoverRect.height - 8, rect.bottom + 8);
+      const left = Math.min(
+        Math.max(rect.right - popoverRect.width, 8),
+        window.innerWidth - popoverRect.width - 8
+      );
+      setPosition({ top, left });
+      setOpenUp(shouldOpenUp);
+      setReady(true);
+    };
+    const frame = window.requestAnimationFrame(updatePlacement);
+    window.addEventListener("resize", updatePlacement);
+    scrollTarget.addEventListener("scroll", updatePlacement, { passive: true });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", updatePlacement);
+      scrollTarget.removeEventListener("scroll", updatePlacement);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (open) {
+      selectedRef.current?.scrollIntoView({ block: "center" });
+    }
+  }, [open, value]);
+
+  const closePopover = () => {
+    if (!open || closing) return;
+    setClosing(true);
+  };
+
+  const handlePopoverAnimationEnd = (event: AnimationEvent<HTMLDivElement>) => {
+    if (!closing || event.currentTarget !== event.target) return;
+    if (event.animationName !== "popover-out") return;
+    setOpen(false);
+    setClosing(false);
+  };
+
+  return (
+    <div ref={wrapperRef} className="relative flex-none">
+      <button
+        type="button"
+        className="flex items-center gap-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#0f141a] px-3 py-1 text-[15px] font-medium text-[#111827] disabled:opacity-60 disabled:cursor-not-allowed"
+        onClick={() => {
+          if (open) {
+            if (closing) {
+              setClosing(false);
+            } else {
+              setClosing(true);
+            }
+            return;
+          }
+          setOpen(true);
+        }}
+        disabled={disabled}
+        aria-label={label}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+      >
+        <span className={value ? "" : "text-[#9CA3AF]"}>
+          {value ? formatTimeLabel(value) : placeholder}
+        </span>
+        <span className="text-slate-400">{icon}</span>
+      </button>
+      {open &&
+        !disabled &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            ref={popoverRef}
+            className={`fixed z-[9999] w-40 overflow-hidden popover-surface border border-gray-100 dark:border-gray-700 bg-white dark:bg-[#111418] p-2 shadow-lg ${
+              ready || closing ? "popover-animate" : ""
+            } ${closing ? "is-closing" : ""}`}
+            style={{
+              top: position.top,
+              left: position.left,
+              visibility: ready ? "visible" : "hidden",
+              pointerEvents: ready ? "auto" : "none",
+            }}
+            data-side={openUp ? "top" : "bottom"}
+            data-align="end"
+            onAnimationEnd={handlePopoverAnimationEnd}
+          >
+          <div className="max-h-56 overflow-y-auto pr-1">
+            {timeOptions.map((option) => {
               const active = option.value === value;
               return (
-              <button
-                key={String(option.value)}
-                type="button"
-                className={`flex w-full justify-start rounded-md px-3 py-2 text-[15px] text-left transition-colors hover:bg-gray-50 dark:hover:bg-[#1a2632] ${
-                  active ? "font-semibold text-[#2563EB]" : "font-medium text-[#111827]"
-                } ${optionClassName ?? ""}`}
+                <button
+                  key={option.value}
+                  type="button"
+                  ref={active ? selectedRef : null}
+                  className={`flex w-full items-center justify-center rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                    active ? "bg-blue-600 text-white" : "text-slate-700 hover:bg-slate-100"
+                  }`}
                   onClick={() => {
                     onChange(option.value);
-                    setOpen(false);
+                    closePopover();
                   }}
-                  role="option"
-                  aria-selected={active}
                 >
                   {option.label}
                 </button>
               );
             })}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -342,6 +915,15 @@ export default function EventModal({
   const [form, setForm] = useState(() => buildInitialState(event, defaultDate));
   const [activeTab, setActiveTab] = useState<"basic" | "advanced">("basic");
   const [showAllColors, setShowAllColors] = useState(false);
+  const activeTabIndex = EVENT_MODAL_TABS.indexOf(activeTab);
+  const tabToggleStyle = useMemo(
+    () =>
+      ({
+        "--seg-count": String(EVENT_MODAL_TABS.length),
+        "--seg-index": String(activeTabIndex),
+      }) as CSSProperties,
+    [activeTabIndex]
+  );
   const isEdit = Boolean(stableEvent) && !forceCreate;
   const isRecurring = !forceCreate && stableEvent?.recur === "recurring";
   const descriptionRef = useRef<HTMLTextAreaElement | null>(null);
@@ -376,9 +958,22 @@ export default function EventModal({
   }, [showAllColors]);
 
   const [customReminderOpen, setCustomReminderOpen] = useState(false);
+  const [customReminderClosing, setCustomReminderClosing] = useState(false);
   const [customReminderValue, setCustomReminderValue] = useState("1");
   const [customReminderUnit, setCustomReminderUnit] = useState<"days" | "hours" | "minutes">("days");
   const [customReminderValues, setCustomReminderValues] = useState<number[]>([]);
+
+  const closeCustomReminder = () => {
+    if (!customReminderOpen || customReminderClosing) return;
+    setCustomReminderClosing(true);
+  };
+
+  const handleCustomReminderAnimationEnd = (event: AnimationEvent<HTMLDivElement>) => {
+    if (!customReminderClosing || event.currentTarget !== event.target) return;
+    if (event.animationName !== "popover-out") return;
+    setCustomReminderOpen(false);
+    setCustomReminderClosing(false);
+  };
 
   const recurrenceRule = useMemo<EventRecurrence | null>(() => {
     if (!form.recurrenceEnabled) return null;
@@ -534,14 +1129,23 @@ export default function EventModal({
             <h3 className="text-[18px] font-semibold text-[#111827]">
               {isEdit ? "일정 수정" : "새 일정"}
             </h3>
-            <div className="flex items-center gap-1 rounded-full bg-gray-100 dark:bg-gray-800 p-1 text-xs">
-              {(["basic", "advanced"] as const).map((tab) => (
+            <div
+              className="relative flex items-center rounded-full bg-gray-100 dark:bg-gray-800 p-1 text-xs segmented-toggle"
+              style={tabToggleStyle}
+            >
+              <span className="segmented-indicator">
+                <span
+                  key={activeTab}
+                  className="view-indicator-pulse block h-full w-full rounded-full bg-white dark:bg-gray-700 shadow-sm"
+                />
+              </span>
+              {EVENT_MODAL_TABS.map((tab) => (
                 <button
                   key={tab}
                   type="button"
-                  className={`px-3 py-1 rounded-full text-[14px] transition-all ${
+                  className={`relative z-10 flex-1 px-3 py-1 text-[14px] transition-colors ${
                     activeTab === tab
-                      ? "bg-white text-[#2563EB] font-semibold shadow-sm"
+                      ? "text-[#2563EB] font-semibold"
                       : "text-[#6B7280] font-medium hover:text-[#2563EB]"
                   }`}
                   onClick={() => setActiveTab(tab)}
@@ -598,29 +1202,25 @@ export default function EventModal({
                   <span className="w-7 shrink-0 text-[14px] font-medium text-[#374151]">시작</span>
                   <label className="sr-only">시작 날짜</label>
                   <div className="flex w-full items-center justify-end gap-2">
-                    <div className="relative flex-none">
-                      <input
-                        type="date"
-                        className="calendar-input w-auto rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#0f141a] px-2 py-1 text-[15px] font-medium text-[#111827]"
-                        value={form.startDate}
-                        onChange={(event) => setForm((prev) => ({ ...prev, startDate: event.target.value }))}
-                        disabled={isRecurring}
-                      />
-                      <Calendar className="pointer-events-none absolute right-2 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
-                    </div>
+                    <DatePopover
+                      label="시작 날짜"
+                      value={form.startDate}
+                      onChange={(value) => setForm((prev) => ({ ...prev, startDate: value }))}
+                      disabled={isRecurring}
+                      placeholder="날짜 선택"
+                      icon={<Calendar className="size-4" />}
+                    />
                     {!form.allDay && (
-                      <div className="relative flex-none">
-                        <input
-                          type="time"
-                          className="time-input w-auto rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#0f141a] px-2 py-1 text-[15px] font-medium text-[#111827] leading-none"
-                          value={form.startTime}
-                          onChange={(event) =>
-                            setForm((prev) => ({ ...prev, startTime: normalizeTime(event.target.value) }))
-                          }
-                          disabled={isRecurring}
-                        />
-                        <Clock className="pointer-events-none absolute right-2 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
-                      </div>
+                      <TimePopover
+                        label="시작 시간"
+                        value={form.startTime}
+                        onChange={(value) =>
+                          setForm((prev) => ({ ...prev, startTime: normalizeTime(value) }))
+                        }
+                        disabled={isRecurring}
+                        placeholder="시간 선택"
+                        icon={<Clock className="size-4" />}
+                      />
                     )}
                   </div>
                 </div>
@@ -629,29 +1229,25 @@ export default function EventModal({
                   <span className="w-7 shrink-0 text-[14px] font-medium text-[#374151]">종료</span>
                   <label className="sr-only">종료 날짜</label>
                   <div className="flex w-full items-center justify-end gap-2">
-                    <div className="relative flex-none">
-                      <input
-                        type="date"
-                        className="calendar-input w-auto rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#0f141a] px-2 py-1 text-[15px] font-medium text-[#111827]"
-                        value={form.endDate}
-                        onChange={(event) => setForm((prev) => ({ ...prev, endDate: event.target.value }))}
-                        disabled={isRecurring}
-                      />
-                      <Calendar className="pointer-events-none absolute right-2 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
-                    </div>
+                    <DatePopover
+                      label="종료 날짜"
+                      value={form.endDate}
+                      onChange={(value) => setForm((prev) => ({ ...prev, endDate: value }))}
+                      disabled={isRecurring}
+                      placeholder="날짜 선택"
+                      icon={<Calendar className="size-4" />}
+                    />
                     {!form.allDay && (
-                      <div className="relative flex-none">
-                        <input
-                          type="time"
-                          className="time-input w-auto rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#0f141a] px-2 py-1 text-[15px] font-medium text-[#111827] leading-none"
-                          value={form.endTime}
-                          onChange={(event) =>
-                            setForm((prev) => ({ ...prev, endTime: normalizeTime(event.target.value) }))
-                          }
-                          disabled={isRecurring}
-                        />
-                        <Clock className="pointer-events-none absolute right-2 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
-                      </div>
+                      <TimePopover
+                        label="종료 시간"
+                        value={form.endTime}
+                        onChange={(value) =>
+                          setForm((prev) => ({ ...prev, endTime: normalizeTime(value) }))
+                        }
+                        disabled={isRecurring}
+                        placeholder="시간 선택"
+                        icon={<Clock className="size-4" />}
+                      />
                     )}
                   </div>
                 </div>
@@ -708,7 +1304,17 @@ export default function EventModal({
                     <button
                       type="button"
                       className="flex size-7 items-center justify-center rounded-full border border-gray-300 text-slate-500 hover:border-primary/40"
-                      onClick={() => setCustomReminderOpen((prev) => !prev)}
+                      onClick={() => {
+                        if (customReminderOpen) {
+                          if (customReminderClosing) {
+                            setCustomReminderClosing(false);
+                          } else {
+                            setCustomReminderClosing(true);
+                          }
+                          return;
+                        }
+                        setCustomReminderOpen(true);
+                      }}
                       disabled={isRecurring}
                       aria-expanded={customReminderOpen}
                       aria-haspopup="dialog"
@@ -717,7 +1323,14 @@ export default function EventModal({
                       <Plus className="size-4" />
                     </button>
                     {customReminderOpen && !isRecurring && (
-                      <div className="absolute right-0 bottom-full mb-2 w-52 max-w-[calc(100vw-2rem)] rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[#111418] shadow-lg p-3 z-10">
+                      <div
+                        className={`absolute right-0 bottom-full mb-2 w-52 max-w-[calc(100vw-2rem)] popover-surface popover-animate border border-gray-100 dark:border-gray-700 bg-white dark:bg-[#111418] shadow-lg p-3 z-10 ${
+                          customReminderClosing ? "is-closing" : ""
+                        }`}
+                        data-side="top"
+                        data-align="end"
+                        onAnimationEnd={handleCustomReminderAnimationEnd}
+                      >
                         <div className="flex items-center gap-2">
                           <input
                             type="number"
@@ -745,7 +1358,7 @@ export default function EventModal({
                           <button
                             type="button"
                             className="px-2 py-1 text-xs text-slate-500"
-                            onClick={() => setCustomReminderOpen(false)}
+                            onClick={closeCustomReminder}
                           >
                             취소
                           </button>
@@ -769,7 +1382,7 @@ export default function EventModal({
                                 ...prev,
                                 reminders: Array.from(new Set([...prev.reminders, minutesValue])),
                               }));
-                              setCustomReminderOpen(false);
+                              closeCustomReminder();
                             }}
                           >
                             추가

@@ -25,6 +25,7 @@ export type AuthStatus = {
   enabled: boolean;
   configured: boolean;
   has_token: boolean;
+  admin?: boolean;
 };
 
 export type EventPayload = {

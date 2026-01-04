@@ -27,3 +27,17 @@ If port 8000 is already in use, stop it and start the backend again:
 ```bash
 /workspaces/AI_calendar/scripts/restart-backend-8000.sh
 ```
+
+## Dev mode (frontend + backend)
+
+Start backend on 8000 and frontend dev server on 3000:
+
+```bash
+/workspaces/AI_calendar/scripts/dev-run.sh
+```
+
+Override host/port if needed:
+
+```bash
+BACKEND_PORT=8000 FRONTEND_PORT=3000 /workspaces/AI_calendar/scripts/dev-run.sh
+```

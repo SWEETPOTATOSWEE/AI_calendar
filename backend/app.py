@@ -4350,7 +4350,8 @@ def google_status(request: Request):
   return {
       "enabled": ENABLE_GCAL,
       "configured": is_gcal_configured(),
-      "has_token": token_data is not None
+      "has_token": token_data is not None,
+      "admin": is_admin(request),
   }
 
 
@@ -5028,7 +5029,6 @@ def build_header_actions(request: Request, has_token: bool) -> str:
   parts: List[str] = []
 
   if admin:
-    parts.append('<span class="badge admin">ADMIN</span>')
     parts.append('<a class="header-btn" href="/admin/exit">Admin 해제</a>')
     return "\n".join(parts)
 

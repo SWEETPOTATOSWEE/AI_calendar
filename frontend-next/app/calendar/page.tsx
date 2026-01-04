@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
@@ -303,6 +303,16 @@ function CalendarPageInner() {
 
   const viewParam = searchParams.get("view");
   const view: ViewMode = viewParam === "week" || viewParam === "day" ? viewParam : "month";
+  const viewKeys = useMemo(() => Object.keys(VIEW_LABELS) as ViewMode[], []);
+  const activeViewIndex = useMemo(() => viewKeys.indexOf(view), [viewKeys, view]);
+  const viewToggleStyle = useMemo(
+    () =>
+      ({
+        "--seg-count": String(viewKeys.length),
+        "--seg-index": String(activeViewIndex),
+      }) as CSSProperties,
+    [activeViewIndex, viewKeys.length]
+  );
   const isTimeGridView = view === "week" || view === "day";
   const selectedWeekStartDay = useMemo(() => toDateOnly(startOfWeek(selectedDate)), [selectedDate]);
   const selectedWeekEndDay = useMemo(() => addDays(selectedWeekStartDay, 6), [selectedWeekStartDay]);
@@ -1019,8 +1029,128 @@ function CalendarPageInner() {
             </div>
             <div className="flex items-center gap-2"></div>
           </div>
-          {searchOpen ? (
-            <div className="flex flex-1 justify-end">
+          <div className="relative flex flex-1 items-center justify-end min-h-[44px]">
+            <div
+              className={`header-actions-layer flex flex-wrap items-center gap-3 justify-end ${
+                searchOpen ? "is-hidden" : "is-visible"
+              }`}
+              aria-hidden={searchOpen}
+            >
+              <div
+                className="relative hidden md:flex items-center bg-gray-100 dark:bg-gray-800 p-1 rounded-full mr-2 segmented-toggle"
+                style={viewToggleStyle}
+              >
+                <span
+                  className="segmented-indicator"
+                >
+                  <span
+                    key={view}
+                    className="view-indicator-pulse block h-full w-full rounded-full bg-white dark:bg-gray-700 shadow-sm"
+                  />
+                </span>
+                {viewKeys.map((key) => (
+                  <button
+                    key={key}
+                    className={`relative z-10 flex-1 px-3 py-1 text-sm font-semibold transition-colors ${
+                      view === key
+                        ? "text-gray-900 dark:text-white"
+                        : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+                    }`}
+                    type="button"
+                    onClick={() => handleViewChange(key)}
+                  >
+                    {VIEW_LABELS[key]}
+                  </button>
+                ))}
+              </div>
+              <div className="flex gap-1">
+                <button
+                  className="relative flex items-center justify-center rounded-full size-9 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-slate-600 dark:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed"
+                  type="button"
+                  onClick={undo.undo}
+                  disabled={undoCount === 0}
+                  aria-label="마지막 작업 되돌리기"
+                >
+                  <Undo2 className="size-5" />
+                  {undoCount > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-slate-900 text-white text-[10px] font-semibold leading-4">
+                      {undoCount}
+                    </span>
+                  )}
+                </button>
+                <button
+                  className="flex items-center justify-center rounded-full size-9 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-slate-600 dark:text-slate-300"
+                  type="button"
+                  onClick={() => setSearchOpen(true)}
+                  aria-label="일정 검색"
+                >
+                  <Search className="size-5" />
+                </button>
+                <button
+                  className="flex items-center justify-center rounded-full size-9 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-slate-600 dark:text-slate-300"
+                  type="button"
+                  onClick={() => {
+                    setActiveEvent(null);
+                    setAiDraftEvent(null);
+                    setAiDraftIndex(null);
+                    setModalOpen(true);
+                  }}
+                  aria-label="일정 추가"
+                >
+                  <Plus className="size-5" />
+                </button>
+              </div>
+              <div className="hidden md:flex">
+                <CalendarHeaderActions status={state.authStatus} />
+              </div>
+              <div ref={mobileMenuRef} className="relative md:hidden">
+                <button
+                  className="flex items-center justify-center rounded-full size-9 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-slate-600 dark:text-slate-300"
+                  type="button"
+                  onClick={() => setMobileMenuOpen((prev) => !prev)}
+                  aria-label="사용자 메뉴"
+                  aria-haspopup="menu"
+                  aria-expanded={mobileMenuOpen}
+                >
+                  <MoreVertical className="size-5" />
+                </button>
+                {mobileMenuOpen && (
+                  <div className="absolute right-0 mt-2 w-52 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[#111418] shadow-lg p-3 flex flex-col gap-2 z-50">
+                    <CalendarHeaderActions
+                      status={state.authStatus}
+                      className="flex flex-col items-stretch gap-2"
+                      buttonClassName="w-full text-left"
+                    />
+                    <div className="h-px bg-gray-100 dark:bg-gray-800"></div>
+                    <div className="flex items-center gap-2 rounded-lg border border-gray-200 dark:border-gray-700 px-2 py-2">
+                      <div
+                        className="bg-center bg-no-repeat bg-cover rounded-full size-7 border border-gray-200 dark:border-gray-700 shadow-sm"
+                        data-alt="사용자 프로필 이미지"
+                        style={{
+                          backgroundImage:
+                            "url('https://lh3.googleusercontent.com/aida-public/AB6AXuDtp4EN6aKO3e3qE7dZReqE5nVIXN_43sBCdsgWGm4dzvClBNxW2Pt1ibIGwyQGQMdAIBX_9RVDwfqDlnwBKi8NUIR8rfqDGSj3ORylu9O-CXp3AbsLY8YZ3mR-GbbYWBsxTQB71hnJnS4lk0cKSAhR2Mze8_hVjC0o-hEK8J-0fJFYlA65gMBrartXdJiV-A1yCzwWF3mFEhJe5idk641dS6JWo1bXrr9PhY-ZLclsGGcfXhRrdchRQLXlbMpMc3vMNQXkbvxka-4')",
+                        }}
+                      ></div>
+                      <span className="text-xs font-medium text-slate-600 dark:text-slate-300">프로필 사진</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div
+                className="hidden md:block bg-center bg-no-repeat bg-cover rounded-full size-8 border border-gray-200 dark:border-gray-700 shadow-sm"
+                data-alt="사용자 프로필 이미지"
+                style={{
+                  backgroundImage:
+                    "url('https://lh3.googleusercontent.com/aida-public/AB6AXuDtp4EN6aKO3e3qE7dZReqE5nVIXN_43sBCdsgWGm4dzvClBNxW2Pt1ibIGwyQGQMdAIBX_9RVDwfqDlnwBKi8NUIR8rfqDGSj3ORylu9O-CXp3AbsLY8YZ3mR-GbbYWBsxTQB71hnJnS4lk0cKSAhR2Mze8_hVjC0o-hEK8J-0fJFYlA65gMBrartXdJiV-A1yCzwWF3mFEhJe5idk641dS6JWo1bXrr9PhY-ZLclsGGcfXhRrdchRQLXlbMpMc3vMNQXkbvxka-4')",
+                }}
+              ></div>
+            </div>
+            <div
+              className={`header-search-layer flex w-full items-center gap-2 ${
+                searchOpen ? "is-visible" : "is-hidden"
+              }`}
+              aria-hidden={!searchOpen}
+            >
               <div className="flex w-full items-center gap-2">
                 <div className="relative w-full max-w-[420px] min-w-0 ml-auto">
                   <div
@@ -1048,7 +1178,7 @@ function CalendarPageInner() {
                       onClick={() => {
                         if (searchAllEnabled) {
                           setSearchAllEnabled(false);
-                          setSearchAdvancedOpen(true);
+                          setSearchAdvancedOpen((prev) => !prev);
                           return;
                         }
                         setSearchAllEnabled(false);
@@ -1197,109 +1327,9 @@ function CalendarPageInner() {
                   <X className="size-5" />
                 </button>
               </div>
+              </div>
             </div>
-          ) : (
-            <div className="flex flex-wrap items-center gap-3 justify-end">
-              <div className="hidden md:flex items-center gap-1 bg-gray-100 dark:bg-gray-800 p-1 rounded-full mr-2">
-                {(Object.keys(VIEW_LABELS) as ViewMode[]).map((key) => (
-                  <button
-                    key={key}
-                    className={`px-3 py-1 rounded-full text-sm font-semibold transition-all ${
-                      view === key
-                        ? "bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white font-bold"
-                        : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
-                    }`}
-                    type="button"
-                    onClick={() => handleViewChange(key)}
-                  >
-                    {VIEW_LABELS[key]}
-                  </button>
-                ))}
-              </div>
-              <div className="flex gap-1">
-                <button
-                  className="relative flex items-center justify-center rounded-full size-9 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-slate-600 dark:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed"
-                  type="button"
-                  onClick={undo.undo}
-                  disabled={undoCount === 0}
-                  aria-label="마지막 작업 되돌리기"
-                >
-                  <Undo2 className="size-5" />
-                  {undoCount > 0 && (
-                    <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-slate-900 text-white text-[10px] font-semibold leading-4">
-                      {undoCount}
-                    </span>
-                  )}
-                </button>
-                <button
-                  className="flex items-center justify-center rounded-full size-9 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-slate-600 dark:text-slate-300"
-                  type="button"
-                  onClick={() => setSearchOpen(true)}
-                  aria-label="일정 검색"
-                >
-                  <Search className="size-5" />
-                </button>
-                <button
-                  className="flex items-center justify-center rounded-full size-9 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-slate-600 dark:text-slate-300"
-                  type="button"
-                  onClick={() => {
-                    setActiveEvent(null);
-                    setAiDraftEvent(null);
-                    setAiDraftIndex(null);
-                    setModalOpen(true);
-                  }}
-                  aria-label="일정 추가"
-                >
-                  <Plus className="size-5" />
-                </button>
-              </div>
-              <div className="hidden md:flex">
-                <CalendarHeaderActions status={state.authStatus} />
-              </div>
-              <div ref={mobileMenuRef} className="relative md:hidden">
-                <button
-                  className="flex items-center justify-center rounded-full size-9 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-slate-600 dark:text-slate-300"
-                  type="button"
-                  onClick={() => setMobileMenuOpen((prev) => !prev)}
-                  aria-label="사용자 메뉴"
-                  aria-haspopup="menu"
-                  aria-expanded={mobileMenuOpen}
-                >
-                  <MoreVertical className="size-5" />
-                </button>
-                {mobileMenuOpen && (
-                  <div className="absolute right-0 mt-2 w-52 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[#111418] shadow-lg p-3 flex flex-col gap-2 z-50">
-                    <CalendarHeaderActions
-                      status={state.authStatus}
-                      className="flex flex-col items-stretch gap-2"
-                      buttonClassName="w-full text-left"
-                    />
-                    <div className="h-px bg-gray-100 dark:bg-gray-800"></div>
-                    <div className="flex items-center gap-2 rounded-lg border border-gray-200 dark:border-gray-700 px-2 py-2">
-                      <div
-                        className="bg-center bg-no-repeat bg-cover rounded-full size-7 border border-gray-200 dark:border-gray-700 shadow-sm"
-                        data-alt="사용자 프로필 이미지"
-                        style={{
-                          backgroundImage:
-                            "url('https://lh3.googleusercontent.com/aida-public/AB6AXuDtp4EN6aKO3e3qE7dZReqE5nVIXN_43sBCdsgWGm4dzvClBNxW2Pt1ibIGwyQGQMdAIBX_9RVDwfqDlnwBKi8NUIR8rfqDGSj3ORylu9O-CXp3AbsLY8YZ3mR-GbbYWBsxTQB71hnJnS4lk0cKSAhR2Mze8_hVjC0o-hEK8J-0fJFYlA65gMBrartXdJiV-A1yCzwWF3mFEhJe5idk641dS6JWo1bXrr9PhY-ZLclsGGcfXhRrdchRQLXlbMpMc3vMNQXkbvxka-4')",
-                        }}
-                      ></div>
-                      <span className="text-xs font-medium text-slate-600 dark:text-slate-300">프로필 사진</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-              <div
-                className="hidden md:block bg-center bg-no-repeat bg-cover rounded-full size-8 border border-gray-200 dark:border-gray-700 shadow-sm"
-                data-alt="사용자 프로필 이미지"
-                style={{
-                  backgroundImage:
-                    "url('https://lh3.googleusercontent.com/aida-public/AB6AXuDtp4EN6aKO3e3qE7dZReqE5nVIXN_43sBCdsgWGm4dzvClBNxW2Pt1ibIGwyQGQMdAIBX_9RVDwfqDlnwBKi8NUIR8rfqDGSj3ORylu9O-CXp3AbsLY8YZ3mR-GbbYWBsxTQB71hnJnS4lk0cKSAhR2Mze8_hVjC0o-hEK8J-0fJFYlA65gMBrartXdJiV-A1yCzwWF3mFEhJe5idk641dS6JWo1bXrr9PhY-ZLclsGGcfXhRrdchRQLXlbMpMc3vMNQXkbvxka-4')",
-                }}
-              ></div>
-            </div>
-          )}
-        </div>
+          </div>
         {searchAllEnabled && (
           <div className="absolute left-0 right-0 top-full mt-2 whitespace-normal z-50">
             <div className="px-6">

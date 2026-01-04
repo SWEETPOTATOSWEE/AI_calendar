@@ -51,6 +51,15 @@ export default function LoginPage() {
               No other login methods available.
             </span>
           </div>
+          <div className="mt-6 flex flex-wrap items-center gap-3 text-xs text-[#9ca3af]">
+            <span>Admin access:</span>
+            <a
+              href="/admin"
+              className="rounded-full border border-[#e6e6e1] bg-white px-4 py-2 text-xs font-medium text-[#111111] shadow-sm transition hover:-translate-y-[1px]"
+            >
+              Enter admin
+            </a>
+          </div>
         </div>
       </main>
     </div>

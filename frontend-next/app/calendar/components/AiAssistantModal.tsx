@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties } from "react";
 import {
   ArrowUp,
   Calendar,
@@ -219,7 +219,23 @@ export default function AiAssistantModal({ assistant, onEditAddItem }: AiAssista
           </div>
           <div className="flex items-center gap-2">
             <span className="text-[13px] font-semibold text-gray-600">추론</span>
-            <div className="flex items-center rounded-full bg-gray-100 dark:bg-gray-800 p-0.5">
+            <div
+              className="relative flex items-center rounded-full bg-gray-100 dark:bg-gray-800 p-0.5 segmented-toggle"
+              style={
+                {
+                  "--seg-count": "2",
+                  "--seg-index": view.reasoningEffort === "medium" ? "1" : "0",
+                  "--seg-inset": "0.125rem",
+                  "--seg-pad": "0.25rem",
+                } as CSSProperties
+              }
+            >
+              <span className="segmented-indicator">
+                <span
+                  key={view.reasoningEffort}
+                  className="view-indicator-pulse block h-full w-full rounded-full bg-white dark:bg-gray-700 shadow-sm"
+                />
+              </span>
               {[
                 { value: "low", icon: Rabbit, tooltip: "토끼 모드: 스피드 위주, 지능은 살짝 내려둠" },
                 { value: "medium", icon: Turtle, tooltip: "거북이 모드: 느린 대신 두뇌 풀가동" },
@@ -229,9 +245,9 @@ export default function AiAssistantModal({ assistant, onEditAddItem }: AiAssista
                   type="button"
                   onClick={() => assistant.setReasoningEffort(value)}
                   aria-label={tooltip}
-                  className={`relative group px-3 py-1 text-[11px] font-semibold rounded-full transition-colors ${
+                  className={`relative z-10 group px-3 py-1 text-[11px] font-semibold rounded-full transition-colors ${
                     view.reasoningEffort === value
-                      ? "bg-white dark:bg-gray-700 text-slate-900 dark:text-white shadow-sm"
+                      ? "text-slate-900 dark:text-white"
                       : "text-slate-500 hover:text-slate-900 dark:hover:text-white"
                   }`}
                 >

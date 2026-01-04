@@ -11,6 +11,17 @@ body {
 :root {
   --icon-size: 18px;
   --control-h: 34px;
+  --popover-radius: 1.25rem;
+  --popover-scale: 0.8;
+  --popover-translate: 12px;
+  --popover-duration-in: 180ms;
+  --popover-duration-out: 140ms;
+  --popover-ease-in: cubic-bezier(0.2, 0.65, 0.58, 1.18);
+  --popover-ease-out: ease-in;
+  --seg-ease: cubic-bezier(0.43, 0.66, 0.34, 1.3);
+  --seg-duration: 300ms;
+  --seg-inset: 0.25rem;
+  --seg-pad: 0.5rem;
 }
 
 svg {
@@ -36,6 +47,48 @@ svg {
 .topbar {
   justify-content: space-between;
   padding: 10px 14px;
+}
+
+.header-actions-layer,
+.header-search-layer {
+  display: flex;
+  align-items: center;
+  transition:
+    transform 360ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    opacity 240ms ease;
+  z-index: 1;
+}
+
+.header-actions-layer.is-hidden {
+  opacity: 0;
+  transform: translateY(18px);
+  pointer-events: none;
+}
+
+.header-actions-layer.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.header-search-layer {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(calc(-50% - 18px));
+  opacity: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.header-search-layer.is-visible {
+  opacity: 1;
+  transform: translateY(-50%);
+  pointer-events: auto;
+}
+
+.header-search-layer.is-hidden {
+  opacity: 0;
+  transform: translateY(calc(-50% - 18px));
 }
 
 .nav-group {
@@ -137,6 +190,127 @@ svg {
   overflow: hidden;
 }
 
+.popover-surface {
+  border-radius: var(--popover-radius);
+}
+
+.popover-animate {
+  --popover-origin-x: center;
+  --popover-origin-y: top;
+  --popover-translate-x: 0px;
+  --popover-translate-y: calc(var(--popover-translate) * -1);
+  transform-origin: var(--popover-origin-x) var(--popover-origin-y);
+  animation:
+    popover-in var(--popover-duration-in) var(--popover-ease-in) both,
+    popover-fade-in var(--popover-duration-in) ease both;
+}
+
+.popover-animate[data-side="bottom"] {
+  --popover-origin-y: top;
+  --popover-translate-x: 0px;
+  --popover-translate-y: calc(var(--popover-translate) * -1);
+}
+
+.popover-animate[data-side="top"] {
+  --popover-origin-y: bottom;
+  --popover-translate-x: 0px;
+  --popover-translate-y: var(--popover-translate);
+}
+
+.popover-animate[data-side="left"] {
+  --popover-origin-x: right;
+  --popover-origin-y: center;
+  --popover-translate-x: var(--popover-translate);
+  --popover-translate-y: 0px;
+}
+
+.popover-animate[data-side="right"] {
+  --popover-origin-x: left;
+  --popover-origin-y: center;
+  --popover-translate-x: calc(var(--popover-translate) * -1);
+  --popover-translate-y: 0px;
+}
+
+.popover-animate[data-side="bottom"][data-align="start"],
+.popover-animate[data-side="top"][data-align="start"] {
+  --popover-origin-x: left;
+}
+
+.popover-animate[data-side="bottom"][data-align="end"],
+.popover-animate[data-side="top"][data-align="end"] {
+  --popover-origin-x: right;
+}
+
+.popover-animate[data-side="left"][data-align="start"],
+.popover-animate[data-side="right"][data-align="start"] {
+  --popover-origin-y: top;
+}
+
+.popover-animate[data-side="left"][data-align="end"],
+.popover-animate[data-side="right"][data-align="end"] {
+  --popover-origin-y: bottom;
+}
+
+.popover-animate.is-closing {
+  animation:
+    popover-out var(--popover-duration-out) var(--popover-ease-out) both,
+    popover-fade-out var(--popover-duration-out) ease both;
+  pointer-events: none;
+}
+
+@keyframes popover-in {
+  from {
+    transform: translate(var(--popover-translate-x), var(--popover-translate-y))
+      scale(var(--popover-scale));
+  }
+  to {
+    transform: translate(0, 0) scale(1);
+  }
+}
+
+@keyframes popover-out {
+  from {
+    transform: translate(0, 0) scale(1);
+  }
+  to {
+    transform: translate(var(--popover-translate-x), var(--popover-translate-y))
+      scale(var(--popover-scale));
+  }
+}
+
+@keyframes popover-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes popover-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.segmented-toggle {
+  position: relative;
+}
+
+.segmented-indicator {
+  position: absolute;
+  top: var(--seg-inset);
+  bottom: var(--seg-inset);
+  left: var(--seg-inset);
+  width: calc((100% - var(--seg-pad)) / var(--seg-count, 1));
+  transform: translateX(calc(var(--seg-index, 0) * 100%));
+  transition: transform var(--seg-duration) var(--seg-ease);
+  pointer-events: none;
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -204,10 +378,25 @@ svg {
   }
 }
 
+@keyframes view-indicator-pulse {
+  0%,
+  100% {
+    transform: scaleY(1);
+  }
+  50% {
+    transform: scaleY(0.8);
+  }
+}
+
 .animate-fade-up {
   animation: fade-up 0.7s ease forwards;
 }
 
 .animate-float {
   animation: float 8s ease-in-out infinite;
+}
+
+.view-indicator-pulse {
+  transform-origin: center;
+  animation: view-indicator-pulse 220ms ease-out;
 }
