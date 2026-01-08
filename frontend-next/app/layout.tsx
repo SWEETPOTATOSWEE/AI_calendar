@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import "@mantine/core/styles.css";
+import { ColorSchemeScript, MantineProvider, mantineHtmlProps } from "@mantine/core";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -15,8 +17,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="ko" className="light">
+    <html lang="ko" {...mantineHtmlProps}>
       <head>
+        <ColorSchemeScript />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
         <link
@@ -25,7 +28,7 @@ export default function RootLayout({
         />
       </head>
       <body className="min-h-screen font-sans antialiased">
-        {children}
+        <MantineProvider>{children}</MantineProvider>
       </body>
     </html>
   );

@@ -49,46 +49,11 @@ svg {
   padding: 10px 14px;
 }
 
-.header-actions-layer,
-.header-search-layer {
+.header-actions-layer {
   display: flex;
   align-items: center;
-  transition:
-    transform 360ms cubic-bezier(0.2, 0.7, 0.2, 1),
-    opacity 240ms ease;
   z-index: 1;
-}
-
-.header-actions-layer.is-hidden {
-  opacity: 0;
-  transform: translateY(18px);
-  pointer-events: none;
-}
-
-.header-actions-layer.is-visible {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-.header-search-layer {
-  position: absolute;
-  right: 0;
-  top: 50%;
-  transform: translateY(calc(-50% - 18px));
-  opacity: 0;
-  pointer-events: none;
-  z-index: 2;
-}
-
-.header-search-layer.is-visible {
-  opacity: 1;
-  transform: translateY(-50%);
-  pointer-events: auto;
-}
-
-.header-search-layer.is-hidden {
-  opacity: 0;
-  transform: translateY(calc(-50% - 18px));
+  will-change: transform, opacity;
 }
 
 .nav-group {
@@ -125,6 +90,7 @@ svg {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  position: relative;
 }
 
 #confirm-overlay,
@@ -135,7 +101,6 @@ svg {
 .tool-overlay,
 .tool-drawer,
 .event-search-field,
-.event-search-popover,
 #year-view {
   display: none;
 }
@@ -148,13 +113,32 @@ svg {
 .tool-overlay.active,
 .tool-drawer.active,
 .event-search.is-open .event-search-field,
-.event-search.is-range-open .event-search-popover,
 #year-view.active {
   display: block;
 }
 
 .event-search.is-open .event-search-field {
   display: flex;
+}
+
+.event-search-popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  opacity: 0 !important;
+  visibility: hidden !important;
+  transform: translateY(-8px) !important;
+  pointer-events: none !important;
+  transition:
+    opacity 180ms ease,
+    transform 200ms ease;
+}
+
+.event-search.is-range-open .event-search-popover {
+  opacity: 1 !important;
+  visibility: visible !important;
+  transform: translateY(0) !important;
+  pointer-events: auto !important;
 }
 
 #calendar-container.is-year-view #calendar {

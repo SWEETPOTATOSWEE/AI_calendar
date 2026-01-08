@@ -571,7 +571,7 @@ const DatePopover = ({
     <div ref={wrapperRef} className="relative flex-none">
       <button
         type="button"
-        className="flex items-center gap-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#0f141a] px-3 py-1 text-[15px] font-medium text-[#111827] disabled:opacity-60 disabled:cursor-not-allowed"
+        className="flex items-center justify-center gap-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#0f141a] px-3 py-1 text-[15px] font-medium text-[#111827] disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
         onClick={() => {
           if (open) {
             if (closing) {
@@ -589,7 +589,6 @@ const DatePopover = ({
         aria-expanded={open}
       >
         <span className={value ? "" : "text-[#9CA3AF]"}>{value || placeholder}</span>
-        <span className="text-slate-400">{icon}</span>
       </button>
       {open &&
         !disabled &&
@@ -614,7 +613,7 @@ const DatePopover = ({
             <div className="flex items-center">
               <button
                 type="button"
-                className="flex h-7 items-center justify-center gap-0.5 pr-1 text-sm font-semibold text-[#111827] hover:text-blue-600"
+                className="flex h-7 items-center justify-center gap-0.5 pr-1 text-sm font-semibold text-[#111827] hover:text-blue-600 cursor-pointer"
                 onClick={() => setScrollMode((prev) => !prev)}
                 aria-label="월/년도 이동"
               >
@@ -625,7 +624,7 @@ const DatePopover = ({
             <div className="flex items-center gap-1">
               <button
                 type="button"
-                className="flex size-7 items-center justify-center rounded-full border border-gray-200 text-slate-500 hover:border-blue-200 hover:text-blue-600"
+                className="flex size-7 items-center justify-center rounded-full border border-gray-200 text-slate-500 hover:border-blue-200 hover:text-blue-600 cursor-pointer"
                 onClick={() => setViewDate((prev) => addMonths(prev, -1))}
                 aria-label="이전 달"
               >
@@ -633,7 +632,7 @@ const DatePopover = ({
               </button>
               <button
                 type="button"
-                className="flex size-7 items-center justify-center rounded-full border border-gray-200 text-slate-500 hover:border-blue-200 hover:text-blue-600"
+                className="flex size-7 items-center justify-center rounded-full border border-gray-200 text-slate-500 hover:border-blue-200 hover:text-blue-600 cursor-pointer"
                 onClick={() => setViewDate((prev) => addMonths(prev, 1))}
                 aria-label="다음 달"
               >
@@ -653,7 +652,7 @@ const DatePopover = ({
                       ref={(node) => {
                         yearRefs.current[year] = node;
                       }}
-                      className={`flex w-full items-center justify-center px-3 py-2 text-sm font-medium transition-colors ${
+                      className={`flex w-full items-center justify-center px-3 py-2 text-sm font-medium transition-colors cursor-pointer ${
                         active ? "text-blue-600" : "text-slate-600 hover:text-slate-900"
                       }`}
                       onClick={() => setViewDate(new Date(year, viewDate.getMonth(), 1))}
@@ -673,7 +672,7 @@ const DatePopover = ({
                       ref={(node) => {
                         monthRefs.current[month] = node;
                       }}
-                      className={`flex w-full items-center justify-center px-3 py-2 text-sm font-medium transition-colors ${
+                      className={`flex w-full items-center justify-center px-3 py-2 text-sm font-medium transition-colors cursor-pointer ${
                         active ? "text-blue-600" : "text-slate-600 hover:text-slate-900"
                       }`}
                       onClick={() => setViewDate(new Date(viewDate.getFullYear(), month - 1, 1))}
@@ -703,7 +702,7 @@ const DatePopover = ({
                     <button
                       key={date.toISOString()}
                       type="button"
-                      className={`flex h-8 w-full items-center justify-center rounded-full transition-colors ${
+                      className={`flex h-8 w-full items-center justify-center rounded-full transition-colors cursor-pointer ${
                         isSelected
                           ? "bg-blue-600 text-white"
                           : isToday
@@ -829,7 +828,7 @@ const TimePopover = ({
     <div ref={wrapperRef} className="relative flex-none">
       <button
         type="button"
-        className="flex items-center gap-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#0f141a] px-3 py-1 text-[15px] font-medium text-[#111827] disabled:opacity-60 disabled:cursor-not-allowed"
+        className="flex items-center justify-center gap-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#0f141a] px-3 py-1 text-[15px] font-medium text-[#111827] disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
         onClick={() => {
           if (open) {
             if (closing) {
@@ -849,7 +848,6 @@ const TimePopover = ({
         <span className={value ? "" : "text-[#9CA3AF]"}>
           {value ? formatTimeLabel(value) : placeholder}
         </span>
-        <span className="text-slate-400">{icon}</span>
       </button>
       {open &&
         !disabled &&
@@ -878,7 +876,7 @@ const TimePopover = ({
                   key={option.value}
                   type="button"
                   ref={active ? selectedRef : null}
-                  className={`flex w-full items-center justify-center rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                  className={`flex w-full items-center justify-center rounded-lg px-3 py-2 text-sm font-medium transition-colors cursor-pointer ${
                     active ? "bg-blue-600 text-white" : "text-slate-700 hover:bg-slate-100"
                   }`}
                   onClick={() => {
@@ -1201,14 +1199,13 @@ export default function EventModal({
                 <div className="flex h-12 items-center px-4 py-2">
                   <span className="w-7 shrink-0 text-[14px] font-medium text-[#374151]">시작</span>
                   <label className="sr-only">시작 날짜</label>
-                  <div className="flex w-full items-center justify-end gap-2">
+                  <div className="flex items-center gap-2 ml-auto">
                     <DatePopover
                       label="시작 날짜"
                       value={form.startDate}
                       onChange={(value) => setForm((prev) => ({ ...prev, startDate: value }))}
                       disabled={isRecurring}
                       placeholder="날짜 선택"
-                      icon={<Calendar className="size-4" />}
                     />
                     {!form.allDay && (
                       <TimePopover
@@ -1219,7 +1216,6 @@ export default function EventModal({
                         }
                         disabled={isRecurring}
                         placeholder="시간 선택"
-                        icon={<Clock className="size-4" />}
                       />
                     )}
                   </div>
@@ -1228,14 +1224,13 @@ export default function EventModal({
                 <div className="flex h-12 items-center px-4 py-2">
                   <span className="w-7 shrink-0 text-[14px] font-medium text-[#374151]">종료</span>
                   <label className="sr-only">종료 날짜</label>
-                  <div className="flex w-full items-center justify-end gap-2">
+                  <div className="flex items-center gap-2 ml-auto">
                     <DatePopover
                       label="종료 날짜"
                       value={form.endDate}
                       onChange={(value) => setForm((prev) => ({ ...prev, endDate: value }))}
                       disabled={isRecurring}
                       placeholder="날짜 선택"
-                      icon={<Calendar className="size-4" />}
                     />
                     {!form.allDay && (
                       <TimePopover
@@ -1246,7 +1241,6 @@ export default function EventModal({
                         }
                         disabled={isRecurring}
                         placeholder="시간 선택"
-                        icon={<Clock className="size-4" />}
                       />
                     )}
                   </div>

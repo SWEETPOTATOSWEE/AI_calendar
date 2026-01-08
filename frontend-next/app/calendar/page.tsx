@@ -6,6 +6,19 @@ import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin from "@fullcalendar/interaction";
+import {
+  ActionIcon,
+  Button,
+  Divider,
+  Group,
+  Paper,
+  SegmentedControl,
+  SimpleGrid,
+  Stack,
+  Text,
+  TextInput,
+} from "@mantine/core";
+import { AnimatePresence, motion } from "motion/react";
 import "./fullcalendar.css";
 import EventModal from "./components/EventModal";
 import AiAssistantModal from "./components/AiAssistantModal";
@@ -40,7 +53,6 @@ import {
   MoreVertical,
   Plus,
   Search,
-  SlidersHorizontal,
   Sparkles,
   Undo2,
   Users,
@@ -344,36 +356,10 @@ function CalendarPageInner() {
   const { state, actions, useGoogle } = useCalendarData(rangeStart, rangeEnd);
   const undo = useUndoStack(() => actions.refresh(true));
   const undoCount = undo.stack.length;
-  const hasDraftFilters = useMemo(() => {
-    return (
-      searchQuery.trim().length > 0 ||
-      searchLocationQuery.trim().length > 0 ||
-      searchDescriptionQuery.trim().length > 0 ||
-      searchAttendeesQuery.trim().length > 0 ||
-      searchRange.start !== searchAppliedRange.start ||
-      searchRange.end !== searchAppliedRange.end ||
-      searchMatchMode !== searchAppliedMatchMode
-    );
-  }, [
-    searchQuery,
-    searchLocationQuery,
-    searchDescriptionQuery,
-    searchAttendeesQuery,
-    searchRange.start,
-    searchRange.end,
-    searchAppliedRange.start,
-    searchAppliedRange.end,
-    searchMatchMode,
-    searchAppliedMatchMode,
-  ]);
   const hasSearchInput = useMemo(() => {
-    return (
-      searchQuery.trim().length > 0 ||
-      searchLocationQuery.trim().length > 0 ||
-      searchDescriptionQuery.trim().length > 0 ||
-      searchAttendeesQuery.trim().length > 0
-    );
-  }, [searchQuery, searchLocationQuery, searchDescriptionQuery, searchAttendeesQuery]);
+    return searchQuery.trim().length > 0;
+  }, [searchQuery]);
+  const showAdvanced = searchAdvancedOpen && !searchAllEnabled;
   const buildSearchMatches = useCallback(
     ({
       titleQuery,
@@ -504,6 +490,11 @@ function CalendarPageInner() {
     setSearchRange(buildDefaultSearchRange(nowSnapshot));
   };
   const applySearchFilters = async (options?: { includeAll?: boolean }) => {
+    if (!hasSearchInput) {
+      setSearchIndex(null);
+      setSearchAllEnabled(false);
+      return;
+    }
     const includeAll = Boolean(options?.includeAll);
     const appliedRange = searchRange;
     let ensuredEvents: CalendarEvent[] | null = null;
@@ -553,7 +544,6 @@ function CalendarPageInner() {
       setSearchIndex(null);
       return;
     }
-    setSearchAdvancedOpen(false);
     const appliedRange = searchRange;
     let ensuredEvents: CalendarEvent[] | null = null;
     setIsSearching(true);
@@ -644,16 +634,15 @@ function CalendarPageInner() {
       actions.removeByIds(ids);
     },
   });
-
   useEffect(() => {
     if (searchOpen) {
       searchInputRef.current?.focus();
       setMobileMenuOpen(false);
-    } else {
-      setSearchIndex(null);
-      setSearchAllEnabled(false);
-      setSearchAdvancedOpen(false);
+      return;
     }
+    setSearchIndex(null);
+    setSearchAllEnabled(false);
+    setSearchAdvancedOpen(false);
   }, [searchOpen]);
 
   useEffect(() => {
@@ -1029,20 +1018,18 @@ function CalendarPageInner() {
             </div>
             <div className="flex items-center gap-2"></div>
           </div>
-          <div className="relative flex flex-1 items-center justify-end min-h-[44px]">
-            <div
-              className={`header-actions-layer flex flex-wrap items-center gap-3 justify-end ${
-                searchOpen ? "is-hidden" : "is-visible"
-              }`}
-              aria-hidden={searchOpen}
+          <div className="relative flex flex-1 items-center justify-end min-h-[56px]">
+            <motion.div
+              className="header-actions-layer flex flex-wrap items-center gap-3 justify-end"
+              animate={searchOpen ? { opacity: 0, y: 20 } : { opacity: 1, y: 0 }}
+              transition={{ duration: 0.24, ease: "easeOut" }}
+              style={{ pointerEvents: searchOpen ? "none" : "auto" }}
             >
               <div
                 className="relative hidden md:flex items-center bg-gray-100 dark:bg-gray-800 p-1 rounded-full mr-2 segmented-toggle"
                 style={viewToggleStyle}
               >
-                <span
-                  className="segmented-indicator"
-                >
+                <span className="segmented-indicator">
                   <span
                     key={view}
                     className="view-indicator-pulse block h-full w-full rounded-full bg-white dark:bg-gray-700 shadow-sm"
@@ -1078,14 +1065,15 @@ function CalendarPageInner() {
                     </span>
                   )}
                 </button>
-                <button
-                  className="flex items-center justify-center rounded-full size-9 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-slate-600 dark:text-slate-300"
-                  type="button"
+                <ActionIcon
+                  variant="light"
+                  size="lg"
+                  radius="xl"
                   onClick={() => setSearchOpen(true)}
-                  aria-label="일정 검색"
+                  aria-label="검색 열기"
                 >
                   <Search className="size-5" />
-                </button>
+                </ActionIcon>
                 <button
                   className="flex items-center justify-center rounded-full size-9 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-slate-600 dark:text-slate-300"
                   type="button"
@@ -1144,239 +1132,246 @@ function CalendarPageInner() {
                     "url('https://lh3.googleusercontent.com/aida-public/AB6AXuDtp4EN6aKO3e3qE7dZReqE5nVIXN_43sBCdsgWGm4dzvClBNxW2Pt1ibIGwyQGQMdAIBX_9RVDwfqDlnwBKi8NUIR8rfqDGSj3ORylu9O-CXp3AbsLY8YZ3mR-GbbYWBsxTQB71hnJnS4lk0cKSAhR2Mze8_hVjC0o-hEK8J-0fJFYlA65gMBrartXdJiV-A1yCzwWF3mFEhJe5idk641dS6JWo1bXrr9PhY-ZLclsGGcfXhRrdchRQLXlbMpMc3vMNQXkbvxka-4')",
                 }}
               ></div>
-            </div>
-            <div
-              className={`header-search-layer flex w-full items-center gap-2 ${
-                searchOpen ? "is-visible" : "is-hidden"
-              }`}
-              aria-hidden={!searchOpen}
-            >
-              <div className="flex w-full items-center gap-2">
-                <div className="relative w-full max-w-[420px] min-w-0 ml-auto">
-                  <div
-                    className={`flex items-center gap-2 border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#111418] px-3 py-2 ${
-                      searchAdvancedOpen && !searchAllEnabled
-                        ? "rounded-t-[22px] rounded-b-none border-b-0"
-                        : "rounded-full"
-                    }`}
-                  >
-                    <Search className="size-4 text-slate-400" />
-                    <input
-                      ref={searchInputRef}
-                      className="flex-1 bg-transparent text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none"
-                      placeholder="제목"
-                      value={searchQuery}
-                      onChange={(event) => setSearchQuery(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") void applySearchFilters();
-                        if (event.key === "Escape") setSearchOpen(false);
-                      }}
-                    />
-                    <button
-                      className="flex items-center justify-center rounded-full p-1 text-slate-700 dark:text-slate-200 hover:bg-gray-100 dark:hover:bg-gray-800"
-                      type="button"
-                      onClick={() => {
-                        if (searchAllEnabled) {
-                          setSearchAllEnabled(false);
-                          setSearchAdvancedOpen((prev) => !prev);
-                          return;
-                        }
-                        setSearchAllEnabled(false);
-                        setSearchAdvancedOpen((prev) => !prev);
-                      }}
-                      aria-expanded={searchAdvancedOpen}
-                      aria-label="고급 일정"
-                    >
-                      {searchAdvancedOpen ? (
-                        <ChevronUp className="size-4" />
-                      ) : (
-                        <ChevronDown className="size-4" />
-                      )}
-                      <span className="sr-only">고급 일정</span>
-                    </button>
-                  </div>
-                  {searchAdvancedOpen && !searchAllEnabled && (
-                    <div className="absolute left-0 right-0 top-full mt-0 w-full rounded-b-[22px] border border-gray-200 dark:border-gray-700 border-t-0 bg-white dark:bg-[#111418] px-4 pb-4 pt-4 shadow-lg whitespace-normal z-40">
-                      <div className="grid grid-cols-1 gap-3">
-                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                          <label className="flex flex-col gap-0.5">
-                            <span className="text-[11px] text-slate-500">시작일</span>
-                            <div className="relative">
-                              <Calendar className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-slate-400" />
-                              <input
-                                type="date"
-                                className="w-full rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#111418] pl-9 pr-3 py-2 text-sm text-slate-700 dark:text-slate-200"
-                                value={searchRange.start}
-                                onChange={(event) => setSearchRange((prev) => ({ ...prev, start: event.target.value }))}
-                              />
-                            </div>
-                          </label>
-                          <label className="flex flex-col gap-0.5">
-                            <span className="text-[11px] text-slate-500">종료일</span>
-                            <div className="relative">
-                              <Calendar className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-slate-400" />
-                              <input
-                                type="date"
-                                className="w-full rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#111418] pl-9 pr-3 py-2 text-sm text-slate-700 dark:text-slate-200"
-                                value={searchRange.end}
-                                onChange={(event) => setSearchRange((prev) => ({ ...prev, end: event.target.value }))}
-                              />
-                            </div>
-                          </label>
-                        </div>
-                        <div className="relative">
-                          <MapPin className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-slate-400" />
-                          <input
-                            className="w-full rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#111418] pl-9 pr-3 py-2 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none"
-                            placeholder="장소"
-                            value={searchLocationQuery}
-                            onChange={(event) => setSearchLocationQuery(event.target.value)}
-                          />
-                        </div>
-                        <div className="relative">
-                          <Users className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-slate-400" />
-                          <input
-                            className="w-full rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#111418] pl-9 pr-3 py-2 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none"
-                            placeholder="참석자"
-                            value={searchAttendeesQuery}
-                            onChange={(event) => setSearchAttendeesQuery(event.target.value)}
-                          />
-                        </div>
-                        <div className="relative">
-                          <FileText className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-slate-400" />
-                          <input
-                            className="w-full rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#111418] pl-9 pr-3 py-2 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none"
-                            placeholder="메모"
-                            value={searchDescriptionQuery}
-                            onChange={(event) => setSearchDescriptionQuery(event.target.value)}
-                          />
-                        </div>
-                      </div>
-                      <div className="mt-4 flex items-center gap-2 text-[11px] text-slate-500">
-                        <span>조건</span>
-                        <div className="inline-flex rounded-full border border-gray-200 dark:border-gray-700 overflow-hidden">
-                          <button
-                            className={`px-2.5 py-1 text-[11px] font-semibold ${
-                              searchMatchMode === "and"
-                                ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
-                                : "text-slate-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-gray-800"
-                            }`}
-                            type="button"
-                            onClick={() => setSearchMatchMode("and")}
-                            aria-pressed={searchMatchMode === "and"}
+            </motion.div>
+            <AnimatePresence initial={false}>
+              {searchOpen && (
+                <motion.div
+                  key="search-panel"
+                  className="absolute right-0 top-0 z-20 w-full max-w-[820px]"
+                  initial={{ opacity: 0, y: -16 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -12 }}
+                  transition={{ duration: 0.24, ease: "easeOut" }}
+                >
+                  <Paper shadow="md" radius="xl" p="sm" withBorder className="bg-white/95 dark:bg-[#111418]/95">
+                    <Stack gap="xs">
+                      <Group gap="xs" align="center" wrap="nowrap">
+                        <TextInput
+                          ref={searchInputRef}
+                          placeholder="제목"
+                          value={searchQuery}
+                          onChange={(event) => setSearchQuery(event.currentTarget.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") void applySearchFilters();
+                            if (event.key === "Escape") setSearchOpen(false);
+                          }}
+                          leftSection={<Search className="size-4" />}
+                          leftSectionPointerEvents="none"
+                          className="flex-1"
+                        />
+                        <ActionIcon
+                          variant="light"
+                          size="lg"
+                          radius="xl"
+                          onClick={() => {
+                            if (searchAllEnabled) {
+                              setSearchAllEnabled(false);
+                            }
+                            setSearchAdvancedOpen((prev) => !prev);
+                          }}
+                          aria-label="고급 검색"
+                        >
+                          {searchAdvancedOpen ? (
+                            <ChevronUp className="size-4" />
+                          ) : (
+                            <ChevronDown className="size-4" />
+                          )}
+                        </ActionIcon>
+                        <Button
+                          size="xs"
+                          radius="xl"
+                          loading={isSearching}
+                          onClick={() => void applySearchFilters()}
+                          disabled={!hasSearchInput}
+                        >
+                          찾기
+                        </Button>
+                        <Button
+                          size="xs"
+                          radius="xl"
+                          variant="light"
+                          onClick={() => void handleSearchAll()}
+                          disabled={!hasSearchInput}
+                        >
+                          모두 찾기
+                        </Button>
+                        <ActionIcon
+                          variant="subtle"
+                          size="lg"
+                          radius="xl"
+                          onClick={() => handleSearchStep("backward")}
+                          disabled={!canSearchBackward}
+                          aria-label="뒤로 찾기"
+                        >
+                          <ChevronLeft className="size-4" />
+                        </ActionIcon>
+                        <ActionIcon
+                          variant="subtle"
+                          size="lg"
+                          radius="xl"
+                          onClick={() => handleSearchStep("forward")}
+                          disabled={!canSearchForward}
+                          aria-label="앞으로 찾기"
+                        >
+                          <ChevronRight className="size-4" />
+                        </ActionIcon>
+                        <ActionIcon
+                          variant="subtle"
+                          size="lg"
+                          radius="xl"
+                          onClick={() => setSearchOpen(false)}
+                          aria-label="검색 닫기"
+                        >
+                          <X className="size-4" />
+                        </ActionIcon>
+                      </Group>
+                      <AnimatePresence initial={false}>
+                        {showAdvanced && (
+                          <motion.div
+                            key="search-advanced"
+                            initial={{ opacity: 0, y: -6 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -6 }}
+                            transition={{ duration: 0.2, ease: "easeOut" }}
                           >
-                            AND
-                          </button>
-                          <button
-                            className={`px-2.5 py-1 text-[11px] font-semibold ${
-                              searchMatchMode === "or"
-                                ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
-                                : "text-slate-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-gray-800"
-                            }`}
-                            type="button"
-                            onClick={() => setSearchMatchMode("or")}
-                            aria-pressed={searchMatchMode === "or"}
-                          >
-                            OR
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-                <button
-                  className="flex items-center gap-1 rounded-full px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
-                  type="button"
-                  onClick={() => void applySearchFilters()}
-                  disabled={isSearching || (!hasDraftFilters && !searchAllEnabled)}
-                >
-                  {isSearching ? "찾는 중" : "찾기"}
-                </button>
-                <button
-                  className="flex items-center gap-1 rounded-full px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
-                  type="button"
-                  onClick={() => void handleSearchAll()}
-                  disabled={!hasSearchInput}
-                >
-                  모두 찾기
-                </button>
-                <button
-                  className="flex items-center gap-1 rounded-full px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
-                  type="button"
-                  onClick={() => handleSearchStep("backward")}
-                  disabled={!canSearchBackward}
-                  aria-label="뒤로 찾기"
-                >
-                  <ChevronLeft className="size-4" />
-                </button>
-                <button
-                  className="flex items-center gap-1 rounded-full px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
-                  type="button"
-                  onClick={() => handleSearchStep("forward")}
-                  disabled={!canSearchForward}
-                  aria-label="앞으로 찾기"
-                >
-                  <ChevronRight className="size-4" />
-                </button>
-                <button
-                  className="flex items-center justify-center rounded-full size-9 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-slate-600 dark:text-slate-300"
-                  type="button"
-                  onClick={() => setSearchOpen(false)}
-                  aria-label="검색 닫기"
-                >
-                  <X className="size-5" />
-                </button>
-              </div>
-              </div>
-            </div>
+                            <Divider my="xs" />
+                            <Stack gap="xs">
+                              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
+                                <TextInput
+                                  type="date"
+                                  label="시작일"
+                                  value={searchRange.start}
+                                  onChange={(event) =>
+                                    setSearchRange((prev) => ({ ...prev, start: event.currentTarget.value }))
+                                  }
+                                  leftSection={<Calendar className="size-4" />}
+                                  leftSectionPointerEvents="none"
+                                />
+                                <TextInput
+                                  type="date"
+                                  label="종료일"
+                                  value={searchRange.end}
+                                  onChange={(event) =>
+                                    setSearchRange((prev) => ({ ...prev, end: event.currentTarget.value }))
+                                  }
+                                  leftSection={<Calendar className="size-4" />}
+                                  leftSectionPointerEvents="none"
+                                />
+                              </SimpleGrid>
+                              <TextInput
+                                label="장소"
+                                value={searchLocationQuery}
+                                onChange={(event) => setSearchLocationQuery(event.currentTarget.value)}
+                                leftSection={<MapPin className="size-4" />}
+                                leftSectionPointerEvents="none"
+                              />
+                              <TextInput
+                                label="참석자"
+                                value={searchAttendeesQuery}
+                                onChange={(event) => setSearchAttendeesQuery(event.currentTarget.value)}
+                                leftSection={<Users className="size-4" />}
+                                leftSectionPointerEvents="none"
+                              />
+                              <TextInput
+                                label="메모"
+                                value={searchDescriptionQuery}
+                                onChange={(event) => setSearchDescriptionQuery(event.currentTarget.value)}
+                                leftSection={<FileText className="size-4" />}
+                                leftSectionPointerEvents="none"
+                              />
+                              <Group gap="xs" align="center">
+                                <Text size="xs" c="dimmed">조건</Text>
+                                <SegmentedControl
+                                  size="xs"
+                                  value={searchMatchMode}
+                                  onChange={(value) => setSearchMatchMode(value as "and" | "or")}
+                                  data={[
+                                    { label: "AND", value: "and" },
+                                    { label: "OR", value: "or" },
+                                  ]}
+                                />
+                              </Group>
+                            </Stack>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </Stack>
+                  </Paper>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
+        </div>
         {searchAllEnabled && (
           <div className="absolute left-0 right-0 top-full mt-2 whitespace-normal z-50">
             <div className="px-6">
-              <div className="w-full max-w-[500px] ml-auto rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#111418] px-4 py-3 shadow-lg">
-                <div className="flex items-center text-xs text-slate-600 dark:text-slate-300">
-                  <span className="font-semibold">모두 찾기 결과</span>
-                  <span className="ml-auto text-slate-500">결과 {searchMatches.length}개</span>
-                  <button
-                    className="ml-2 flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold text-slate-600 dark:text-slate-200 hover:bg-gray-100 dark:hover:bg-gray-800"
-                    type="button"
-                    onClick={() => setSearchAllEnabled(false)}
-                    aria-label="모두 찾기 닫기"
-                  >
-                    <X className="size-3.5" />
-                    닫기
-                  </button>
-                </div>
-                <div className="mt-3 max-h-[40vh] overflow-y-auto space-y-2 pr-1">
+              <Paper shadow="md" radius="lg" p="sm" withBorder className="bg-white/95 dark:bg-[#111418]/95">
+                <Group justify="space-between" align="center" mb="xs">
+                  <Text size="xs" fw={600}>
+                    모두 찾기 결과
+                  </Text>
+                  <Group gap="xs" align="center">
+                    <Text size="xs" c="dimmed">
+                      결과 {searchMatches.length}개
+                    </Text>
+                    <ActionIcon
+                      variant="subtle"
+                      size="sm"
+                      radius="xl"
+                      onClick={() => setSearchAllEnabled(false)}
+                      aria-label="모두 찾기 닫기"
+                    >
+                      <X className="size-3.5" />
+                    </ActionIcon>
+                  </Group>
+                </Group>
+                <Stack gap="xs" className="max-h-[40vh] overflow-y-auto pr-1">
                   {searchMatches.length === 0 ? (
-                    <p className="text-xs text-slate-400">모두 찾기 결과가 없습니다.</p>
+                    <Text size="xs" c="dimmed">
+                      모두 찾기 결과가 없습니다.
+                    </Text>
                   ) : (
-                    searchMatches.map(({ event }) => (
-                      <div
+                    searchMatches.map(({ event, date }, index) => (
+                      <Paper
                         key={`${event.id}-${event.start}`}
-                        className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#111418] px-3 py-2"
+                        component="button"
+                        type="button"
+                        withBorder
+                        radius="md"
+                        p="xs"
+                        className="w-full text-left"
+                        onClick={() => {
+                          setSearchIndex(index);
+                          goToSearchDate(date);
+                        }}
                       >
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                        <Stack gap={2}>
+                          <Text size="sm" fw={600}>
                             {event.title}
-                          </p>
-                        </div>
-                        <p className="text-xs text-slate-500 flex items-center gap-1">
-                          <Calendar className="size-3.5 text-slate-400" />
-                          {formatSearchResultMeta(event)}
-                        </p>
-                        <p className="text-xs text-slate-500 flex items-center gap-1">
-                          <Clock className="size-3.5 text-slate-400" />
-                          {formatSearchResultTime(event)}
-                        </p>
-                        {event.location && (
-                          <p className="text-xs text-slate-500">{event.location}</p>
-                        )}
-                      </div>
+                          </Text>
+                          <Group gap="xs">
+                            <Calendar className="size-3.5 text-slate-400" />
+                            <Text size="xs" c="dimmed">
+                              {formatSearchResultMeta(event)}
+                            </Text>
+                          </Group>
+                          <Group gap="xs">
+                            <Clock className="size-3.5 text-slate-400" />
+                            <Text size="xs" c="dimmed">
+                              {formatSearchResultTime(event)}
+                            </Text>
+                          </Group>
+                          {event.location && (
+                            <Text size="xs" c="dimmed">
+                              {event.location}
+                            </Text>
+                          )}
+                        </Stack>
+                      </Paper>
                     ))
                   )}
-                </div>
-              </div>
+                </Stack>
+              </Paper>
             </div>
           </div>
         )}
