@@ -1,24 +1,12 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin from "@fullcalendar/interaction";
-import {
-  ActionIcon,
-  Button,
-  Divider,
-  Group,
-  Paper,
-  SegmentedControl,
-  SimpleGrid,
-  Stack,
-  Text,
-  TextInput,
-} from "@mantine/core";
-import { AnimatePresence, motion } from "motion/react";
+import { motion } from "motion/react";
 import "./fullcalendar.css";
 import EventModal from "./components/EventModal";
 import AiAssistantModal from "./components/AiAssistantModal";
@@ -44,19 +32,11 @@ import { useUndoStack } from "./lib/use-undo";
 import {
   ChevronLeft,
   ChevronRight,
-  ChevronDown,
-  ChevronUp,
-  Calendar,
   Clock,
-  FileText,
-  MapPin,
   MoreVertical,
   Plus,
-  Search,
   Sparkles,
   Undo2,
-  Users,
-  X,
 } from "lucide-react";
 
 type ViewMode = "month" | "week" | "day";
@@ -257,20 +237,6 @@ const buildAiDraftEvent = (item: AddPreviewItem, fallbackDate: Date): CalendarEv
   };
 };
 
-const buildDefaultSearchRange = (baseDate: Date) => {
-  const start = new Date(baseDate.getFullYear() - 1, baseDate.getMonth(), baseDate.getDate());
-  const end = new Date(baseDate.getFullYear() + 1, baseDate.getMonth(), baseDate.getDate());
-  return { start: toISODate(start), end: toISODate(end) };
-};
-
-let cachedSearchRange: { start: string; end: string } | null = null;
-let cachedAppliedSearchRange: { start: string; end: string } | null = null;
-
-const getInitialSearchRange = (baseDate: Date) =>
-  cachedSearchRange ?? buildDefaultSearchRange(baseDate);
-const getInitialAppliedSearchRange = (baseDate: Date) =>
-  cachedAppliedSearchRange ?? buildDefaultSearchRange(baseDate);
-
 function CalendarPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -281,24 +247,7 @@ function CalendarPageInner() {
   const [aiDraftEvent, setAiDraftEvent] = useState<CalendarEvent | null>(null);
   const [aiDraftIndex, setAiDraftIndex] = useState<number | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
   const [nowSnapshot] = useState(() => new Date());
-  const [searchIndex, setSearchIndex] = useState<number | null>(null);
-  const [searchAdvancedOpen, setSearchAdvancedOpen] = useState(false);
-  const [searchLocationQuery, setSearchLocationQuery] = useState("");
-  const [searchDescriptionQuery, setSearchDescriptionQuery] = useState("");
-  const [searchAttendeesQuery, setSearchAttendeesQuery] = useState("");
-  const [searchRange, setSearchRange] = useState(() => getInitialSearchRange(nowSnapshot));
-  const [searchMatchMode, setSearchMatchMode] = useState<"and" | "or">("and");
-  const [searchAppliedQuery, setSearchAppliedQuery] = useState("");
-  const [searchAppliedLocation, setSearchAppliedLocation] = useState("");
-  const [searchAppliedDescription, setSearchAppliedDescription] = useState("");
-  const [searchAppliedAttendees, setSearchAppliedAttendees] = useState("");
-  const [searchAppliedRange, setSearchAppliedRange] = useState(() => getInitialAppliedSearchRange(nowSnapshot));
-  const [searchAppliedMatchMode, setSearchAppliedMatchMode] = useState<"and" | "or">("and");
-  const [searchAllEnabled, setSearchAllEnabled] = useState(false);
-  const [isSearching, setIsSearching] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarScrollable, setSidebarScrollable] = useState(false);
   const [mobileScrollable, setMobileScrollable] = useState(false);
@@ -311,7 +260,6 @@ function CalendarPageInner() {
   const monthCalendarRef = useRef<FullCalendar | null>(null);
   const miniCalendarRef = useRef<FullCalendar | null>(null);
   const mobileMenuRef = useRef<HTMLDivElement | null>(null);
-  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const viewParam = searchParams.get("view");
   const view: ViewMode = viewParam === "week" || viewParam === "day" ? viewParam : "month";
@@ -356,270 +304,6 @@ function CalendarPageInner() {
   const { state, actions, useGoogle } = useCalendarData(rangeStart, rangeEnd);
   const undo = useUndoStack(() => actions.refresh(true));
   const undoCount = undo.stack.length;
-  const hasSearchInput = useMemo(() => {
-    return searchQuery.trim().length > 0;
-  }, [searchQuery]);
-  const showAdvanced = searchAdvancedOpen && !searchAllEnabled;
-  const buildSearchMatches = useCallback(
-    ({
-      titleQuery,
-      locationQuery,
-      descriptionQuery,
-      attendeesQuery,
-      range,
-      includeAll,
-      matchMode,
-      events,
-    }: {
-      titleQuery: string;
-      locationQuery: string;
-      descriptionQuery: string;
-      attendeesQuery: string;
-      range: { start: string; end: string };
-      includeAll: boolean;
-      matchMode: "and" | "or";
-      events?: CalendarEvent[];
-    }) => {
-      const title = titleQuery.trim().toLowerCase();
-      const location = locationQuery.trim().toLowerCase();
-      const description = descriptionQuery.trim().toLowerCase();
-      const attendees = attendeesQuery.trim().toLowerCase();
-      const hasFilters =
-        title.length > 0 ||
-        location.length > 0 ||
-        description.length > 0 ||
-        attendees.length > 0;
-      if (!hasFilters && !includeAll) return [];
-      const parseDateOnly = (value: string) => {
-        const [year, month, day] = value.split("-").map(Number);
-        if (!year || !month || !day) return null;
-        return new Date(year, month - 1, day);
-      };
-      const rangeStartDate = parseDateOnly(range.start);
-      const rangeEndDate = parseDateOnly(range.end);
-      if (!rangeStartDate || !rangeEndDate) return [];
-      const sourceEvents = events ?? state.allEvents;
-      return sourceEvents
-        .map((event) => {
-          const date = parseISODateTime(event.start);
-          if (!date) return null;
-          const dateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-          if (dateOnly < rangeStartDate || dateOnly > rangeEndDate) return null;
-          const titleMatch = title ? event.title.toLowerCase().includes(title) : false;
-          const locationMatch = location
-            ? (event.location || "").toLowerCase().includes(location)
-            : false;
-          const descriptionMatch = description
-            ? (event.description || "").toLowerCase().includes(description)
-            : false;
-          const attendeesMatch = attendees
-            ? (event.attendees || []).join(" ").toLowerCase().includes(attendees)
-            : false;
-          const matches =
-            !hasFilters
-              ? true
-              : matchMode === "or"
-              ? titleMatch || locationMatch || descriptionMatch || attendeesMatch
-              : (!title || titleMatch) &&
-                (!location || locationMatch) &&
-                (!description || descriptionMatch) &&
-                (!attendees || attendeesMatch);
-          if (!matches) return null;
-          return { event, date };
-        })
-        .filter(
-          (value): value is { event: CalendarEvent; date: Date } =>
-            value !== null
-        )
-        .sort((a, b) => a.date.getTime() - b.date.getTime());
-    },
-    [state.allEvents]
-  );
-  const searchMatches = useMemo(() => {
-    return buildSearchMatches({
-      titleQuery: searchAppliedQuery,
-      locationQuery: searchAppliedLocation,
-      descriptionQuery: searchAppliedDescription,
-      attendeesQuery: searchAppliedAttendees,
-      range: searchAppliedRange,
-      includeAll: searchAllEnabled,
-      matchMode: searchAppliedMatchMode,
-    });
-  }, [
-    buildSearchMatches,
-    searchAppliedQuery,
-    searchAppliedLocation,
-    searchAppliedDescription,
-    searchAppliedAttendees,
-    searchAppliedRange,
-    searchAllEnabled,
-    searchAppliedMatchMode,
-  ]);
-  const findSearchIndexInMatches = (
-    matches: { event: CalendarEvent; date: Date }[],
-    direction: "forward" | "backward",
-    baseDate: Date,
-    strict: boolean
-  ) => {
-    const baseKey = toISODate(baseDate);
-    if (direction === "forward") {
-      for (let i = 0; i < matches.length; i += 1) {
-        const matchKey = toISODate(matches[i].date);
-        if (strict ? matchKey > baseKey : matchKey >= baseKey) return i;
-      }
-      return null;
-    }
-    for (let i = matches.length - 1; i >= 0; i -= 1) {
-      const matchKey = toISODate(matches[i].date);
-      if (strict ? matchKey < baseKey : matchKey <= baseKey) return i;
-    }
-    return null;
-  };
-  const findSearchIndex = (
-    direction: "forward" | "backward",
-    baseDate: Date,
-    strict: boolean
-  ) => findSearchIndexInMatches(searchMatches, direction, baseDate, strict);
-  const goToSearchDate = (date: Date) => {
-    const target = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-    monthCalendarRef.current?.getApi().gotoDate(target);
-    setSelectedDate(target);
-    setCurrentMonth(startOfMonth(target));
-  };
-  const resetSearchRange = () => {
-    setSearchRange(buildDefaultSearchRange(nowSnapshot));
-  };
-  const applySearchFilters = async (options?: { includeAll?: boolean }) => {
-    if (!hasSearchInput) {
-      setSearchIndex(null);
-      setSearchAllEnabled(false);
-      return;
-    }
-    const includeAll = Boolean(options?.includeAll);
-    const appliedRange = searchRange;
-    let ensuredEvents: CalendarEvent[] | null = null;
-    setIsSearching(true);
-    try {
-      ensuredEvents = await actions.ensureRangeLoaded(appliedRange.start, appliedRange.end);
-    } catch {
-      // ignore fetch errors during search range expansion
-    } finally {
-      setIsSearching(false);
-    }
-    const matches = buildSearchMatches({
-      titleQuery: searchQuery,
-      locationQuery: searchLocationQuery,
-      descriptionQuery: searchDescriptionQuery,
-      attendeesQuery: searchAttendeesQuery,
-      range: appliedRange,
-      includeAll,
-      matchMode: searchMatchMode,
-      events: ensuredEvents ?? state.allEvents,
-    });
-    setSearchAppliedQuery(searchQuery);
-    setSearchAppliedLocation(searchLocationQuery);
-    setSearchAppliedDescription(searchDescriptionQuery);
-    setSearchAppliedAttendees(searchAttendeesQuery);
-    setSearchAppliedRange(appliedRange);
-    setSearchAppliedMatchMode(searchMatchMode);
-    setSearchAllEnabled(includeAll);
-    if (matches.length === 0) {
-      setSearchIndex(null);
-      return;
-    }
-    let targetIndex = findSearchIndexInMatches(matches, "forward", nowSnapshot, false);
-    if (targetIndex === null) {
-      targetIndex = findSearchIndexInMatches(matches, "backward", nowSnapshot, false);
-    }
-    if (targetIndex === null) {
-      setSearchIndex(null);
-      return;
-    }
-    setSearchIndex(targetIndex);
-    goToSearchDate(matches[targetIndex].date);
-  };
-  const handleSearchAll = async () => {
-    if (!hasSearchInput) {
-      setSearchAllEnabled(false);
-      setSearchIndex(null);
-      return;
-    }
-    const appliedRange = searchRange;
-    let ensuredEvents: CalendarEvent[] | null = null;
-    setIsSearching(true);
-    try {
-      ensuredEvents = await actions.ensureRangeLoaded(appliedRange.start, appliedRange.end);
-    } catch {
-      // ignore fetch errors during search range expansion
-    } finally {
-      setIsSearching(false);
-    }
-    const matches = buildSearchMatches({
-      titleQuery: searchQuery,
-      locationQuery: searchLocationQuery,
-      descriptionQuery: searchDescriptionQuery,
-      attendeesQuery: searchAttendeesQuery,
-      range: appliedRange,
-      includeAll: true,
-      matchMode: searchMatchMode,
-      events: ensuredEvents ?? state.allEvents,
-    });
-    setSearchAppliedQuery(searchQuery);
-    setSearchAppliedLocation(searchLocationQuery);
-    setSearchAppliedDescription(searchDescriptionQuery);
-    setSearchAppliedAttendees(searchAttendeesQuery);
-    setSearchAppliedRange(appliedRange);
-    setSearchAppliedMatchMode(searchMatchMode);
-    setSearchAllEnabled(true);
-    if (matches.length === 0) {
-      setSearchIndex(null);
-      return;
-    }
-    let targetIndex = findSearchIndexInMatches(matches, "forward", nowSnapshot, false);
-    if (targetIndex === null) {
-      targetIndex = findSearchIndexInMatches(matches, "backward", nowSnapshot, false);
-    }
-    if (targetIndex === null) {
-      setSearchIndex(null);
-      return;
-    }
-    setSearchIndex(targetIndex);
-    goToSearchDate(matches[targetIndex].date);
-  };
-  const formatSearchResultMeta = (event: CalendarEvent) => {
-    const startDate = parseISODateTime(event.start);
-    if (!startDate) return "";
-    return formatLongDate(startDate);
-  };
-  const formatSearchResultTime = (event: CalendarEvent) => {
-    if (event.all_day) return "종일";
-    return formatTimeRange(event.start, event.end);
-  };
-  const handleSearchStep = (direction: "forward" | "backward") => {
-    if (searchMatches.length === 0) return;
-    const baseDate =
-      searchIndex === null ? nowSnapshot : searchMatches[searchIndex]?.date;
-    if (!baseDate) return;
-    const strict = searchIndex !== null;
-    const targetIndex = findSearchIndex(direction, baseDate, strict);
-    if (targetIndex === null) return;
-    setSearchIndex(targetIndex);
-    goToSearchDate(searchMatches[targetIndex].date);
-  };
-  const canSearchForward =
-    searchMatches.length > 0 &&
-    findSearchIndex(
-      "forward",
-      searchIndex === null ? nowSnapshot : searchMatches[searchIndex]?.date || nowSnapshot,
-      searchIndex !== null
-    ) !== null;
-  const canSearchBackward =
-    searchMatches.length > 0 &&
-    findSearchIndex(
-      "backward",
-      searchIndex === null ? nowSnapshot : searchMatches[searchIndex]?.date || nowSnapshot,
-      searchIndex !== null
-    ) !== null;
   const ai = useAiAssistant({
     onApplied: actions.refresh,
     onAddApplied: (events) => {
@@ -634,32 +318,6 @@ function CalendarPageInner() {
       actions.removeByIds(ids);
     },
   });
-  useEffect(() => {
-    if (searchOpen) {
-      searchInputRef.current?.focus();
-      setMobileMenuOpen(false);
-      return;
-    }
-    setSearchIndex(null);
-    setSearchAllEnabled(false);
-    setSearchAdvancedOpen(false);
-  }, [searchOpen]);
-
-  useEffect(() => {
-    if (searchAllEnabled) {
-      setSearchAdvancedOpen(false);
-    }
-  }, [searchAllEnabled]);
-
-  useEffect(() => {
-    cachedSearchRange = searchRange;
-  }, [searchRange]);
-
-  useEffect(() => {
-    cachedAppliedSearchRange = searchAppliedRange;
-  }, [searchAppliedRange]);
-
-
   const handleCreate = async (payload: Parameters<typeof actions.create>[0]) => {
     const created = await actions.create(payload);
     if (created) undo.record([created]);
@@ -1019,12 +677,7 @@ function CalendarPageInner() {
             <div className="flex items-center gap-2"></div>
           </div>
           <div className="relative flex flex-1 items-center justify-end min-h-[56px]">
-            <motion.div
-              className="header-actions-layer flex flex-wrap items-center gap-3 justify-end"
-              animate={searchOpen ? { opacity: 0, y: 20 } : { opacity: 1, y: 0 }}
-              transition={{ duration: 0.24, ease: "easeOut" }}
-              style={{ pointerEvents: searchOpen ? "none" : "auto" }}
-            >
+            <motion.div className="header-actions-layer flex flex-wrap items-center gap-3 justify-end">
               <div
                 className="relative hidden md:flex items-center bg-gray-100 dark:bg-gray-800 p-1 rounded-full mr-2 segmented-toggle"
                 style={viewToggleStyle}
@@ -1065,15 +718,6 @@ function CalendarPageInner() {
                     </span>
                   )}
                 </button>
-                <ActionIcon
-                  variant="light"
-                  size="lg"
-                  radius="xl"
-                  onClick={() => setSearchOpen(true)}
-                  aria-label="검색 열기"
-                >
-                  <Search className="size-5" />
-                </ActionIcon>
                 <button
                   className="flex items-center justify-center rounded-full size-9 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-slate-600 dark:text-slate-300"
                   type="button"
@@ -1133,248 +777,8 @@ function CalendarPageInner() {
                 }}
               ></div>
             </motion.div>
-            <AnimatePresence initial={false}>
-              {searchOpen && (
-                <motion.div
-                  key="search-panel"
-                  className="absolute right-0 top-0 z-20 w-full max-w-[820px]"
-                  initial={{ opacity: 0, y: -16 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -12 }}
-                  transition={{ duration: 0.24, ease: "easeOut" }}
-                >
-                  <Paper shadow="md" radius="xl" p="sm" withBorder className="bg-white/95 dark:bg-[#111418]/95">
-                    <Stack gap="xs">
-                      <Group gap="xs" align="center" wrap="nowrap">
-                        <TextInput
-                          ref={searchInputRef}
-                          placeholder="제목"
-                          value={searchQuery}
-                          onChange={(event) => setSearchQuery(event.currentTarget.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter") void applySearchFilters();
-                            if (event.key === "Escape") setSearchOpen(false);
-                          }}
-                          leftSection={<Search className="size-4" />}
-                          leftSectionPointerEvents="none"
-                          className="flex-1"
-                        />
-                        <ActionIcon
-                          variant="light"
-                          size="lg"
-                          radius="xl"
-                          onClick={() => {
-                            if (searchAllEnabled) {
-                              setSearchAllEnabled(false);
-                            }
-                            setSearchAdvancedOpen((prev) => !prev);
-                          }}
-                          aria-label="고급 검색"
-                        >
-                          {searchAdvancedOpen ? (
-                            <ChevronUp className="size-4" />
-                          ) : (
-                            <ChevronDown className="size-4" />
-                          )}
-                        </ActionIcon>
-                        <Button
-                          size="xs"
-                          radius="xl"
-                          loading={isSearching}
-                          onClick={() => void applySearchFilters()}
-                          disabled={!hasSearchInput}
-                        >
-                          찾기
-                        </Button>
-                        <Button
-                          size="xs"
-                          radius="xl"
-                          variant="light"
-                          onClick={() => void handleSearchAll()}
-                          disabled={!hasSearchInput}
-                        >
-                          모두 찾기
-                        </Button>
-                        <ActionIcon
-                          variant="subtle"
-                          size="lg"
-                          radius="xl"
-                          onClick={() => handleSearchStep("backward")}
-                          disabled={!canSearchBackward}
-                          aria-label="뒤로 찾기"
-                        >
-                          <ChevronLeft className="size-4" />
-                        </ActionIcon>
-                        <ActionIcon
-                          variant="subtle"
-                          size="lg"
-                          radius="xl"
-                          onClick={() => handleSearchStep("forward")}
-                          disabled={!canSearchForward}
-                          aria-label="앞으로 찾기"
-                        >
-                          <ChevronRight className="size-4" />
-                        </ActionIcon>
-                        <ActionIcon
-                          variant="subtle"
-                          size="lg"
-                          radius="xl"
-                          onClick={() => setSearchOpen(false)}
-                          aria-label="검색 닫기"
-                        >
-                          <X className="size-4" />
-                        </ActionIcon>
-                      </Group>
-                      <AnimatePresence initial={false}>
-                        {showAdvanced && (
-                          <motion.div
-                            key="search-advanced"
-                            initial={{ opacity: 0, y: -6 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: -6 }}
-                            transition={{ duration: 0.2, ease: "easeOut" }}
-                          >
-                            <Divider my="xs" />
-                            <Stack gap="xs">
-                              <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
-                                <TextInput
-                                  type="date"
-                                  label="시작일"
-                                  value={searchRange.start}
-                                  onChange={(event) =>
-                                    setSearchRange((prev) => ({ ...prev, start: event.currentTarget.value }))
-                                  }
-                                  leftSection={<Calendar className="size-4" />}
-                                  leftSectionPointerEvents="none"
-                                />
-                                <TextInput
-                                  type="date"
-                                  label="종료일"
-                                  value={searchRange.end}
-                                  onChange={(event) =>
-                                    setSearchRange((prev) => ({ ...prev, end: event.currentTarget.value }))
-                                  }
-                                  leftSection={<Calendar className="size-4" />}
-                                  leftSectionPointerEvents="none"
-                                />
-                              </SimpleGrid>
-                              <TextInput
-                                label="장소"
-                                value={searchLocationQuery}
-                                onChange={(event) => setSearchLocationQuery(event.currentTarget.value)}
-                                leftSection={<MapPin className="size-4" />}
-                                leftSectionPointerEvents="none"
-                              />
-                              <TextInput
-                                label="참석자"
-                                value={searchAttendeesQuery}
-                                onChange={(event) => setSearchAttendeesQuery(event.currentTarget.value)}
-                                leftSection={<Users className="size-4" />}
-                                leftSectionPointerEvents="none"
-                              />
-                              <TextInput
-                                label="메모"
-                                value={searchDescriptionQuery}
-                                onChange={(event) => setSearchDescriptionQuery(event.currentTarget.value)}
-                                leftSection={<FileText className="size-4" />}
-                                leftSectionPointerEvents="none"
-                              />
-                              <Group gap="xs" align="center">
-                                <Text size="xs" c="dimmed">조건</Text>
-                                <SegmentedControl
-                                  size="xs"
-                                  value={searchMatchMode}
-                                  onChange={(value) => setSearchMatchMode(value as "and" | "or")}
-                                  data={[
-                                    { label: "AND", value: "and" },
-                                    { label: "OR", value: "or" },
-                                  ]}
-                                />
-                              </Group>
-                            </Stack>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </Stack>
-                  </Paper>
-                </motion.div>
-              )}
-            </AnimatePresence>
           </div>
         </div>
-        {searchAllEnabled && (
-          <div className="absolute left-0 right-0 top-full mt-2 whitespace-normal z-50">
-            <div className="px-6">
-              <Paper shadow="md" radius="lg" p="sm" withBorder className="bg-white/95 dark:bg-[#111418]/95">
-                <Group justify="space-between" align="center" mb="xs">
-                  <Text size="xs" fw={600}>
-                    모두 찾기 결과
-                  </Text>
-                  <Group gap="xs" align="center">
-                    <Text size="xs" c="dimmed">
-                      결과 {searchMatches.length}개
-                    </Text>
-                    <ActionIcon
-                      variant="subtle"
-                      size="sm"
-                      radius="xl"
-                      onClick={() => setSearchAllEnabled(false)}
-                      aria-label="모두 찾기 닫기"
-                    >
-                      <X className="size-3.5" />
-                    </ActionIcon>
-                  </Group>
-                </Group>
-                <Stack gap="xs" className="max-h-[40vh] overflow-y-auto pr-1">
-                  {searchMatches.length === 0 ? (
-                    <Text size="xs" c="dimmed">
-                      모두 찾기 결과가 없습니다.
-                    </Text>
-                  ) : (
-                    searchMatches.map(({ event, date }, index) => (
-                      <Paper
-                        key={`${event.id}-${event.start}`}
-                        component="button"
-                        type="button"
-                        withBorder
-                        radius="md"
-                        p="xs"
-                        className="w-full text-left"
-                        onClick={() => {
-                          setSearchIndex(index);
-                          goToSearchDate(date);
-                        }}
-                      >
-                        <Stack gap={2}>
-                          <Text size="sm" fw={600}>
-                            {event.title}
-                          </Text>
-                          <Group gap="xs">
-                            <Calendar className="size-3.5 text-slate-400" />
-                            <Text size="xs" c="dimmed">
-                              {formatSearchResultMeta(event)}
-                            </Text>
-                          </Group>
-                          <Group gap="xs">
-                            <Clock className="size-3.5 text-slate-400" />
-                            <Text size="xs" c="dimmed">
-                              {formatSearchResultTime(event)}
-                            </Text>
-                          </Group>
-                          {event.location && (
-                            <Text size="xs" c="dimmed">
-                              {event.location}
-                            </Text>
-                          )}
-                        </Stack>
-                      </Paper>
-                    ))
-                  )}
-                </Stack>
-              </Paper>
-            </div>
-          </div>
-        )}
       </header>
 
       <main
