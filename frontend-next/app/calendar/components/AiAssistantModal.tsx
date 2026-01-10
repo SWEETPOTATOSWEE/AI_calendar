@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type PointerEvent } from "react";
 import {
   ArrowUp,
   Calendar,
   Check,
   Clock,
-  Image,
+  Image as ImageIcon,
   RefreshCcw,
   MapPin,
   Pencil,
@@ -14,7 +14,7 @@ import {
   Rabbit,
   RotateCcw,
   Sparkles,
-  StopCircle,
+  Square,
   Trash2,
   Turtle,
   X,
@@ -26,6 +26,7 @@ import {
   formatRecurrenceTimeLabel,
 } from "../lib/recurrence-summary";
 import { useAiAssistant, type AddPreviewItem } from "../lib/use-ai-assistant";
+import { DatePopover } from "./EventModal";
 
 export type AiAssistantModalProps = {
   assistant: ReturnType<typeof useAiAssistant>;
@@ -50,7 +51,11 @@ const addDays = (date: Date, days: number) => {
   next.setDate(next.getDate() + days);
   return next;
 };
-const EMPTY_MESSAGE = "이곳에 일정을 입력하면 캘린더에 추가할 수 있어요.";
+const PLACEHOLDER_TEXT = {
+  add: "어떤 일정을 추가할까요?",
+  delete: "어떤 일정을 삭제할까요?",
+} as const;
+const INPUT_ACTIONS = [{ type: "image", label: "이미지 추가" }] as const;
 
 const buildSnapshot = (assistant: ReturnType<typeof useAiAssistant>) => ({
   mode: assistant.mode,
@@ -113,20 +118,22 @@ export default function AiAssistantModal({ assistant, onEditAddItem }: AiAssista
   const conversation = safeArray(view.conversation);
   const selectedAddCount = addItems.filter((_, index) => view.selectedAddItems[index]).length;
   const selectedDeleteCount = deleteGroups.filter((group) => view.selectedDeleteGroups[group.group_key]).length;
-  const inputRef = useRef<HTMLTextAreaElement | null>(null);
-  const [isMultiline, setIsMultiline] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [rangeOpen, setRangeOpen] = useState(false);
+  const [imagePreview, setImagePreview] = useState<{ src: string; alt: string } | null>(null);
+  const [focused, setFocused] = useState(false);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+  const dragStartRef = useRef({ x: 0, y: 0 });
+  const dragOriginRef = useRef({ x: 0, y: 0 });
+  const rangeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const rangePopoverRef = useRef<HTMLDivElement | null>(null);
   const isThinking = assistant.progressLabel === "생각 중";
   const hasPanels = Boolean(view.addPreview || view.deletePreview || assistant.progressLabel || view.error);
   const showConversation = conversation.length > 0 || hasPanels;
-  const showEmptyState = assistant.open && !showConversation;
-  const emptyMessage = EMPTY_MESSAGE;
-  const startDateValue = parseLocalISODate(view.startDate);
-  const endDateValue = parseLocalISODate(view.endDate);
-  const minEndDate = startDateValue ? toLocalISODate(addDays(startDateValue, 1)) : "";
-  const maxStartDate = endDateValue ? toLocalISODate(addDays(endDateValue, -1)) : "";
-
-  const handleStartDateChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const nextStart = event.target.value;
+  const handleStartDateChange = (nextStart: string) => {
     assistant.setStartDate(nextStart);
     if (!nextStart) return;
     const start = parseLocalISODate(nextStart);
@@ -137,8 +144,7 @@ export default function AiAssistantModal({ assistant, onEditAddItem }: AiAssista
     }
   };
 
-  const handleEndDateChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const nextEnd = event.target.value;
+  const handleEndDateChange = (nextEnd: string) => {
     assistant.setEndDate(nextEnd);
     if (!nextEnd) return;
     const end = parseLocalISODate(nextEnd);
@@ -148,65 +154,171 @@ export default function AiAssistantModal({ assistant, onEditAddItem }: AiAssista
       assistant.setStartDate(toLocalISODate(addDays(end, -1)));
     }
   };
-
-  const resizeTextarea = (value: string) => {
-    const el = inputRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    const newHeight = Math.min(Math.max(el.scrollHeight, 24), 200);
-    el.style.height = `${newHeight}px`;
-    setIsMultiline(newHeight > 60 || value.includes("\n"));
+  const handleImagePreview = (src: string, alt: string) => {
+    setImagePreview({ src, alt });
   };
 
   useEffect(() => {
-    resizeTextarea(view.text);
+    if (view.mode === "delete") return;
+    setRangeOpen(false);
+  }, [view.mode]);
+
+  useEffect(() => {
+    if (!rangeOpen) return;
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (rangeButtonRef.current?.contains(target)) return;
+      if (rangePopoverRef.current?.contains(target)) return;
+      setRangeOpen(false);
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [rangeOpen]);
+
+  useEffect(() => {
+    if (!imagePreview) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setImagePreview(null);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [imagePreview]);
+
+  useEffect(() => {
+    if (!inputRef.current) return;
+    inputRef.current.style.height = "auto";
+    inputRef.current.style.height = `${inputRef.current.scrollHeight}px`;
   }, [view.text]);
 
+  useEffect(() => {
+    if (!dragging) return;
+    const handlePointerMove = (event: PointerEvent) => {
+      const dx = event.clientX - dragStartRef.current.x;
+      const dy = event.clientY - dragStartRef.current.y;
+      setDragOffset({
+        x: dragOriginRef.current.x + dx,
+        y: dragOriginRef.current.y + dy,
+      });
+    };
+    const handlePointerUp = () => {
+      setDragging(false);
+    };
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [dragging]);
 
   if (!visible) return null;
 
   const canSend = view.text.trim().length > 0 || view.attachments.length > 0;
+  const handleSend = () => {
+    if (!canSend || assistant.loading) return;
+    assistant.preview();
+  };
+  const handleSendClick = () => {
+    if (assistant.loading) {
+      assistant.interrupt();
+      return;
+    }
+    handleSend();
+  };
+  const handleAddAttachment = () => {
+    fileInputRef.current?.click();
+    setMenuOpen(false);
+  };
+  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    assistant.handleAttach(event.target.files);
+    event.target.value = "";
+    setMenuOpen(false);
+  };
+  const handleDragStart = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    dragStartRef.current = { x: event.clientX, y: event.clientY };
+    dragOriginRef.current = dragOffset;
+    setDragging(true);
+  };
 
   return (
-    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/50 px-4">
-      <div
-        className="w-full max-w-[760px] max-h-[780px] h-[72vh] flex flex-col rounded-2xl bg-white dark:bg-[#111418] border border-gray-100 dark:border-gray-800 shadow-xl overflow-visible"
-      >
-        <div className="relative z-50 flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-800">
+    <>
+      <div className="fixed inset-0 z-[999] flex items-center justify-center px-4 pointer-events-none">
+        <div
+          className="w-[46vh] max-w-[90vw] aspect-[9/16] flex flex-col rounded-[2.5rem] bg-white border border-gray-100 shadow-xl overflow-visible pointer-events-auto"
+          style={{ transform: `translate3d(${dragOffset.x}px, ${dragOffset.y}px, 0)` }}
+        >
+        <div
+          className="relative flex items-center justify-center pb-1 pt-3"
+          onPointerDown={handleDragStart}
+        >
+          <div
+            className="h-1.5 w-14 rounded-full bg-gray-200 cursor-grab active:cursor-grabbing select-none touch-none"
+            aria-label="모달 이동"
+            role="button"
+          />
+        </div>
+        <div className="relative z-50 flex items-center justify-between px-6 pb-0 pt-4">
+          <button
+            type="button"
+            onClick={assistant.close}
+            aria-label="닫기"
+            className="absolute right-6 top-0 flex size-8 items-center justify-center text-slate-500 transition hover:text-slate-700"
+          >
+            <X className="size-4" />
+          </button>
           <div className="flex items-center gap-4">
-            <button
-              className={`relative group size-9 rounded-full flex items-center justify-center ${
-                view.mode === "add"
-                  ? "bg-primary text-white"
-                  : "bg-gray-100 dark:bg-gray-800 text-slate-500"
-              }`}
-              type="button"
-              onClick={() => assistant.setMode("add")}
-              aria-label="추가"
+            <div
+              className="relative flex items-center rounded-full bg-gray-100 p-0.5 segmented-toggle"
+              style={
+                {
+                  "--seg-count": "2",
+                  "--seg-index": view.mode === "add" ? "0" : "1",
+                  "--seg-inset": "0.125rem",
+                  "--seg-pad": "0.25rem",
+                } as CSSProperties
+              }
             >
-              <Plus className="size-4" />
-              <span className={tooltipClass}>
-                일정 추가 모드
+              <span className="segmented-indicator">
+                <span className="view-indicator-pulse block h-full w-full rounded-full bg-white shadow-sm" />
               </span>
-            </button>
+              <button
+                type="button"
+                aria-label="추가 모드"
+                aria-pressed={view.mode === "add"}
+                className={`relative z-10 group flex size-8 items-center justify-center rounded-full text-[11px] font-semibold transition-colors ${
+                  view.mode === "add"
+                    ? "text-slate-900"
+                    : "text-slate-500 hover:text-slate-900"
+                }`}
+                onClick={() => assistant.setMode("add")}
+              >
+                <Plus className="size-4" />
+                <span className={tooltipClass}>
+                  일정 추가 모드
+                </span>
+              </button>
+              <button
+                type="button"
+                aria-label="삭제 모드"
+                aria-pressed={view.mode === "delete"}
+                className={`relative z-10 group flex size-8 items-center justify-center rounded-full text-[11px] font-semibold transition-colors ${
+                  view.mode === "delete"
+                    ? "text-slate-900"
+                    : "text-slate-500 hover:text-slate-900"
+                }`}
+                onClick={() => assistant.setMode("delete")}
+              >
+                <Trash2 className="size-4" />
+                <span className={tooltipClass}>
+                  일정 삭제 모드
+                </span>
+              </button>
+            </div>
+            <div className="h-6 w-px bg-gray-200 mx-1" />
             <button
-              className={`relative group size-9 rounded-full flex items-center justify-center ${
-                view.mode === "delete"
-                  ? "bg-red-500 text-white"
-                  : "bg-gray-100 dark:bg-gray-800 text-slate-500"
-              }`}
-              type="button"
-              onClick={() => assistant.setMode("delete")}
-              aria-label="삭제"
-            >
-              <Trash2 className="size-4" />
-              <span className={tooltipClass}>
-                일정 삭제 모드
-              </span>
-            </button>
-            <div className="h-6 w-px bg-gray-200 dark:bg-gray-700 mx-1" />
-            <button
-              className="relative group size-9 rounded-full flex items-center justify-center bg-gray-100 dark:bg-gray-800 text-slate-500 hover:text-primary"
+              className="relative group size-9 rounded-full flex items-center justify-center bg-gray-100 text-slate-500 hover:text-primary"
               type="button"
               onClick={assistant.resetConversation}
               aria-label="대화 초기화"
@@ -217,395 +329,451 @@ export default function AiAssistantModal({ assistant, onEditAddItem }: AiAssista
               </span>
             </button>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-[13px] font-semibold text-gray-600">추론</span>
-            <div
-              className="relative flex items-center rounded-full bg-gray-100 dark:bg-gray-800 p-0.5 segmented-toggle"
-              style={
-                {
-                  "--seg-count": "2",
-                  "--seg-index": view.reasoningEffort === "medium" ? "1" : "0",
-                  "--seg-inset": "0.125rem",
-                  "--seg-pad": "0.25rem",
-                } as CSSProperties
-              }
-            >
-              <span className="segmented-indicator">
-                <span
-                  key={view.reasoningEffort}
-                  className="view-indicator-pulse block h-full w-full rounded-full bg-white dark:bg-gray-700 shadow-sm"
-                />
-              </span>
-              {[
-                { value: "low", icon: Rabbit, tooltip: "토끼 모드: 스피드 위주, 지능은 살짝 내려둠" },
-                { value: "medium", icon: Turtle, tooltip: "거북이 모드: 느린 대신 두뇌 풀가동" },
-              ].map(({ value, icon: Icon, tooltip }) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => assistant.setReasoningEffort(value)}
-                  aria-label={tooltip}
-                  className={`relative z-10 group px-3 py-1 text-[11px] font-semibold rounded-full transition-colors ${
-                    view.reasoningEffort === value
-                      ? "text-slate-900 dark:text-white"
-                      : "text-slate-500 hover:text-slate-900 dark:hover:text-white"
-                  }`}
-                >
-                  <Icon className="size-4" />
-                  <span className={tooltipClass}>
-                    {tooltip}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
         </div>
-        <div className={`px-6 py-5 flex-1 min-h-0 flex flex-col gap-4 ${showEmptyState ? "justify-center" : ""}`}>
-          {showConversation ? (
-            <div className="flex-1 min-h-0 overflow-y-auto space-y-3 rounded-2xl border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-[#0f1318] p-4">
-              {conversation.map((msg, index) => (
-                <div key={`${msg.role}-${index}`} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                  <div
-                    className={`max-w-[70%] rounded-2xl px-4 py-3 text-sm shadow-sm ${
-                      msg.role === "user"
-                        ? "bg-primary text-white"
-                        : "bg-white dark:bg-[#111418] border border-gray-100 dark:border-gray-700/50 text-slate-700 dark:text-slate-200"
-                    }`}
-                  >
-                    <p className="whitespace-pre-line">{msg.text}</p>
-                  </div>
-                </div>
-              ))}
-              {(view.addPreview || view.deletePreview || view.error) && (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
-                    <span className="inline-flex size-6 items-center justify-center rounded-full bg-blue-100 text-primary">
-                      <Sparkles className="size-3.5" />
-                    </span>
-                    <span>AI가 제안한 일정</span>
-                  </div>
-                  {view.error && <p className="text-xs text-red-500">{view.error}</p>}
-                  {view.mode === "add" && addItems.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-xs font-semibold text-slate-500">다음 일정이 감지되었습니다.</p>
-                      {addItems.map((item, index) => {
-                        const isSelected = view.selectedAddItems[index] ?? true;
-                        return (
-                        <div
-                          key={`add-item-${index}`}
-                            className={`relative flex items-center justify-between gap-4 overflow-hidden rounded-xl border p-3 pl-5 pr-5 transition-colors ${
-                            isSelected
-                              ? "border-blue-200 bg-blue-50/70 dark:border-blue-500/40 dark:bg-[#111418]"
-                              : "border-gray-100 bg-slate-50/70 text-slate-400 dark:border-gray-700/50 dark:bg-[#1a2632]/70"
-                          } cursor-pointer`}
-                          onClick={() =>
-                            assistant.setSelectedAddItems((prev) => ({
-                              ...prev,
-                              [index]: !isSelected,
-                            }))
-                          }
-                        >
-                          <div className="flex-1 space-y-2">
-                            <div className="flex items-center justify-between gap-2">
-                              <p className="text-sm font-semibold text-slate-900 dark:text-white">
-                                {item.title}
-                              </p>
-                            </div>
-                            {(() => {
-                              const isRecurring = item.type === "recurring";
-                              const startDate = parseISODateTime(item.start);
-                              const dateLabel = isRecurring
-                                ? formatRecurrenceDateLabel(item)
-                                : startDate
-                                  ? formatShortDate(startDate)
-                                  : "";
-                              const timeLabel = isRecurring
-                                ? formatRecurrenceTimeLabel(item) || formatTimeRange(item.start, item.end)
-                                : formatTimeRange(item.start, item.end);
-                              const recurrenceSummary = isRecurring ? formatRecurrencePattern(item) : "";
-                              const infoPills = [
-                                dateLabel ? { key: "date", icon: Calendar, text: dateLabel } : null,
-                                timeLabel ? { key: "time", icon: Clock, text: timeLabel } : null,
-                                item.location ? { key: "location", icon: MapPin, text: item.location } : null,
-                                recurrenceSummary
-                                  ? { key: "recurrence", icon: RefreshCcw, text: recurrenceSummary }
-                                  : null,
-                              ].filter(Boolean);
-                              const basePillClass =
-                                "inline-flex items-center gap-1 rounded-full bg-white/90 px-2 py-1 text-[11px] font-medium text-slate-600 dark:bg-white/10 dark:text-slate-300";
-                              return (
-                                <>
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    {infoPills.map((pill) => {
-                                      if (!pill) return null;
-                                      const Icon = pill.icon;
-                                      return (
-                                        <span
-                                          key={pill.key}
-                                          className={basePillClass}
-                                        >
-                                          <Icon className="size-3" />
-                                          <span>{pill.text}</span>
-                                        </span>
-                                      );
-                                    })}
-                                  </div>
-                                </>
-                              );
-                            })()}
-                            {item.type !== "recurring" && item.samples && item.samples.length > 0 && (
-                              <p className="text-[10px] text-slate-400 mt-1">
-                                예시: {item.samples.slice(0, 3).join(", ")}
-                              </p>
-                            )}
-                          </div>
-                          <div className="relative z-10 flex shrink-0 items-center gap-2">
-                            {onEditAddItem ? (
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  onEditAddItem(item, index);
-                                }}
-                                className="flex size-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:border-slate-700 dark:bg-[#111418] dark:text-slate-300 dark:hover:text-white dark:focus-visible:ring-blue-300 dark:focus-visible:ring-offset-[#111418]"
-                                aria-label="일정 편집"
-                              >
-                                <Pencil className="size-4" />
-                              </button>
-                            ) : null}
-                            <button
-                              type="button"
-                              role="checkbox"
-                              aria-checked={isSelected}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                assistant.setSelectedAddItems((prev) => ({
-                                  ...prev,
-                                  [index]: !isSelected,
-                                }));
-                              }}
-                              className={`relative flex size-7 items-center justify-center rounded-full border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-blue-300 dark:focus-visible:ring-offset-[#111418] ${
-                                isSelected
-                                  ? "border-blue-500 bg-blue-500 text-white dark:border-blue-400 dark:bg-blue-400"
-                                  : "border-slate-300 bg-white text-slate-500 dark:border-slate-300 dark:bg-white dark:text-slate-500"
-                              }`}
-                            >
-                              <Check className="size-4" />
-                            </button>
-                          </div>
-                          {!isSelected ? (
-                            <span
-                              aria-hidden
-                              className="pointer-events-none absolute inset-0 bg-white/60 dark:bg-white/10"
-                            />
-                          ) : null}
-                        </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                  {view.mode === "delete" && deleteGroups.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-xs font-semibold text-slate-500">삭제 후보를 확인해주세요.</p>
-                      {deleteGroups.map((group) => (
-                        <label
-                          key={group.group_key}
-                          className="flex items-start justify-between gap-3 rounded-xl border border-gray-100 dark:border-gray-700/50 bg-slate-50 dark:bg-[#1a2632] p-3"
-                        >
-                          <div className="flex-1">
-                            <p className="text-sm font-semibold text-slate-900 dark:text-white">{group.title}</p>
-                            <p className="text-xs text-slate-500">
-                              {group.count || group.ids?.length || 0}건 · {group.time || ""}
-                            </p>
-                            {group.samples && group.samples.length > 0 && (
-                              <p className="text-[10px] text-slate-400 mt-1">
-                                예시: {group.samples.slice(0, 3).join(", ")}
-                              </p>
-                            )}
-                          </div>
-                          <input
-                            className="mt-1 size-4 shrink-0 appearance-none rounded-full border border-slate-300 bg-white shadow-sm transition-colors checked:border-blue-500 checked:bg-blue-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-1 focus-visible:ring-offset-white dark:border-slate-600 dark:bg-[#111418] dark:checked:border-blue-400 dark:checked:bg-blue-400 dark:focus-visible:ring-blue-300 dark:focus-visible:ring-offset-[#111418]"
-                            type="checkbox"
-                            checked={view.selectedDeleteGroups[group.group_key] ?? true}
-                            onChange={(event) =>
-                              assistant.setSelectedDeleteGroups((prev) => ({
-                                ...prev,
-                                [group.group_key]: event.target.checked,
-                              }))
-                            }
-                          />
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-              {assistant.progressLabel && (
-                <div className="flex items-center gap-2 text-[13px] font-medium text-gray-500">
-                  <span className="inline-flex size-6 items-center justify-center rounded-full bg-blue-100 text-primary">
-                    <Sparkles className="size-3.5" />
-                  </span>
-                  {isThinking ? (
-                    <span className="ai-thinking-text">
-                      생각중
-                      <span className="ai-thinking-dots">
-                        <span className="dot dot-1">.</span>
-                        <span className="dot dot-2">.</span>
-                        <span className="dot dot-3">.</span>
-                      </span>
-                    </span>
-                  ) : (
-                    assistant.progressLabel
-                  )}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="w-full text-center text-[18px] font-semibold leading-[1.6] text-gray-700">
-              {emptyMessage}
-            </div>
-          )}
-          <div
-            className={`relative flex w-full overflow-hidden border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#111418] shadow-sm ${
-              isMultiline ? "flex-col rounded-3xl" : "flex-row items-center rounded-[28px]"
-            }`}
-          >
+        <div className="px-6 pb-5 pt-4 flex-1 min-h-0 flex flex-col gap-4">
+          <div className="flex-1 min-h-0 rounded-2xl border border-gray-100 bg-gray-50 flex flex-col overflow-visible">
             <div
-              className={`flex shrink-0 items-center ${
-                isMultiline ? "order-2 w-full justify-between px-3 pb-3" : "order-1 pl-2"
+              className={`flex-1 min-h-0 overflow-y-auto space-y-3 p-4 scrollbar-hidden ${
+                showConversation ? "" : "flex items-center justify-center"
               }`}
             >
-              <label className="flex size-9 items-center justify-center rounded-full bg-gray-100 text-slate-500 hover:bg-gray-200 cursor-pointer">
-                <Image className="size-5" />
-                <input
-                  className="hidden"
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  onChange={(event: ChangeEvent<HTMLInputElement>) => assistant.handleAttach(event.target.files)}
-                />
-              </label>
-              {isMultiline && (
-                <button
-                  type="button"
-                  onClick={assistant.loading ? assistant.interrupt : assistant.preview}
-                  aria-label={assistant.loading ? "요청 중단" : "AI에게 부탁하기"}
-                  disabled={!assistant.loading && !canSend}
-                  className={`flex size-9 items-center justify-center rounded-full ${
-                    assistant.loading
-                      ? "bg-red-500 text-white hover:bg-red-600"
-                      : canSend
-                      ? "bg-black text-white hover:bg-gray-800"
-                      : "bg-gray-200 text-gray-400"
-                  }`}
-                >
-                  {assistant.loading ? <StopCircle className="size-4" /> : <ArrowUp size={18} />}
-                </button>
-              )}
+              {showConversation ? (
+                <>
+                  {conversation.map((msg, index) => {
+                    const attachmentCount = Array.isArray(msg.attachments) ? msg.attachments.length : 0;
+                    const showAttachments = msg.role === "user" && attachmentCount > 0;
+                    const hideText = showAttachments && msg.text.trim() === "이미지 첨부";
+                    const imageOnly = showAttachments && hideText;
+                    const attachmentColumns = attachmentCount > 1 ? "grid-cols-2" : "grid-cols-1";
+                    return (
+                      <div
+                        key={`${msg.role}-${index}`}
+                        className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                      >
+                        {imageOnly ? (
+                          <div className={`inline-grid ${attachmentColumns} gap-2`}>
+                            {msg.attachments?.map((item) => (
+                              <button
+                                key={item.id}
+                                type="button"
+                                className="h-24 w-24 overflow-hidden rounded-lg border border-black/10 cursor-zoom-in"
+                                onClick={() => handleImagePreview(item.dataUrl, item.name)}
+                                aria-label={`${item.name} 확대`}
+                              >
+                                <img
+                                  src={item.dataUrl}
+                                  alt={item.name}
+                                  className="h-full w-full object-cover"
+                                />
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <div
+                            className={`flex flex-col ${
+                              msg.role === "user" ? "items-end" : "items-start"
+                            }`}
+                          >
+                            {showAttachments && (
+                              <div className={`inline-grid ${attachmentColumns} gap-2 mb-2`}>
+                                {msg.attachments?.map((item) => (
+                                  <button
+                                    key={item.id}
+                                    type="button"
+                                    className="h-24 w-24 overflow-hidden rounded-lg border border-black/10 cursor-zoom-in"
+                                    onClick={() => handleImagePreview(item.dataUrl, item.name)}
+                                    aria-label={`${item.name} 확대`}
+                                  >
+                                    <img
+                                      src={item.dataUrl}
+                                      alt={item.name}
+                                      className="h-full w-full object-cover"
+                                    />
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                            <div
+                              className={`max-w-[70%] rounded-2xl px-4 py-3 text-sm shadow-sm ${
+                                msg.role === "user"
+                                  ? "bg-primary text-white"
+                                  : "bg-white border border-gray-100 text-slate-700"
+                              }`}
+                            >
+                              <p className="whitespace-pre-line">{msg.text}</p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {(view.addPreview || view.deletePreview || view.error) && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
+                        <span className="inline-flex size-6 items-center justify-center rounded-full bg-blue-100 text-primary">
+                          <Sparkles className="size-3.5" />
+                        </span>
+                        <span>AI가 제안한 일정</span>
+                      </div>
+                      {view.error && <p className="text-xs text-red-500">{view.error}</p>}
+                      {view.mode === "add" && addItems.length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-xs font-semibold text-slate-500">다음 일정이 감지되었습니다.</p>
+                          {addItems.map((item, index) => {
+                            const isSelected = view.selectedAddItems[index] ?? true;
+                            return (
+                              <div
+                                key={`add-item-${index}`}
+                                className={`relative flex items-center justify-between gap-4 overflow-hidden rounded-xl border p-3 pl-5 pr-5 transition-colors ${
+                                  isSelected
+                                    ? "border-blue-200 bg-blue-50/70"
+                                    : "border-gray-100 bg-slate-50/70 text-slate-400"
+                                } cursor-pointer`}
+                                onClick={() =>
+                                  assistant.setSelectedAddItems((prev) => ({
+                                    ...prev,
+                                    [index]: !isSelected,
+                                  }))
+                                }
+                              >
+                                <div className="flex-1 space-y-2">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <p className="text-sm font-semibold text-slate-900">
+                                      {item.title}
+                                    </p>
+                                  </div>
+                                  {(() => {
+                                    const isRecurring = item.type === "recurring";
+                                    const startDate = parseISODateTime(item.start);
+                                    const dateLabel = isRecurring
+                                      ? formatRecurrenceDateLabel(item)
+                                      : startDate
+                                        ? formatShortDate(startDate)
+                                        : "";
+                                    const timeLabel = isRecurring
+                                      ? formatRecurrenceTimeLabel(item) || formatTimeRange(item.start, item.end)
+                                      : formatTimeRange(item.start, item.end);
+                                    const recurrenceSummary = isRecurring ? formatRecurrencePattern(item) : "";
+                                    const infoPills = [
+                                      dateLabel ? { key: "date", icon: Calendar, text: dateLabel } : null,
+                                      timeLabel ? { key: "time", icon: Clock, text: timeLabel } : null,
+                                      item.location ? { key: "location", icon: MapPin, text: item.location } : null,
+                                      recurrenceSummary
+                                        ? { key: "recurrence", icon: RefreshCcw, text: recurrenceSummary }
+                                        : null,
+                                    ].filter(Boolean);
+                                    const basePillClass =
+                                      "inline-flex items-center gap-1 rounded-full bg-white/90 px-2 py-1 text-[11px] font-medium text-slate-600";
+                                    return (
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        {infoPills.map((pill) => {
+                                          if (!pill) return null;
+                                          const Icon = pill.icon;
+                                          return (
+                                            <span key={pill.key} className={basePillClass}>
+                                              <Icon className="size-3" />
+                                              <span>{pill.text}</span>
+                                            </span>
+                                          );
+                                        })}
+                                      </div>
+                                    );
+                                  })()}
+                                  {item.type !== "recurring" && item.samples && item.samples.length > 0 && (
+                                    <p className="text-[10px] text-slate-400 mt-1">
+                                      예시: {item.samples.slice(0, 3).join(", ")}
+                                    </p>
+                                  )}
+                                </div>
+                                <div className="relative z-10 flex shrink-0 items-center gap-2">
+                                  {onEditAddItem ? (
+                                    <button
+                                      type="button"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        onEditAddItem(item, index);
+                                      }}
+                                      className="flex size-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+                                      aria-label="일정 편집"
+                                    >
+                                      <Pencil className="size-4" />
+                                    </button>
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    role="checkbox"
+                                    aria-checked={isSelected}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      assistant.setSelectedAddItems((prev) => ({
+                                        ...prev,
+                                        [index]: !isSelected,
+                                      }));
+                                    }}
+                                    className={`relative flex size-7 items-center justify-center rounded-full border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white ${
+                                      isSelected
+                                        ? "border-blue-500 bg-blue-500 text-white"
+                                        : "border-slate-300 bg-white text-slate-500"
+                                    }`}
+                                  >
+                                    <Check className="size-4" />
+                                  </button>
+                                </div>
+                                {!isSelected ? (
+                                  <span
+                                    aria-hidden
+                                    className="pointer-events-none absolute inset-0 bg-white/60"
+                                  />
+                                ) : null}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {view.mode === "delete" && deleteGroups.length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-xs font-semibold text-slate-500">삭제 후보를 확인해주세요.</p>
+                          {deleteGroups.map((group) => (
+                            <label
+                              key={group.group_key}
+                              className="flex items-start justify-between gap-3 rounded-xl border border-gray-100 bg-slate-50 p-3"
+                            >
+                              <div className="flex-1">
+                                <p className="text-sm font-semibold text-slate-900">{group.title}</p>
+                                <p className="text-xs text-slate-500">
+                                  {group.count || group.ids?.length || 0}건 · {group.time || ""}
+                                </p>
+                                {group.samples && group.samples.length > 0 && (
+                                  <p className="text-[10px] text-slate-400 mt-1">
+                                    예시: {group.samples.slice(0, 3).join(", ")}
+                                  </p>
+                                )}
+                              </div>
+                              <input
+                                className="mt-1 size-4 shrink-0 appearance-none rounded-full border border-slate-300 bg-white shadow-sm transition-colors checked:border-blue-500 checked:bg-blue-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-1 focus-visible:ring-offset-white"
+                                type="checkbox"
+                                checked={view.selectedDeleteGroups[group.group_key] ?? true}
+                                onChange={(event) =>
+                                  assistant.setSelectedDeleteGroups((prev) => ({
+                                    ...prev,
+                                    [group.group_key]: event.target.checked,
+                                  }))
+                                }
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {assistant.progressLabel && (
+                    <div className="flex items-center gap-2 text-[13px] font-medium text-gray-500">
+                      <span className="inline-flex size-6 items-center justify-center rounded-full bg-blue-100 text-primary">
+                        <Sparkles className="size-3.5" />
+                      </span>
+                      {isThinking ? (
+                        <span className="ai-thinking-text">
+                          생각중
+                          <span className="ai-thinking-dots">
+                            <span className="dot dot-1">.</span>
+                            <span className="dot dot-2">.</span>
+                            <span className="dot dot-3">.</span>
+                          </span>
+                        </span>
+                      ) : (
+                        assistant.progressLabel
+                      )}
+                    </div>
+                  )}
+                </>
+              ) : null}
             </div>
-            <div className={`flex-1 ${isMultiline ? "order-1 w-full" : "order-2"}`}>
-              <textarea
-                ref={inputRef}
-                className={`max-h-[200px] w-full resize-none border-none bg-transparent text-[15px] font-normal leading-[1.6] text-gray-900 dark:text-slate-100 placeholder:text-gray-400 placeholder:text-[14px] placeholder:font-normal outline-none focus:outline-none focus:ring-0 ${
-                  isMultiline ? "p-4 pb-0 overflow-y-auto" : "pt-3.5 pb-2.5 px-3 overflow-hidden"
+            <div className="p-4 pt-2">
+              <div
+                className={`rounded-[22px] border bg-white px-3 py-2 transition ${
+                  focused ? "border-[#1c1b18]" : "border-[#e6dfd6]"
                 }`}
-                rows={1}
-                style={{ minHeight: "24px" }}
-                placeholder="AI에게 부탁할 내용을 입력하세요"
-                value={view.text}
-                onChange={(event) => {
-                  assistant.setText(event.target.value);
-                  resizeTextarea(event.target.value);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    if (canSend && !assistant.loading) {
-                      assistant.preview();
+              >
+                <textarea
+                  ref={inputRef}
+                  rows={1}
+                  value={view.text}
+                  placeholder={PLACEHOLDER_TEXT[view.mode]}
+                  onChange={(event) => assistant.setText(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      handleSend();
                     }
-                  }
-                }}
-              />
-            </div>
-            {!isMultiline && (
-              <div className="order-3 pr-2">
-                <button
-                  type="button"
-                  onClick={assistant.loading ? assistant.interrupt : assistant.preview}
-                  aria-label={assistant.loading ? "요청 중단" : "AI에게 부탁하기"}
-                  disabled={!assistant.loading && !canSend}
-                  className={`flex size-9 items-center justify-center rounded-full ${
-                    assistant.loading
-                      ? "bg-red-500 text-white hover:bg-red-600"
-                      : canSend
-                      ? "bg-black text-white hover:bg-gray-800"
-                      : "bg-gray-200 text-gray-400"
-                  }`}
-                >
-                  {assistant.loading ? <StopCircle className="size-4" /> : <ArrowUp size={18} />}
-                </button>
-              </div>
-            )}
-          </div>
-          {view.attachments.length > 0 && (
-            <span className="text-[12px] font-medium text-gray-500">
-              {view.attachments.length}개 첨부됨
-            </span>
-          )}
-          {view.attachments.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {view.attachments.map((item) => (
-                <div key={item.id} className="flex items-center gap-2 rounded-full bg-gray-100 dark:bg-gray-800 px-3 py-1 text-xs">
-                  <span className="truncate max-w-[140px]">{item.name}</span>
+                  }}
+                  onFocus={() => setFocused(true)}
+                  onBlur={() => setFocused(false)}
+                  className="max-h-[8lh] w-full resize-none bg-white px-2.5 py-2 text-sm text-[#1c1b18] placeholder:text-[#b3aaa1] focus:outline-none"
+                />
+
+                {view.attachments.length > 0 && (
+                  <div className="flex flex-wrap gap-2 px-2 pb-2">
+                    {view.attachments.map((item) => (
+                      <span
+                        key={item.id}
+                        className="inline-flex items-center gap-2 rounded-full border border-[#e6dfd6] bg-[#f7f4ef] px-3 py-1 text-xs text-[#6d655e]"
+                      >
+                        <ImageIcon className="size-3.5" />
+                        {item.name}
+                        <button
+                          type="button"
+                          className="rounded-full p-0.5 hover:bg-white"
+                          onClick={() => assistant.removeAttachment(item.id)}
+                          aria-label="첨부 제거"
+                        >
+                          <X className="size-3.5" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center justify-between gap-3 px-2 pb-2">
+                  <div className="flex items-center gap-2">
+                    <div className="relative">
+                      <button
+                        type="button"
+                        className="flex size-8 items-center justify-center rounded-full border border-[#e6dfd6] bg-white text-[#1c1b18] shadow-sm transition hover:bg-[#f7f4ef]"
+                        onClick={() => setMenuOpen((prev) => !prev)}
+                        aria-label="첨부 메뉴"
+                      >
+                        <Plus className="size-4" />
+                      </button>
+                      <input
+                        ref={fileInputRef}
+                        className="hidden"
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        onChange={handleFileChange}
+                      />
+                      {menuOpen && (
+                        <div className="absolute left-0 top-full z-10 mt-2 w-44 rounded-2xl border border-[#e6dfd6] bg-white p-1 text-sm shadow-lg">
+                          {INPUT_ACTIONS.map((action) => (
+                            <button
+                              key={action.type}
+                              type="button"
+                              className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-[#2a2622] transition hover:bg-[#f7f4ef]"
+                              onClick={handleAddAttachment}
+                            >
+                              <ImageIcon className="size-4" />
+                              {action.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div
+                      className="relative flex items-center rounded-full bg-gray-100 p-0.5 segmented-toggle"
+                      style={
+                        {
+                          "--seg-count": "2",
+                          "--seg-index": view.reasoningEffort === "medium" ? "1" : "0",
+                          "--seg-inset": "0.125rem",
+                          "--seg-pad": "0.25rem",
+                        } as CSSProperties
+                      }
+                    >
+                      <span className="segmented-indicator">
+                        <span
+                          key={view.reasoningEffort}
+                          className="view-indicator-pulse block h-full w-full rounded-full bg-white shadow-sm"
+                        />
+                      </span>
+                      {[
+                        { value: "low", icon: Rabbit, tooltip: "토끼 모드: 스피드 위주, 지능은 살짝 내려둠" },
+                        { value: "medium", icon: Turtle, tooltip: "거북이 모드: 느린 대신 두뇌 풀가동" },
+                      ].map(({ value, icon: Icon, tooltip }) => (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => assistant.setReasoningEffort(value)}
+                          aria-label={tooltip}
+                          className={`relative z-10 group flex size-8 items-center justify-center rounded-full text-[11px] font-semibold transition-colors ${
+                            view.reasoningEffort === value
+                              ? "text-slate-900"
+                              : "text-slate-500 hover:text-slate-900"
+                          }`}
+                        >
+                          <Icon className="size-4" />
+                          <span className={tooltipClass}>
+                            {tooltip}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                    {view.mode === "delete" && (
+                      <div className="relative">
+                        <button
+                          ref={rangeButtonRef}
+                          type="button"
+                          className="flex size-8 items-center justify-center rounded-full border border-[#e6dfd6] bg-white text-[#1c1b18] shadow-sm transition hover:bg-[#f7f4ef]"
+                          aria-haspopup="dialog"
+                          aria-expanded={rangeOpen}
+                          onClick={() => setRangeOpen((prev) => !prev)}
+                          aria-label="삭제 범위 설정"
+                        >
+                          <Calendar className="size-4" />
+                        </button>
+                        {rangeOpen && (
+                          <div
+                            ref={rangePopoverRef}
+                            className="absolute left-0 bottom-full z-20 mb-2 w-max rounded-xl border border-[#e6dfd6] bg-white p-3 shadow-lg"
+                          >
+                            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                              삭제 범위
+                            </div>
+                            <div className="mt-2 flex items-center gap-2">
+                              <DatePopover
+                                label="시작 날짜"
+                                value={view.startDate}
+                                onChange={handleStartDateChange}
+                                placeholder="날짜 선택"
+                                icon={<Calendar className="size-4" />}
+                                disabled={false}
+                              />
+                              <span className="text-xs font-semibold text-slate-400">~</span>
+                              <DatePopover
+                                label="종료 날짜"
+                                value={view.endDate}
+                                onChange={handleEndDateChange}
+                                placeholder="날짜 선택"
+                                icon={<Calendar className="size-4" />}
+                                disabled={false}
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
                   <button
-                    className="text-slate-400 hover:text-red-500"
                     type="button"
-                    onClick={() => assistant.removeAttachment(item.id)}
+                    className={`inline-flex size-9 items-center justify-center rounded-full text-xs font-semibold transition ${
+                      assistant.loading
+                        ? "bg-[#1c1b18] text-white cursor-pointer"
+                        : canSend
+                        ? "bg-[#1c1b18] text-white hover:-translate-y-0.5 cursor-pointer"
+                        : "bg-[#1c1b18]/40 text-white"
+                    }`}
+                    onClick={handleSendClick}
+                    disabled={!assistant.loading && !canSend}
+                    aria-label={assistant.loading ? "중단" : "보내기"}
                   >
-                    <X className="size-3" />
+                    {assistant.loading ? <Square className="size-3.5" /> : <ArrowUp className="size-3.5" />}
                   </button>
                 </div>
-              ))}
-            </div>
-          )}
-          {view.mode === "delete" && (
-            <div className="flex flex-col gap-3">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                삭제 범위
-              </span>
-              <div className="grid gap-3 px-4 sm:grid-cols-2">
-                <label className="flex flex-col gap-1 text-xs font-semibold text-slate-500">
-                  시작 날짜
-                  <input
-                    type="date"
-                    value={view.startDate}
-                    max={maxStartDate || undefined}
-                    onChange={handleStartDateChange}
-                    className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#111418] px-3 py-2 text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/40"
-                  />
-                </label>
-                <label className="flex flex-col gap-1 text-xs font-semibold text-slate-500">
-                  종료 날짜
-                  <input
-                    type="date"
-                    value={view.endDate}
-                    min={minEndDate || undefined}
-                    onChange={handleEndDateChange}
-                    className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#111418] px-3 py-2 text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/40"
-                  />
-                </label>
               </div>
             </div>
-          )}
+          </div>
         </div>
-        <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-gray-100 dark:border-gray-800">
-          <button
-            className="px-4 py-2 rounded-full border border-gray-200 dark:border-gray-700 text-[14px] font-semibold text-gray-700 hover:text-gray-900 dark:hover:text-white"
-            type="button"
-            onClick={assistant.close}
-          >
-            취소
-          </button>
+        <div className="flex items-center justify-end gap-2 px-6 pb-4 pt-0">
           <button
             className={`px-4 py-2 rounded-full text-[14px] font-semibold transition-colors ${
               view.mode === "delete"
@@ -660,6 +828,13 @@ export default function AiAssistantModal({ assistant, onEditAddItem }: AiAssista
             align-items: baseline;
             gap: 2px;
           }
+          .scrollbar-hidden {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+          }
+          .scrollbar-hidden::-webkit-scrollbar {
+            display: none;
+          }
           .ai-thinking-dots {
             display: inline-flex;
             align-items: baseline;
@@ -674,7 +849,33 @@ export default function AiAssistantModal({ assistant, onEditAddItem }: AiAssista
             animation: ai-thinking-dot-3 1.2s steps(1, end) infinite;
           }
         `}</style>
+        </div>
       </div>
-    </div>
+      {imagePreview && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60">
+          <button
+            type="button"
+            className="absolute inset-0 cursor-zoom-out"
+            onClick={() => setImagePreview(null)}
+            aria-label="이미지 닫기"
+          />
+          <div className="relative z-10">
+            <img
+              src={imagePreview.src}
+              alt={imagePreview.alt}
+              className="max-h-[80vh] max-w-[90vw] object-contain shadow-2xl"
+            />
+            <button
+              type="button"
+              onClick={() => setImagePreview(null)}
+              aria-label="이미지 닫기"
+              className="absolute -right-3 -top-3 flex size-8 items-center justify-center rounded-full bg-white text-slate-600 shadow-lg transition hover:text-slate-900"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

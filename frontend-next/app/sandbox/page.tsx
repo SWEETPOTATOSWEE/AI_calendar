@@ -1,96 +1,67 @@
-"use client";
+import Link from "next/link";
 
-import { useState } from "react";
-import { Check, ChevronDown, Search } from "lucide-react";
+const SANDBOXES = [
+  {
+    id: "1",
+    title: "검색 유틸",
+    description: "고급 검색 패널 전개/접기와 애니메이션 확인용",
+  },
+  {
+    id: "2",
+    title: "일정 개요 팝업",
+    description: "일정 요약 팝업 UI 미리보기",
+  },
+  ...Array.from({ length: 8 }, (_, index) => {
+    const id = String(index + 3);
+    return {
+      id,
+      title: `샌드박스 ${id}`,
+      description: "추가 샘플 UI 페이지",
+    };
+  }),
+];
 
-export default function SandboxPage() {
-  const [open, setOpen] = useState(false);
-  const [collapsing, setCollapsing] = useState(false);
-
+export default function SandboxIndexPage() {
   return (
-    <main className="min-h-screen bg-[#f4f6f8] px-6 py-8">
-      <div className="mx-auto w-full max-w-3xl">
-        <div
-          className={`w-full border border-gray-200 bg-white ${
-            open || collapsing ? "rounded-[32px] shadow-lg" : "rounded-full shadow-sm"
-          }`}
-        >
-          <div className="flex items-center gap-3 px-5 py-3">
-            <Search className="size-5 text-gray-600" />
-            <span className="text-sm font-medium text-gray-700">검색</span>
-            <button
-              type="button"
-              className="ml-auto flex size-8 items-center justify-center rounded-full bg-gray-100 text-gray-600 transition-colors hover:bg-gray-200"
-              onClick={() => {
-                if (open) {
-                  setOpen(false);
-                  setCollapsing(true);
-                } else {
-                  setOpen(true);
-                  setCollapsing(false);
-                }
-              }}
-              aria-label="고급 검색 토글"
+    <main className="min-h-screen bg-[#f2f1ed] text-[#1f1e1b]">
+      <div className="mx-auto max-w-5xl px-6 py-10">
+        <header className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-[#9a938a]">Sandbox</p>
+            <h1 className="mt-2 font-display text-3xl font-semibold">
+              샌드박스 생성
+            </h1>
+            <p className="mt-2 text-sm text-[#6b6460]">
+              버튼을 눌러 서로 다른 샌드박스 URL로 이동합니다.
+            </p>
+          </div>
+          <div className="rounded-full border border-[#d9d4cc] bg-white px-4 py-2 text-xs text-[#6b6460] shadow-sm">
+            sandbox/1 ~ sandbox/10
+          </div>
+        </header>
+
+        <section className="mt-10 grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+          {SANDBOXES.map((sandbox) => (
+            <Link
+              key={sandbox.id}
+              href={`/sandbox/${sandbox.id}`}
+              className="group flex h-full flex-col justify-between rounded-[24px] border border-[#e3dfd7] bg-white/80 p-6 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
             >
-              <ChevronDown className={`size-4 transition-transform ${open ? "rotate-180" : ""}`} />
-            </button>
-          </div>
-          <div
-            className={`overflow-hidden transition-[max-height] duration-300 ease-out ${
-              open ? "max-h-[520px]" : "max-h-0"
-            }`}
-            onTransitionEnd={(event) => {
-              if (event.propertyName !== "max-height") return;
-              if (!open) setCollapsing(false);
-            }}
-          >
-            <div className="px-5 pb-4 pt-2">
-              <div className="grid grid-cols-[140px_1fr] gap-x-6 gap-y-3 text-sm">
-                <div className="pt-2 text-gray-700">다음에서 검색:</div>
-                <div className="flex items-center gap-2">
-                  <div className="inline-flex items-center gap-2 rounded-md border border-blue-500 bg-blue-50 px-3 py-2 text-blue-700">
-                    <Check className="size-4" />
-                    <span className="text-sm font-medium">사용 중인 캘린더</span>
-                    <ChevronDown className="size-4 text-blue-600" />
-                  </div>
-                </div>
-
-                <div className="pt-2 text-gray-700">제목</div>
-                <div className="rounded-md bg-gray-100 px-3 py-2 text-gray-500">
-                  일정에 포함된 키워드
-                </div>
-
-                <div className="pt-2 text-gray-700">참석자</div>
-                <div className="rounded-md bg-gray-100 px-3 py-2 text-gray-500">
-                  참석자, 주최자 또는 크리에이터 입력
-                </div>
-
-                <div className="pt-2 text-gray-700">장소</div>
-                <div className="rounded-md bg-gray-100 px-3 py-2 text-gray-500">위치 또는 회의실 입력</div>
-
-                <div className="pt-2 text-gray-700">제외할 검색어</div>
-                <div className="rounded-md bg-gray-100 px-3 py-2 text-gray-500">
-                  일정에 포함되지 않은 키워드
-                </div>
-
-                <div className="pt-2 text-gray-700">날짜</div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="rounded-md bg-gray-100 px-3 py-2 text-gray-500">시작 날짜</div>
-                  <span className="text-gray-400">-</span>
-                  <div className="rounded-md bg-gray-100 px-3 py-2 text-gray-500">종료 날짜</div>
-                </div>
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-[#9a938a]">
+                  Sandbox {sandbox.id}
+                </p>
+                <h2 className="mt-3 font-display text-xl font-semibold">
+                  {sandbox.title}
+                </h2>
+                <p className="mt-2 text-sm text-[#6b6460]">{sandbox.description}</p>
               </div>
-              <div className="mt-4 flex items-center justify-end gap-6 text-sm">
-                <button type="button" className="text-gray-500 hover:text-gray-700">
-                  재설정
-                </button>
-                <button type="button" className="font-medium text-blue-600 hover:text-blue-700">
-                  검색
-                </button>
+              <div className="mt-6 inline-flex w-fit items-center gap-2 rounded-full border border-[#d9d4cc] bg-white px-4 py-2 text-xs font-semibold text-[#1f1e1b]">
+                /sandbox/{sandbox.id}
               </div>
-            </div>
-          </div>
-        </div>
+            </Link>
+          ))}
+        </section>
       </div>
     </main>
   );

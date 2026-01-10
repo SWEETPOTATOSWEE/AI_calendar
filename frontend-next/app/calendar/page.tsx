@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
@@ -13,8 +13,10 @@ import AiAssistantModal from "./components/AiAssistantModal";
 import CalendarHeaderActions from "./components/CalendarHeaderActions";
 import {
   addDays,
+  addMonths,
   formatLongDate,
   formatMonthYear,
+  formatShortDate,
   formatTime,
   formatTimeRange,
   endOfMonth,
@@ -30,16 +32,31 @@ import { useCalendarData } from "./lib/use-calendar-data";
 import { useAiAssistant, type AddPreviewItem } from "./lib/use-ai-assistant";
 import { useUndoStack } from "./lib/use-undo";
 import {
+  Bell,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Clock,
+  MapPin,
   MoreVertical,
+  Pencil,
   Plus,
+  Search,
+  X,
   Sparkles,
   Undo2,
 } from "lucide-react";
 
 type ViewMode = "month" | "week" | "day";
+type MonthPopupAlign = "left" | "right" | "center";
+type MonthEventPopup = {
+  event: CalendarEvent;
+  top: number;
+  left: number;
+  align: MonthPopupAlign;
+  anchorTop: number;
+  anchorBottom: number;
+};
 
 const VIEW_LABELS: Record<ViewMode, string> = {
   month: "월",
@@ -109,6 +126,22 @@ const toRgba = (color: string, alpha: number) => {
 };
 
 const toDateOnly = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
+const parseISODate = (value?: string | null) => {
+  if (!value) return null;
+  const [yearStr, monthStr, dayStr] = value.split("-");
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const day = Number(dayStr);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day);
+};
+const getEventStartDate = (value?: string | null) => {
+  if (!value) return null;
+  const parsed = parseISODateTime(value) ?? parseISODate(value);
+  if (parsed) return parsed;
+  const fallback = new Date(value);
+  return Number.isNaN(fallback.getTime()) ? null : fallback;
+};
 const getWeekKey = (date: Date) => toISODate(startOfWeek(date));
 
 const formatTimeGridSlotLabel = (date: Date) => {
@@ -124,6 +157,35 @@ const formatTimeGridSlotLabel = (date: Date) => {
   return { period, time };
 };
 
+const formatReminderLabel = (minutes: number) => {
+  if (!Number.isFinite(minutes) || minutes <= 0) return "알림";
+  if (minutes % 1440 === 0) return `${minutes / 1440}일 전`;
+  if (minutes % 60 === 0) return `${minutes / 60}시간 전`;
+  return `${minutes}분 전`;
+};
+
+const getReminderLabel = (reminders?: number[] | null) => {
+  if (!reminders || reminders.length === 0) return null;
+  const sorted = reminders.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+  if (sorted.length === 0) return null;
+  const primary = formatReminderLabel(sorted[0]);
+  return sorted.length > 1 ? `${primary} 외 ${sorted.length - 1}개` : primary;
+};
+
+const getEventDateLabel = (event: CalendarEvent) => {
+  const startDate = getEventStartDate(event.start);
+  return startDate ? formatLongDate(startDate) : "날짜 미정";
+};
+
+const getEventTimeLabel = (event: CalendarEvent) => {
+  if (event.all_day) return "종일";
+  const timeRange = formatTimeRange(event.start, event.end ?? null);
+  return timeRange || "시간 미정";
+};
+
+const getPopupAccentColor = (event: CalendarEvent) => {
+  return getMonthEventColor(event).border;
+};
 
 const getWeekNumber = (date: Date) => {
   const temp = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -247,6 +309,28 @@ function CalendarPageInner() {
   const [aiDraftEvent, setAiDraftEvent] = useState<CalendarEvent | null>(null);
   const [aiDraftIndex, setAiDraftIndex] = useState<number | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [monthEventPopup, setMonthEventPopup] = useState<MonthEventPopup | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchAdvancedOpen, setSearchAdvancedOpen] = useState(false);
+  const [searchAdvancedHeight, setSearchAdvancedHeight] = useState(0);
+  const [searchFilters, setSearchFilters] = useState(() => {
+    const baseDate = new Date();
+    return {
+      title: "",
+      attendees: "",
+      location: "",
+      exclude: "",
+      startDate: "",
+      endDate: "",
+      rangeStart: toISODate(addMonths(baseDate, -12)),
+      rangeEnd: toISODate(addMonths(baseDate, 12)),
+    };
+  });
+  const [searchResults, setSearchResults] = useState<CalendarEvent[]>([]);
+  const [searchIndex, setSearchIndex] = useState(0);
+  const [searchResultsOpen, setSearchResultsOpen] = useState(false);
+  const [searchResultsHeight, setSearchResultsHeight] = useState(0);
+  const lastSearchKeyRef = useRef<string | null>(null);
   const [nowSnapshot] = useState(() => new Date());
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarScrollable, setSidebarScrollable] = useState(false);
@@ -260,6 +344,11 @@ function CalendarPageInner() {
   const monthCalendarRef = useRef<FullCalendar | null>(null);
   const miniCalendarRef = useRef<FullCalendar | null>(null);
   const mobileMenuRef = useRef<HTMLDivElement | null>(null);
+  const searchAdvancedRef = useRef<HTMLDivElement | null>(null);
+  const searchResultsPanelRef = useRef<HTMLDivElement | null>(null);
+  const monthPopupRef = useRef<HTMLDivElement | null>(null);
+  const searchResultsCacheRef = useRef<CalendarEvent[]>([]);
+  const searchIndexRef = useRef(0);
 
   const viewParam = searchParams.get("view");
   const view: ViewMode = viewParam === "week" || viewParam === "day" ? viewParam : "month";
@@ -364,6 +453,57 @@ function CalendarPageInner() {
   }, [currentMonth, state.allEvents]);
 
   useEffect(() => {
+    if (view !== "month") {
+      setMonthEventPopup(null);
+    }
+  }, [view]);
+
+  useEffect(() => {
+    if (!monthEventPopup) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMonthEventPopup(null);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [monthEventPopup]);
+
+  useLayoutEffect(() => {
+    if (!monthEventPopup || !monthPopupRef.current) return;
+    if (window.innerWidth < 640) return;
+    if (!monthEventPopup.anchorTop && !monthEventPopup.anchorBottom) return;
+    const popupGap = 12;
+    const popupHeight = monthPopupRef.current.getBoundingClientRect().height;
+    const viewportHeight = window.innerHeight;
+    const spaceAbove = monthEventPopup.anchorTop;
+    const spaceBelow = viewportHeight - monthEventPopup.anchorBottom;
+    const fitsBelow = spaceBelow >= popupHeight + popupGap;
+    const fitsAbove = spaceAbove >= popupHeight + popupGap;
+    const maxTop = Math.max(popupGap, viewportHeight - popupHeight - popupGap);
+    const bottomTop = monthEventPopup.anchorBottom + popupGap;
+    const topTop = monthEventPopup.anchorTop - popupHeight - popupGap;
+    let top = bottomTop;
+    if (!fitsBelow && fitsAbove) {
+      top = topTop;
+    } else if (!fitsBelow && !fitsAbove && spaceAbove > spaceBelow) {
+      top = topTop;
+    }
+    top = Math.min(Math.max(top, popupGap), maxTop);
+    if (Math.abs(top - monthEventPopup.top) > 1) {
+      setMonthEventPopup((prev) => (prev ? { ...prev, top } : prev));
+    }
+  }, [monthEventPopup]);
+
+  useEffect(() => {
+    if (modalOpen) {
+      setMonthEventPopup(null);
+    }
+  }, [modalOpen]);
+
+  useEffect(() => {
     const updateScrollFlags = () => {
       const sidebarEl = sidebarScrollRef.current;
       if (sidebarEl) {
@@ -427,6 +567,32 @@ function CalendarPageInner() {
       document.removeEventListener("keydown", handleKey);
     };
   }, [mobileMenuOpen]);
+
+  useEffect(() => {
+    if (!searchAdvancedRef.current) return;
+    if (searchAdvancedOpen) {
+      setSearchAdvancedHeight(searchAdvancedRef.current.scrollHeight);
+    } else {
+      setSearchAdvancedHeight(0);
+    }
+  }, [searchAdvancedOpen]);
+
+  useEffect(() => {
+    searchResultsCacheRef.current = searchResults;
+  }, [searchResults]);
+
+  useEffect(() => {
+    searchIndexRef.current = searchIndex;
+  }, [searchIndex]);
+
+  useEffect(() => {
+    if (!searchResultsPanelRef.current) return;
+    if (searchResultsOpen) {
+      setSearchResultsHeight(searchResultsPanelRef.current.scrollHeight);
+    } else {
+      setSearchResultsHeight(0);
+    }
+  }, [searchResultsOpen, searchResults.length]);
 
   const upcomingEvent = useMemo(() => {
     return state.allEvents
@@ -574,6 +740,229 @@ function CalendarPageInner() {
     setCurrentMonth(startOfMonth(today));
   };
 
+  const normalizeSearchValue = (value: string) => value.trim().toLowerCase();
+
+  const resolveSearchRange = () => {
+    const fallbackStart = toISODate(addMonths(new Date(), -12));
+    const fallbackEnd = toISODate(addMonths(new Date(), 12));
+    const rangeStart = searchFilters.rangeStart?.trim() || fallbackStart;
+    const rangeEnd = searchFilters.rangeEnd?.trim() || fallbackEnd;
+    return { rangeStart, rangeEnd };
+  };
+
+  const normalizeRange = (start: Date | null, end: Date | null) => {
+    if (start && end && start > end) return [end, start] as const;
+    return [start, end] as const;
+  };
+
+  const focusSearchResult = (event: CalendarEvent) => {
+    const targetDate = getEventStartDate(event.start);
+    if (!targetDate) return;
+    const api = monthCalendarRef.current?.getApi();
+    if (api) api.gotoDate(targetDate);
+    setSelectedDate(targetDate);
+    setCurrentMonth(startOfMonth(targetDate));
+  };
+
+  const buildSearchKey = (mode: "basic" | "advanced", rangeStart: string, rangeEnd: string) => {
+    const keyword = normalizeSearchValue(searchFilters.title);
+    const base = [mode, keyword, rangeStart, rangeEnd];
+    if (mode === "advanced") {
+      base.push(
+        normalizeSearchValue(searchFilters.attendees),
+        normalizeSearchValue(searchFilters.location),
+        normalizeSearchValue(searchFilters.exclude),
+        searchFilters.startDate?.trim() || "",
+        searchFilters.endDate?.trim() || ""
+      );
+    }
+    return base.join("|");
+  };
+
+  const getSearchResults = async (
+    mode: "basic" | "advanced",
+    options: { reuse?: boolean; resetIndex?: boolean; focusFirst?: boolean } = {}
+  ) => {
+    const keyword = normalizeSearchValue(searchFilters.title);
+    const attendees = normalizeSearchValue(searchFilters.attendees);
+    const location = normalizeSearchValue(searchFilters.location);
+    const exclude = normalizeSearchValue(searchFilters.exclude);
+    const filterStartValue = searchFilters.startDate?.trim() || "";
+    const filterEndValue = searchFilters.endDate?.trim() || "";
+    const hasAdvancedCriteria = Boolean(
+      keyword || attendees || location || exclude || filterStartValue || filterEndValue
+    );
+
+    if (mode === "basic" && !keyword) {
+      lastSearchKeyRef.current = null;
+      searchResultsCacheRef.current = [];
+      setSearchResults([]);
+      setSearchIndex(0);
+      return [];
+    }
+
+    if (mode === "advanced" && !hasAdvancedCriteria) {
+      lastSearchKeyRef.current = null;
+      searchResultsCacheRef.current = [];
+      setSearchResults([]);
+      setSearchIndex(0);
+      return [];
+    }
+
+    const { rangeStart, rangeEnd } = resolveSearchRange();
+    const searchKey = buildSearchKey(mode, rangeStart, rangeEnd);
+    const isSameKey = lastSearchKeyRef.current === searchKey;
+    if (options.reuse && isSameKey && searchResultsCacheRef.current.length > 0) {
+      return searchResultsCacheRef.current;
+    }
+
+    const allEvents = await actions.ensureRangeLoaded(rangeStart, rangeEnd);
+    const [rangeStartDate, rangeEndDate] = normalizeRange(
+      parseISODate(rangeStart),
+      parseISODate(rangeEnd)
+    );
+    const [filterStartDate, filterEndDate] = normalizeRange(
+      parseISODate(filterStartValue),
+      parseISODate(filterEndValue)
+    );
+
+    const matches = allEvents.filter((event) => {
+      const eventStart = getEventStartDate(event.start);
+      if (!eventStart) return false;
+      const eventDate = toDateOnly(eventStart);
+      if (rangeStartDate && eventDate < rangeStartDate) return false;
+      if (rangeEndDate && eventDate > rangeEndDate) return false;
+
+      const haystack = [
+        event.title,
+        event.description,
+        event.location,
+        event.attendees?.join(" "),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      if (mode === "basic") {
+        return haystack.includes(keyword);
+      }
+
+      if (keyword && !haystack.includes(keyword)) return false;
+      if (exclude && haystack.includes(exclude)) return false;
+      if (attendees) {
+        const attendeeText = (event.attendees ?? []).join(" ").toLowerCase();
+        if (!attendeeText.includes(attendees)) return false;
+      }
+      if (location && !(event.location ?? "").toLowerCase().includes(location)) return false;
+      if (filterStartDate && eventDate < filterStartDate) return false;
+      if (filterEndDate && eventDate > filterEndDate) return false;
+      return true;
+    });
+
+    lastSearchKeyRef.current = searchKey;
+    searchResultsCacheRef.current = matches;
+    setSearchResults(matches);
+
+    const shouldResetIndex = options.resetIndex ?? !isSameKey;
+    if (shouldResetIndex) {
+      searchIndexRef.current = 0;
+      setSearchIndex(0);
+      if (options.focusFirst && matches[0]) focusSearchResult(matches[0]);
+    } else if (searchIndexRef.current >= matches.length && matches.length > 0) {
+      const nextIndex = matches.length - 1;
+      searchIndexRef.current = nextIndex;
+      setSearchIndex(nextIndex);
+    }
+
+    return matches;
+  };
+
+  const handleBasicSearch = async () => {
+    await getSearchResults("basic", { resetIndex: true, focusFirst: true });
+  };
+
+  const handleAdvancedSearch = async () => {
+    await getSearchResults("advanced", { resetIndex: true, focusFirst: true });
+  };
+
+  const handleSearchMove = async (direction: "prev" | "next") => {
+    const results = await getSearchResults("basic", { reuse: true });
+    if (!results.length) return;
+    const currentIndex = searchIndexRef.current;
+    const nextIndex = direction === "next" ? currentIndex + 1 : currentIndex - 1;
+    if (nextIndex < 0 || nextIndex >= results.length) return;
+    searchIndexRef.current = nextIndex;
+    setSearchIndex(nextIndex);
+    focusSearchResult(results[nextIndex]);
+  };
+
+  const openMonthEventPopup = (event: CalendarEvent, anchor: HTMLElement | null) => {
+    if (!anchor) {
+      setMonthEventPopup({
+        event,
+        top: 96,
+        left: window.innerWidth / 2,
+        align: "center",
+        anchorTop: 0,
+        anchorBottom: 0,
+      });
+      return;
+    }
+    const rect = anchor.getBoundingClientRect();
+    const isSmallScreen = window.innerWidth < 640;
+    const popupHeight = 320;
+    const popupGap = 12;
+    const viewportHeight = window.innerHeight;
+    const spaceAbove = rect.top;
+    const spaceBelow = viewportHeight - rect.bottom;
+    const align = isSmallScreen
+      ? "center"
+      : rect.left + rect.width / 2 > window.innerWidth / 2
+        ? "right"
+        : "left";
+    const left = align === "center" ? window.innerWidth / 2 : align === "right" ? rect.right : rect.left;
+    const maxTop = Math.max(popupGap, viewportHeight - popupHeight - popupGap);
+    const bottomTop = rect.bottom + popupGap;
+    const topTop = rect.top - popupHeight - popupGap;
+    const fitsBelow = spaceBelow >= popupHeight + popupGap;
+    const fitsAbove = spaceAbove >= popupHeight + popupGap;
+    let top = bottomTop;
+    if (!fitsBelow && fitsAbove) {
+      top = topTop;
+    } else if (!fitsBelow && !fitsAbove && spaceAbove > spaceBelow) {
+      top = topTop;
+    }
+    top = Math.min(Math.max(top, popupGap), maxTop);
+    setMonthEventPopup({
+      event,
+      top,
+      left,
+      align,
+      anchorTop: rect.top,
+      anchorBottom: rect.bottom,
+    });
+  };
+
+  const handleEditFromPopup = (event: CalendarEvent) => {
+    const startDate = getEventStartDate(event.start);
+    if (startDate) setSelectedDate(startDate);
+    setActiveEvent(event);
+    setAiDraftEvent(null);
+    setAiDraftIndex(null);
+    setModalOpen(true);
+  };
+
+  const handleToggleSearchResults = async () => {
+    const nextOpen = !searchResultsOpen;
+    if (nextOpen) {
+      setSearchAdvancedOpen(false);
+      await getSearchResults("basic", { reuse: true, resetIndex: false, focusFirst: false });
+      setSearchResultsOpen(true);
+    } else {
+      setSearchResultsOpen(false);
+    }
+  };
+
   const monthNumberLabel = `${currentMonth.getMonth() + 1}월`;
   const viewTitle =
     view === "month"
@@ -582,11 +971,28 @@ function CalendarPageInner() {
         ? `${getWeekOfMonth(currentMonth, weekStart)}주차`
         : formatLongDate(selectedDate);
   const viewBadge = null;
+  const hasSearchResults = searchResults.length > 0;
+  const isSearchPrevDisabled = !hasSearchResults || searchIndex <= 0;
+  const isSearchNextDisabled = !hasSearchResults || searchIndex >= searchResults.length - 1;
   const weekdayLabels = useMemo(() => {
     const labels = ["일", "월", "화", "수", "목", "금", "토"];
     const startIndex = 1;
     return labels.slice(startIndex).concat(labels.slice(0, startIndex));
   }, []);
+  const monthPopupTransform = useMemo(() => {
+    if (!monthEventPopup) return "translate(0, 0)";
+    if (monthEventPopup.align === "center") return "translate(-50%, 0)";
+    if (monthEventPopup.align === "right") return "translate(-100%, 0)";
+    return "translate(0, 0)";
+  }, [monthEventPopup]);
+  const monthPopupEvent = monthEventPopup?.event ?? null;
+  const monthPopupAccent = monthPopupEvent ? getPopupAccentColor(monthPopupEvent) : "#111827";
+  const monthPopupCardBg = "#F9FAFB";
+  const monthPopupDateLabel = monthPopupEvent ? getEventDateLabel(monthPopupEvent) : "";
+  const monthPopupTimeLabel = monthPopupEvent ? getEventTimeLabel(monthPopupEvent) : "";
+  const monthPopupReminderLabel = monthPopupEvent ? getReminderLabel(monthPopupEvent.reminders) : null;
+  const monthPopupLocation = monthPopupEvent?.location?.trim() || "";
+  const monthPopupDescription = monthPopupEvent?.description?.trim() || "";
 
   return (
     <div
@@ -668,7 +1074,7 @@ function CalendarPageInner() {
         onDelete={actions.remove}
       />
 
-      <header className="relative flex flex-col whitespace-nowrap px-6 py-3 bg-white/80 dark:bg-[#111418]/80 backdrop-blur-md sticky top-0 z-50 border-b border-gray-100 dark:border-gray-800">
+      <header className="relative flex flex-col whitespace-nowrap px-6 py-2 bg-white/80 dark:bg-[#111418]/80 backdrop-blur-md sticky top-0 z-50 border-b border-gray-100 dark:border-gray-800">
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-4 text-slate-900 dark:text-white">
             <div className="h-8 px-3 rounded-lg border border-dashed border-slate-300 dark:border-slate-600 text-xs font-medium flex items-center justify-center text-gray-500">
@@ -676,8 +1082,14 @@ function CalendarPageInner() {
             </div>
             <div className="flex items-center gap-2"></div>
           </div>
-          <div className="relative flex flex-1 items-center justify-end min-h-[56px]">
-            <motion.div className="header-actions-layer flex flex-wrap items-center gap-3 justify-end">
+          <div className="relative flex flex-1 items-center justify-end min-h-[48px]">
+            {!searchOpen && (
+              <motion.div
+                className="header-actions-layer flex flex-wrap items-center gap-3 justify-end"
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.2, ease: [0.2, 0.7, 0.2, 1] }}
+              >
               <div
                 className="relative hidden md:flex items-center bg-gray-100 dark:bg-gray-800 p-1 rounded-full mr-2 segmented-toggle"
                 style={viewToggleStyle}
@@ -731,6 +1143,15 @@ function CalendarPageInner() {
                 >
                   <Plus className="size-5" />
                 </button>
+                <button
+                  className="flex items-center justify-center rounded-full size-9 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-slate-600 dark:text-slate-300"
+                  type="button"
+                  onClick={() => setSearchOpen(true)}
+                  aria-label="검색"
+                  aria-expanded={searchOpen}
+                >
+                  <Search className="size-5" />
+                </button>
               </div>
               <div className="hidden md:flex">
                 <CalendarHeaderActions status={state.authStatus} />
@@ -776,7 +1197,247 @@ function CalendarPageInner() {
                     "url('https://lh3.googleusercontent.com/aida-public/AB6AXuDtp4EN6aKO3e3qE7dZReqE5nVIXN_43sBCdsgWGm4dzvClBNxW2Pt1ibIGwyQGQMdAIBX_9RVDwfqDlnwBKi8NUIR8rfqDGSj3ORylu9O-CXp3AbsLY8YZ3mR-GbbYWBsxTQB71hnJnS4lk0cKSAhR2Mze8_hVjC0o-hEK8J-0fJFYlA65gMBrartXdJiV-A1yCzwWF3mFEhJe5idk641dS6JWo1bXrr9PhY-ZLclsGGcfXhRrdchRQLXlbMpMc3vMNQXkbvxka-4')",
                 }}
               ></div>
-            </motion.div>
+              </motion.div>
+            )}
+            {searchOpen && (
+              <motion.div
+                className="absolute left-0 right-0 -top-0.5 z-50 px-6 flex justify-center"
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.25, ease: [0.2, 0.7, 0.2, 1] }}
+              >
+                <div className="flex w-full items-start justify-center gap-3">
+                  <div
+                    className={`flex flex-1 max-w-3xl flex-col rounded-[28px] border border-gray-200 bg-white px-5 py-3 shadow-sm ${
+                      searchAdvancedOpen ? "" : "min-h-[60px]"
+                    } ${searchAdvancedOpen || searchResultsOpen ? "justify-start" : "justify-center"}`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex flex-1 items-center rounded-full bg-white">
+                        <Search className="mr-2 size-4 text-gray-500" />
+                        <input
+                          className="w-full bg-transparent text-[13px] text-gray-700 placeholder:text-gray-400 focus:outline-none"
+                          type="text"
+                          placeholder="일정 키워드 입력"
+                          value={searchFilters.title}
+                          onChange={(event) =>
+                            setSearchFilters((prev) => ({ ...prev, title: event.target.value }))
+                          }
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              void handleBasicSearch();
+                            }
+                          }}
+                          aria-label="기본 검색어"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        className="flex size-8 items-center justify-center rounded-full bg-transparent text-gray-600 transition-colors hover:bg-gray-200"
+                        onClick={() => setSearchAdvancedOpen((prev) => !prev)}
+                        aria-label="고급 검색 토글"
+                        aria-expanded={searchAdvancedOpen}
+                      >
+                        <ChevronDown
+                          className={`size-4 transition-transform ${searchAdvancedOpen ? "rotate-180" : ""}`}
+                        />
+                      </button>
+                    </div>
+                    <div
+                      className="overflow-hidden transition-[height] duration-[350ms] ease-[cubic-bezier(0.09,0.75,0.53,1)]"
+                      style={{ height: searchResultsHeight }}
+                    >
+                      <div ref={searchResultsPanelRef} className="px-5 pb-4 pt-3">
+                        <div className="text-xs font-semibold text-slate-500 mb-3">모두 찾기 결과</div>
+                        {searchResults.length === 0 ? (
+                          <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-xs text-gray-500">
+                            검색 결과가 없습니다.
+                          </div>
+                        ) : (
+                          <div className="max-h-[240px] space-y-2 overflow-y-auto pr-1">
+                            {searchResults.map((event) => {
+                              const eventDate = getEventStartDate(event.start);
+                              const dateLabel = eventDate ? formatShortDate(eventDate) : "날짜 없음";
+                              return (
+                                <div
+                                  key={`search-result-${event.id}`}
+                                  className="flex items-center justify-between gap-4 rounded-xl border border-gray-100 bg-white px-4 py-3 text-xs text-gray-700 shadow-sm"
+                                >
+                                  <div className="min-w-0">
+                                    <div className="truncate font-semibold text-gray-800">{event.title}</div>
+                                    <div className="mt-1 text-[11px] text-gray-500">{dateLabel}</div>
+                                  </div>
+                                  <div className="min-w-[120px] text-right text-[11px] text-gray-500">
+                                    {event.location?.trim() || "-"}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div
+                      className="overflow-hidden transition-[height] duration-[400ms] ease-[cubic-bezier(0.09,0.75,0.53,1)]"
+                      style={{ height: searchAdvancedHeight }}
+                    >
+                      <div ref={searchAdvancedRef} className="px-5 pb-4 pt-2">
+                        <div className="grid grid-cols-[140px_1fr] gap-x-6 gap-y-3 text-sm">
+                          <div className="pt-2 text-gray-700">제목</div>
+                          <input
+                            className="w-full rounded-full border border-[#e6e6e1] bg-white px-4 py-2 text-[13px] text-[#6b6460] placeholder:text-[#6b6460] focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
+                            type="text"
+                            placeholder="일정에 포함된 키워드"
+                            value={searchFilters.title}
+                            onChange={(event) =>
+                              setSearchFilters((prev) => ({ ...prev, title: event.target.value }))
+                            }
+                            aria-label="제목"
+                          />
+
+                          <div className="pt-2 text-gray-700">참석자</div>
+                          <input
+                            className="w-full rounded-full border border-[#e6e6e1] bg-white px-4 py-2 text-[13px] text-[#6b6460] placeholder:text-[#6b6460] focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
+                            type="text"
+                            placeholder="참석자, 주최자 또는 크리에이터 입력"
+                            value={searchFilters.attendees}
+                            onChange={(event) =>
+                              setSearchFilters((prev) => ({ ...prev, attendees: event.target.value }))
+                            }
+                            aria-label="참석자"
+                          />
+
+                          <div className="pt-2 text-gray-700">장소</div>
+                          <input
+                            className="w-full rounded-full border border-[#e6e6e1] bg-white px-4 py-2 text-[13px] text-[#6b6460] placeholder:text-[#6b6460] focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
+                            type="text"
+                            placeholder="위치 또는 회의실 입력"
+                            value={searchFilters.location}
+                            onChange={(event) =>
+                              setSearchFilters((prev) => ({ ...prev, location: event.target.value }))
+                            }
+                            aria-label="장소"
+                          />
+
+                          <div className="pt-2 text-gray-700">제외할 검색어</div>
+                          <input
+                            className="w-full rounded-full border border-[#e6e6e1] bg-white px-4 py-2 text-[13px] text-[#6b6460] placeholder:text-[#6b6460] focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
+                            type="text"
+                            placeholder="일정에 포함되지 않은 키워드"
+                            value={searchFilters.exclude}
+                            onChange={(event) =>
+                              setSearchFilters((prev) => ({ ...prev, exclude: event.target.value }))
+                            }
+                            aria-label="제외할 검색어"
+                          />
+
+                          <div className="pt-2 text-gray-700">날짜</div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <input
+                              className="rounded-full border border-[#e6e6e1] bg-white px-4 py-2 text-[13px] text-[#6b6460] focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
+                              type="date"
+                              value={searchFilters.startDate}
+                              onChange={(event) =>
+                                setSearchFilters((prev) => ({ ...prev, startDate: event.target.value }))
+                              }
+                              aria-label="시작 날짜"
+                            />
+                            <span className="text-gray-400">-</span>
+                            <input
+                              className="rounded-full border border-[#e6e6e1] bg-white px-4 py-2 text-[13px] text-[#6b6460] focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
+                              type="date"
+                              value={searchFilters.endDate}
+                              onChange={(event) =>
+                                setSearchFilters((prev) => ({ ...prev, endDate: event.target.value }))
+                              }
+                              aria-label="종료 날짜"
+                            />
+                          </div>
+
+                          <div className="pt-2 text-gray-700">검색 범위</div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <input
+                              className="rounded-full border border-[#e6e6e1] bg-white px-4 py-2 text-[13px] text-[#6b6460] focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
+                              type="date"
+                              value={searchFilters.rangeStart}
+                              onChange={(event) =>
+                                setSearchFilters((prev) => ({ ...prev, rangeStart: event.target.value }))
+                              }
+                              aria-label="검색 범위 시작"
+                            />
+                            <span className="text-gray-400">-</span>
+                            <input
+                              className="rounded-full border border-[#e6e6e1] bg-white px-4 py-2 text-[13px] text-[#6b6460] focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
+                              type="date"
+                              value={searchFilters.rangeEnd}
+                              onChange={(event) =>
+                                setSearchFilters((prev) => ({ ...prev, rangeEnd: event.target.value }))
+                              }
+                              aria-label="검색 범위 종료"
+                            />
+                          </div>
+                        </div>
+                        <div className="mt-4 flex items-center justify-end gap-4 text-sm">
+                          <button
+                            type="button"
+                            className="flex size-9 items-center justify-center rounded-full border border-[#e6e6e1] text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
+                            aria-label="재설정"
+                          >
+                            <Undo2 className="size-4" />
+                          </button>
+                          <button
+                            type="button"
+                            className="flex size-9 items-center justify-center rounded-full border border-blue-500 bg-blue-50 text-blue-600 transition-colors hover:bg-blue-100"
+                            aria-label="검색"
+                            onClick={() => void handleAdvancedSearch()}
+                          >
+                            <Search className="size-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 pt-3">
+                    <button
+                      type="button"
+                      className="flex size-8 items-center justify-center rounded-full bg-transparent text-gray-600 transition-colors hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                      onClick={() => void handleSearchMove("prev")}
+                      aria-label="이전 검색 결과"
+                      disabled={isSearchPrevDisabled}
+                    >
+                      <ChevronLeft className="size-4" />
+                    </button>
+                    <button
+                      type="button"
+                      className="flex size-8 items-center justify-center rounded-full bg-transparent text-gray-600 transition-colors hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                      onClick={() => void handleSearchMove("next")}
+                      aria-label="다음 검색 결과"
+                      disabled={isSearchNextDisabled}
+                    >
+                      <ChevronRight className="size-4" />
+                    </button>
+                    <button
+                      type="button"
+                      className="flex h-8 items-center justify-center rounded-full border border-gray-200 px-3 text-xs text-gray-600 transition-colors hover:bg-gray-100"
+                      onClick={() => void handleToggleSearchResults()}
+                      aria-label="모두 찾기"
+                      aria-pressed={searchResultsOpen}
+                    >
+                      모두 찾기
+                    </button>
+                    <button
+                      type="button"
+                      className="flex size-8 items-center justify-center rounded-full bg-transparent text-gray-600 transition-colors hover:bg-gray-200"
+                      onClick={() => setSearchOpen(false)}
+                      aria-label="검색 닫기"
+                    >
+                      <X className="size-4" />
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
           </div>
         </div>
       </header>
@@ -1082,6 +1743,7 @@ function CalendarPageInner() {
                           setAiDraftEvent(null);
                           setAiDraftIndex(null);
                           setModalOpen(true);
+                          setMonthEventPopup(null);
                         };
                         el.__dblClickHandler = handler;
                         el.addEventListener("dblclick", handler);
@@ -1110,7 +1772,7 @@ function CalendarPageInner() {
                           if (arg.event.allDay) {
                             return (
                               <div
-                                className={`month-event-content${continued ? " month-event-continued" : ""}`}
+                                className={`month-event-content${continued ? " month-event-continued" : ""} cursor-pointer`}
                                 style={{
                                   color: textColor,
                                   ["--event-accent" as never]: accentStrong,
@@ -1122,7 +1784,7 @@ function CalendarPageInner() {
                             );
                           }
                           return (
-                            <div className="timegrid-event-content" style={{ color: textColor }}>
+                            <div className="timegrid-event-content cursor-pointer" style={{ color: textColor }}>
                               <span className="fc-event-title">{arg.event.title}</span>
                               {timeText && <span className="fc-event-time">{timeText}</span>}
                             </div>
@@ -1130,7 +1792,7 @@ function CalendarPageInner() {
                         }
                         return (
                           <div
-                            className={`month-event-content${continued ? " month-event-continued" : ""}`}
+                            className={`month-event-content${continued ? " month-event-continued" : ""} cursor-pointer`}
                             style={{
                               color: textColor,
                               ["--event-accent" as never]: accentStrong,
@@ -1159,6 +1821,7 @@ function CalendarPageInner() {
                       }}
                       dateClick={(info) => {
                         setSelectedDate(info.date);
+                        setMonthEventPopup(null);
                       }}
                       eventClick={(info) => {
                         const target = state.allEvents.find((ev) => String(ev.id) === String(info.event.id));
@@ -1167,7 +1830,12 @@ function CalendarPageInner() {
                           setActiveEvent(target);
                           setAiDraftEvent(null);
                           setAiDraftIndex(null);
-                          setModalOpen(true);
+                          if (view === "month" && info.view.type === "dayGridMonth") {
+                            setModalOpen(false);
+                            openMonthEventPopup(target, info.el);
+                          } else {
+                            setModalOpen(true);
+                          }
                         }
                       }}
                     />
@@ -1245,6 +1913,111 @@ function CalendarPageInner() {
           </div>
         </div>
       </main>
+      {monthEventPopup && monthPopupEvent && (
+        <>
+          <div
+            className="fixed z-[80] w-[min(360px,calc(100vw-32px))] rounded-3xl border border-[#e8dfd4] bg-white p-5 text-[#1b1814] shadow-[0_20px_45px_rgba(20,16,12,0.2)] dark:border-gray-800 dark:bg-[#111418] dark:text-white"
+            style={{
+              top: monthEventPopup.top,
+              left: monthEventPopup.left,
+              transform: monthPopupTransform,
+            }}
+            role="dialog"
+            aria-label={`${monthPopupEvent.title} 일정 상세`}
+            ref={monthPopupRef}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  {monthPopupEvent.title}
+                </h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleEditFromPopup(monthPopupEvent)}
+                  className="rounded-full border border-[#e8dfd4] p-2 text-[#6f6257] hover:bg-[#f9f3ea] dark:border-gray-800 dark:text-slate-300 dark:hover:bg-[#1c2027]"
+                  aria-label="일정 수정"
+                >
+                  <Pencil className="size-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMonthEventPopup(null)}
+                  className="rounded-full border border-[#e8dfd4] p-2 text-[#6f6257] hover:bg-[#f9f3ea] dark:border-gray-800 dark:text-slate-300 dark:hover:bg-[#1c2027]"
+                  aria-label="팝업 닫기"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-4 space-y-3 text-sm text-[#5d534a] dark:text-slate-200">
+              <div
+                className="flex items-start gap-3 rounded-xl px-3 py-2"
+                style={{ backgroundColor: monthPopupCardBg }}
+              >
+                <Clock className="mt-0.5 size-4 text-[#1b1814] dark:text-slate-100" />
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-[#a18f7b] dark:text-slate-400">
+                    일정
+                  </p>
+                  <p className="font-semibold text-[#1b1814] dark:text-white">
+                    {monthPopupDateLabel}
+                  </p>
+                  <p>{monthPopupTimeLabel}</p>
+                </div>
+              </div>
+              {monthPopupLocation && (
+                <div
+                  className="flex items-start gap-3 rounded-xl px-3 py-2"
+                  style={{ backgroundColor: monthPopupCardBg }}
+                >
+                  <MapPin className="mt-0.5 size-4 text-[#1b1814] dark:text-slate-100" />
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.2em] text-[#a18f7b] dark:text-slate-400">
+                      장소
+                    </p>
+                    <p className="font-semibold text-[#1b1814] dark:text-white">
+                      {monthPopupLocation}
+                    </p>
+                  </div>
+                </div>
+              )}
+              {monthPopupReminderLabel && (
+                <div
+                  className="flex items-start gap-3 rounded-xl px-3 py-2"
+                  style={{ backgroundColor: monthPopupCardBg }}
+                >
+                  <Bell className="mt-0.5 size-4 text-[#1b1814] dark:text-slate-100" />
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.2em] text-[#a18f7b] dark:text-slate-400">
+                      알림
+                    </p>
+                    <p className="font-semibold text-[#1b1814] dark:text-white">
+                      {monthPopupReminderLabel}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {monthPopupDescription && (
+              <div
+                className="mt-4 rounded-xl px-4 py-3 text-sm text-[#5d534a] dark:text-slate-200"
+                style={{ backgroundColor: monthPopupCardBg }}
+              >
+                <p className="text-xs uppercase tracking-[0.2em] text-[#a18f7b] dark:text-slate-400">
+                  메모
+                </p>
+                <p className="mt-2 text-sm text-[#1b1814] dark:text-white">
+                  {monthPopupDescription}
+                </p>
+              </div>
+            )}
+          </div>
+        </>
+      )}
       <button
         className="fixed bottom-6 right-6 z-50 size-14 rounded-full bg-primary text-white shadow-lg shadow-blue-500/30 hover:bg-blue-600 transition-colors flex items-center justify-center"
         type="button"

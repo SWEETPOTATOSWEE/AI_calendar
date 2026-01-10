@@ -436,7 +436,7 @@ const buildTimeOptions = (stepMinutes: number) => {
   return options;
 };
 
-type DatePopoverProps = {
+export type DatePopoverProps = {
   value: string;
   onChange: (value: string) => void;
   label: string;
@@ -445,7 +445,7 @@ type DatePopoverProps = {
   placeholder?: string;
 };
 
-const DatePopover = ({
+export const DatePopover = ({
   value,
   onChange,
   label,
@@ -453,6 +453,7 @@ const DatePopover = ({
   disabled = false,
   placeholder = "날짜 선택",
 }: DatePopoverProps) => {
+  const disableAnimation = true;
   const [open, setOpen] = useState(false);
   const [scrollMode, setScrollMode] = useState(false);
   const [viewDate, setViewDate] = useState<Date>(() => parseISODate(value) ?? new Date());
@@ -462,8 +463,7 @@ const DatePopover = ({
   const [closing, setClosing] = useState(false);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
-  const positionRef = useRef(position);
-  const prevScrollModeRef = useRef(scrollMode);
+  const anchorOffsetRef = useRef<{ x: number; y: number } | null>(null);
   const yearRefs = useRef<Record<number, HTMLButtonElement | null>>({});
   const monthRefs = useRef<Record<number, HTMLButtonElement | null>>({});
 
@@ -499,14 +499,8 @@ const DatePopover = ({
     setViewDate(parseISODate(value) ?? new Date());
   }, [open, value]);
 
-  useEffect(() => {
-    positionRef.current = position;
-  }, [position]);
-
   useLayoutEffect(() => {
     if (!open) return;
-    const scrollModeChanged = prevScrollModeRef.current !== scrollMode;
-    prevScrollModeRef.current = scrollMode;
     const scrollParent = getScrollParent(wrapperRef.current);
     const scrollTarget =
       scrollParent === document.body || scrollParent === document.documentElement ? window : scrollParent;
@@ -514,17 +508,18 @@ const DatePopover = ({
       if (!wrapperRef.current || !popoverRef.current) return;
       const rect = wrapperRef.current.getBoundingClientRect();
       const popoverRect = popoverRef.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      const spaceAbove = rect.top;
+      const anchorOffset = anchorOffsetRef.current;
+      const anchorX = rect.left + (anchorOffset?.x ?? rect.width / 2);
+      const anchorY = rect.top + (anchorOffset?.y ?? rect.height);
+      const spaceBelow = window.innerHeight - anchorY;
+      const spaceAbove = anchorY;
       const shouldOpenUp = spaceBelow < popoverRect.height && spaceAbove > spaceBelow;
       const top = shouldOpenUp
-        ? Math.max(8, rect.top - popoverRect.height - 8)
-        : Math.min(window.innerHeight - popoverRect.height - 8, rect.bottom + 8);
+        ? Math.max(8, anchorY - popoverRect.height - 8)
+        : Math.min(window.innerHeight - popoverRect.height - 8, anchorY + 8);
       const maxLeft = window.innerWidth - popoverRect.width - 8;
-      const preferredLeft = rect.right - popoverRect.width;
-      const left = scrollModeChanged
-        ? Math.min(Math.max(positionRef.current.left, 8), maxLeft)
-        : Math.min(Math.max(preferredLeft, 8), maxLeft);
+      const preferredLeft = anchorX - popoverRect.width / 2;
+      const left = Math.min(Math.max(preferredLeft, 8), maxLeft);
       setPosition({ top, left });
       setOpenUp(shouldOpenUp);
       setReady(true);
@@ -556,6 +551,12 @@ const DatePopover = ({
 
   const closePopover = () => {
     if (!open || closing) return;
+    if (disableAnimation) {
+      setOpen(false);
+      setClosing(false);
+      setScrollMode(false);
+      return;
+    }
     setClosing(true);
     setScrollMode(false);
   };
@@ -572,8 +573,13 @@ const DatePopover = ({
       <button
         type="button"
         className="flex items-center justify-center gap-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#0f141a] px-3 py-1 text-[15px] font-medium text-[#111827] disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
-        onClick={() => {
+        onClick={(event) => {
           if (open) {
+            if (disableAnimation) {
+              setOpen(false);
+              setReady(false);
+              return;
+            }
             if (closing) {
               setClosing(false);
             } else {
@@ -581,6 +587,15 @@ const DatePopover = ({
             }
             return;
           }
+          const rect = wrapperRef.current?.getBoundingClientRect();
+          if (rect) {
+            const isKeyboard = event.clientX === 0 && event.clientY === 0;
+            const offsetX = isKeyboard ? rect.width / 2 : event.clientX - rect.left;
+            const offsetY = isKeyboard ? rect.height : event.clientY - rect.top;
+            anchorOffsetRef.current = { x: offsetX, y: offsetY };
+          }
+          setReady(false);
+          setClosing(false);
           setOpen(true);
         }}
         disabled={disabled}
@@ -597,8 +612,8 @@ const DatePopover = ({
           <div
             ref={popoverRef}
             className={`fixed z-[9999] w-72 overflow-hidden popover-surface border border-gray-100 dark:border-gray-700 bg-white dark:bg-[#111418] p-4 shadow-lg ${
-              ready || closing ? "popover-animate" : ""
-            } ${closing ? "is-closing" : ""}`}
+              !disableAnimation && (ready || closing) ? "popover-animate" : ""
+            } ${!disableAnimation && closing ? "is-closing" : ""}`}
             style={{
               top: position.top,
               left: position.left,
@@ -607,7 +622,7 @@ const DatePopover = ({
             }}
             data-side={openUp ? "top" : "bottom"}
             data-align="end"
-            onAnimationEnd={handlePopoverAnimationEnd}
+            onAnimationEnd={disableAnimation ? undefined : handlePopoverAnimationEnd}
           >
           <div className="flex items-center justify-between">
             <div className="flex items-center">
@@ -744,10 +759,12 @@ const TimePopover = ({
   disabled = false,
   placeholder = "시간 선택",
 }: TimePopoverProps) => {
+  const disableAnimation = true;
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const selectedRef = useRef<HTMLButtonElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
+  const anchorOffsetRef = useRef<{ x: number; y: number } | null>(null);
   const [position, setPosition] = useState({ top: 0, left: 0 });
   const [ready, setReady] = useState(false);
   const [openUp, setOpenUp] = useState(false);
@@ -782,16 +799,16 @@ const TimePopover = ({
       if (!wrapperRef.current || !popoverRef.current) return;
       const rect = wrapperRef.current.getBoundingClientRect();
       const popoverRect = popoverRef.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      const spaceAbove = rect.top;
+      const anchorOffset = anchorOffsetRef.current;
+      const anchorX = rect.left + (anchorOffset?.x ?? rect.width / 2);
+      const anchorY = rect.top + (anchorOffset?.y ?? rect.height);
+      const spaceBelow = window.innerHeight - anchorY;
+      const spaceAbove = anchorY;
       const shouldOpenUp = spaceBelow < popoverRect.height && spaceAbove > spaceBelow;
       const top = shouldOpenUp
-        ? Math.max(8, rect.top - popoverRect.height - 8)
-        : Math.min(window.innerHeight - popoverRect.height - 8, rect.bottom + 8);
-      const left = Math.min(
-        Math.max(rect.right - popoverRect.width, 8),
-        window.innerWidth - popoverRect.width - 8
-      );
+        ? Math.max(8, anchorY - popoverRect.height - 8)
+        : Math.min(window.innerHeight - popoverRect.height - 8, anchorY + 8);
+      const left = Math.min(Math.max(anchorX - popoverRect.width / 2, 8), window.innerWidth - popoverRect.width - 8);
       setPosition({ top, left });
       setOpenUp(shouldOpenUp);
       setReady(true);
@@ -814,6 +831,12 @@ const TimePopover = ({
 
   const closePopover = () => {
     if (!open || closing) return;
+    if (disableAnimation) {
+      setOpen(false);
+      setClosing(false);
+      setReady(false);
+      return;
+    }
     setClosing(true);
   };
 
@@ -829,8 +852,13 @@ const TimePopover = ({
       <button
         type="button"
         className="flex items-center justify-center gap-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#0f141a] px-3 py-1 text-[15px] font-medium text-[#111827] disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
-        onClick={() => {
+        onClick={(event) => {
           if (open) {
+            if (disableAnimation) {
+              setOpen(false);
+              setReady(false);
+              return;
+            }
             if (closing) {
               setClosing(false);
             } else {
@@ -838,6 +866,15 @@ const TimePopover = ({
             }
             return;
           }
+          const rect = wrapperRef.current?.getBoundingClientRect();
+          if (rect) {
+            const isKeyboard = event.clientX === 0 && event.clientY === 0;
+            const offsetX = isKeyboard ? rect.width / 2 : event.clientX - rect.left;
+            const offsetY = isKeyboard ? rect.height : event.clientY - rect.top;
+            anchorOffsetRef.current = { x: offsetX, y: offsetY };
+          }
+          setReady(false);
+          setClosing(false);
           setOpen(true);
         }}
         disabled={disabled}
@@ -856,8 +893,8 @@ const TimePopover = ({
           <div
             ref={popoverRef}
             className={`fixed z-[9999] w-40 overflow-hidden popover-surface border border-gray-100 dark:border-gray-700 bg-white dark:bg-[#111418] p-2 shadow-lg ${
-              ready || closing ? "popover-animate" : ""
-            } ${closing ? "is-closing" : ""}`}
+              !disableAnimation && (ready || closing) ? "popover-animate" : ""
+            } ${!disableAnimation && closing ? "is-closing" : ""}`}
             style={{
               top: position.top,
               left: position.left,
@@ -866,7 +903,7 @@ const TimePopover = ({
             }}
             data-side={openUp ? "top" : "bottom"}
             data-align="end"
-            onAnimationEnd={handlePopoverAnimationEnd}
+            onAnimationEnd={disableAnimation ? undefined : handlePopoverAnimationEnd}
           >
           <div className="max-h-56 overflow-y-auto pr-1">
             {timeOptions.map((option) => {

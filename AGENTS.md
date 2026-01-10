@@ -47,6 +47,7 @@ Your goal is to write accurate code that matches the actual project state.
 
 - Do not invent APIs, functions, or behavior.
 - Do not state uncertain information as fact.
+- Do not run build commands unless the user explicitly asks.
 - When making git commits, always write the commit title and description in Korean.
 
 ---

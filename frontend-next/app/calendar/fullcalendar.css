@@ -521,3 +521,13 @@
   width: 100%;
   text-align: center;
 }
+
+/* Keep month event cards from changing color on click */
+.fc .fc-daygrid-event.fc-event-selected,
+.fc .fc-daygrid-event:focus {
+  box-shadow: none;
+}
+.fc .fc-daygrid-event.fc-event-selected::after,
+.fc .fc-daygrid-event:focus::after {
+  content: none;
+}

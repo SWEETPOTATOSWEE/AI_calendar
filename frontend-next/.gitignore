@@ -17,6 +17,9 @@
 /.next/
 /out/
 
+# sandbox pages
+/app/sandbox/
+
 # production
 /build
 

@@ -77,6 +77,7 @@ const MAX_CONVERSATION_CHARS = 900;
 type ConversationMessage = {
   role: "user" | "assistant";
   text: string;
+  attachments?: Attachment[];
   includeInPrompt?: boolean;
 };
 
@@ -122,22 +123,44 @@ type AiAssistantOptions = {
 export const useAiAssistant = (options?: AiAssistantOptions) => {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<AiMode>("add");
-  const [text, setText] = useState("");
+  const [textByMode, setTextByMode] = useState<Record<AiMode, string>>({ add: "", delete: "" });
   const [reasoningEffort, setReasoningEffort] = useState("low");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [conversation, setConversation] = useState<ConversationMessage[]>([]);
+  const [attachmentsByMode, setAttachmentsByMode] = useState<Record<AiMode, Attachment[]>>({
+    add: [],
+    delete: [],
+  });
+  const [conversationByMode, setConversationByMode] = useState<Record<AiMode, ConversationMessage[]>>({
+    add: [],
+    delete: [],
+  });
+  const text = textByMode[mode] ?? "";
+  const attachments = attachmentsByMode[mode] ?? [];
+  const conversation = conversationByMode[mode] ?? [];
   const model: AiModel = "mini";
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [progress, setProgress] = useState<null | "thinking" | "context">(null);
+  const [loadingByMode, setLoadingByMode] = useState<Record<AiMode, boolean>>({
+    add: false,
+    delete: false,
+  });
+  const [errorByMode, setErrorByMode] = useState<Record<AiMode, string | null>>({
+    add: null,
+    delete: null,
+  });
+  const [progressByMode, setProgressByMode] = useState<Record<AiMode, null | "thinking" | "context">>({
+    add: null,
+    delete: null,
+  });
+  const loading = loadingByMode[mode] ?? false;
+  const error = errorByMode[mode] ?? null;
+  const progress = progressByMode[mode] ?? null;
   const [addPreview, setAddPreview] = useState<AddPreviewResponse | null>(null);
   const [deletePreview, setDeletePreview] = useState<DeletePreviewResponse | null>(null);
   const [selectedAddItems, setSelectedAddItems] = useState<Record<number, boolean>>({});
   const [selectedDeleteGroups, setSelectedDeleteGroups] = useState<Record<string, boolean>>({});
   const requestIdRef = useRef<string | null>(null);
   const pendingUserTextRef = useRef<string | null>(null);
+  const pendingModeRef = useRef<AiMode | null>(null);
 
   const makeRequestId = () =>
     `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -149,20 +172,15 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
   }, []);
 
   const openWithText = useCallback((value: string) => {
-    setText(value.trim());
+    const trimmed = value.trim();
+    if (trimmed) {
+      setTextByMode((prev) => ({ ...prev, [mode]: trimmed }));
+    }
     setOpen(true);
-    setAddPreview(null);
-    setDeletePreview(null);
-    setError(null);
-    setProgress(null);
-  }, []);
+  }, [mode]);
 
   const close = useCallback(() => {
     setOpen(false);
-    setError(null);
-    setAddPreview(null);
-    setDeletePreview(null);
-    setProgress(null);
   }, []);
 
   useEffect(() => {
@@ -171,28 +189,42 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
     ensureDefaultDeleteRange();
   }, [mode, startDate, endDate, ensureDefaultDeleteRange]);
 
-  const resetConversation = useCallback(() => {
-    setConversation([]);
-    setAddPreview(null);
-    setDeletePreview(null);
-    setSelectedAddItems({});
-    setSelectedDeleteGroups({});
-    setError(null);
-    setProgress(null);
-    setLoading(false);
-    resetNlpContext().catch(() => {});
-  }, []);
-
-  const appendConversation = useCallback(
-    (role: ConversationMessage["role"], value: string, options?: { includeInPrompt?: boolean }) => {
+  const appendConversationForMode = useCallback(
+    (
+      targetMode: AiMode,
+      role: ConversationMessage["role"],
+      value: string,
+      options?: { includeInPrompt?: boolean }
+    ) => {
       const trimmed = value.trim();
       if (!trimmed) return;
-      setConversation((prev) =>
-        trimConversation([...prev, { role, text: trimmed, includeInPrompt: options?.includeInPrompt }])
-      );
+      setConversationByMode((prev) => ({
+        ...prev,
+        [targetMode]: trimConversation([
+          ...(prev[targetMode] ?? []),
+          { role, text: trimmed, includeInPrompt: options?.includeInPrompt },
+        ]),
+      }));
     },
     []
   );
+
+  const resetConversation = useCallback(() => {
+    setConversationByMode((prev) => ({ ...prev, [mode]: [] }));
+    setTextByMode((prev) => ({ ...prev, [mode]: "" }));
+    setAttachmentsByMode((prev) => ({ ...prev, [mode]: [] }));
+    if (mode === "add") {
+      setAddPreview(null);
+      setSelectedAddItems({});
+    } else {
+      setDeletePreview(null);
+      setSelectedDeleteGroups({});
+    }
+    setErrorByMode((prev) => ({ ...prev, [mode]: null }));
+    setProgressByMode((prev) => ({ ...prev, [mode]: null }));
+    setLoadingByMode((prev) => ({ ...prev, [mode]: false }));
+    resetNlpContext().catch(() => {});
+  }, [mode]);
 
   const handleAttach = useCallback(async (files: FileList | null) => {
     if (!files) return;
@@ -203,7 +235,7 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
 
     for (const file of slice) {
       if (file.size > MAX_FILE_SIZE) {
-        setError("이미지가 너무 큽니다. 2.5MB 이하로 올려주세요.");
+        setErrorByMode((prev) => ({ ...prev, [mode]: "이미지가 너무 큽니다. 2.5MB 이하로 올려주세요." }));
         continue;
       }
       const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -219,43 +251,59 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
       });
     }
 
-    setAttachments((prev) => [...prev, ...next]);
-  }, [attachments.length]);
+    setAttachmentsByMode((prev) => ({ ...prev, [mode]: [...(prev[mode] ?? []), ...next] }));
+  }, [attachments.length, mode]);
 
   const removeAttachment = useCallback((id: string) => {
-    setAttachments((prev) => prev.filter((item) => item.id !== id));
-  }, []);
+    setAttachmentsByMode((prev) => ({
+      ...prev,
+      [mode]: (prev[mode] ?? []).filter((item) => item.id !== id),
+    }));
+  }, [mode]);
 
   const preview = useCallback(async () => {
     const trimmedText = text.trim();
     if (!trimmedText && attachments.length === 0) {
-      setError("문장을 입력해주세요.");
+      setErrorByMode((prev) => ({ ...prev, [mode]: "문장을 입력해주세요." }));
       return;
     }
     const requestId = makeRequestId();
+    const requestMode = mode;
+    const baseConversation = conversation;
     requestIdRef.current = requestId;
-    setLoading(true);
-    setProgress("thinking");
-    setError(null);
-    setAddPreview(null);
-    setDeletePreview(null);
-    const userMessage = trimmedText || (attachments.length > 0 ? "이미지 첨부" : "");
-    let nextConversation = conversation;
+    pendingModeRef.current = requestMode;
+    setLoadingByMode((prev) => ({ ...prev, [requestMode]: true }));
+    setProgressByMode((prev) => ({ ...prev, [requestMode]: "thinking" }));
+    setErrorByMode((prev) => ({ ...prev, [requestMode]: null }));
+    if (requestMode === "add") {
+      setAddPreview(null);
+    } else {
+      setDeletePreview(null);
+    }
+    const attachmentSnapshot = attachments.map((item) => ({ ...item }));
+    const userMessage = trimmedText || (attachmentSnapshot.length > 0 ? "이미지 첨부" : "");
+    let nextConversation = baseConversation;
     if (userMessage) {
       nextConversation = trimConversation([
-        ...conversation,
-        { role: "user", text: userMessage, includeInPrompt: true },
+        ...baseConversation,
+        {
+          role: "user",
+          text: userMessage,
+          includeInPrompt: true,
+          attachments: attachmentSnapshot.length > 0 ? attachmentSnapshot : undefined,
+        },
       ]);
-      setConversation(nextConversation);
+      setConversationByMode((prev) => ({ ...prev, [requestMode]: nextConversation }));
       pendingUserTextRef.current = userMessage;
     }
-    setText("");
+    setTextByMode((prev) => ({ ...prev, [requestMode]: "" }));
+    setAttachmentsByMode((prev) => ({ ...prev, [requestMode]: [] }));
     const payloadText = buildConversationText(nextConversation) || trimmedText;
     try {
-      if (mode === "add") {
+      if (requestMode === "add") {
         const response = await previewNlp(
           payloadText,
-          attachments.map((item) => item.dataUrl),
+          attachmentSnapshot.map((item) => item.dataUrl),
           reasoningEffort,
           model,
           requestId
@@ -263,10 +311,10 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
         if (requestIdRef.current !== requestId) return;
         const data = response as AddPreviewResponse;
         if (data.context_used) {
-          setProgress("context");
+          setProgressByMode((prev) => ({ ...prev, [requestMode]: "context" }));
           await new Promise((resolve) => setTimeout(resolve, 2000));
           if (requestIdRef.current !== requestId) return;
-          setProgress("thinking");
+          setProgressByMode((prev) => ({ ...prev, [requestMode]: "thinking" }));
           await new Promise((resolve) => setTimeout(resolve, 350));
           if (requestIdRef.current !== requestId) return;
         }
@@ -278,15 +326,20 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
         });
         setSelectedAddItems(selection);
         if (data.need_more_information) {
-          appendConversation("assistant", data.content || "추가로 확인할 정보가 필요합니다.", {
+          appendConversationForMode(
+            requestMode,
+            "assistant",
+            data.content || "추가로 확인할 정보가 필요합니다.",
+            {
             includeInPrompt: true,
-          });
+          }
+          );
         }
       } else {
         if (!startDate || !endDate) {
-          setError("삭제 범위를 선택해주세요.");
-          setLoading(false);
-          setProgress(null);
+          setErrorByMode((prev) => ({ ...prev, [requestMode]: "삭제 범위를 선택해주세요." }));
+          setLoadingByMode((prev) => ({ ...prev, [requestMode]: false }));
+          setProgressByMode((prev) => ({ ...prev, [requestMode]: null }));
           return;
         }
         const response = await previewNlpDelete(
@@ -307,23 +360,29 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
         });
         setSelectedDeleteGroups(selection);
         if (groups.length > 0) {
-          appendConversation("assistant", "삭제 후보를 찾았습니다. 확인 후 적용하세요.", {
-            includeInPrompt: false,
-          });
+          appendConversationForMode(
+            requestMode,
+            "assistant",
+            "삭제 후보를 찾았습니다. 확인 후 적용하세요.",
+            {
+              includeInPrompt: false,
+            }
+          );
         }
       }
     } catch (err) {
       if (requestIdRef.current !== requestId) return;
       const message = err instanceof Error ? err.message : "AI 요청에 실패했습니다.";
-      setError(message);
+      setErrorByMode((prev) => ({ ...prev, [requestMode]: message }));
     } finally {
       if (requestIdRef.current === requestId) {
         requestIdRef.current = null;
         pendingUserTextRef.current = null;
-        setLoading(false);
-        setProgress(null);
+        pendingModeRef.current = null;
+        setLoadingByMode((prev) => ({ ...prev, [requestMode]: false }));
+        setProgressByMode((prev) => ({ ...prev, [requestMode]: null }));
       }
-      setText("");
+      setTextByMode((prev) => ({ ...prev, [requestMode]: "" }));
     }
   }, [
     mode,
@@ -334,7 +393,7 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
     startDate,
     endDate,
     conversation,
-    appendConversation,
+    appendConversationForMode,
   ]);
 
   const updateAddPreviewItem = useCallback((index: number, patch: Partial<AddPreviewItem>) => {
@@ -351,11 +410,12 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
     const activeRequestId = requestIdRef.current;
     if (!activeRequestId) return;
     requestIdRef.current = null;
-    setLoading(false);
-    setProgress(null);
     const pendingText = pendingUserTextRef.current;
-    setConversation((prev) => {
-      const next = [...prev];
+    const targetMode = pendingModeRef.current ?? mode;
+    setLoadingByMode((prev) => ({ ...prev, [targetMode]: false }));
+    setProgressByMode((prev) => ({ ...prev, [targetMode]: null }));
+    setConversationByMode((prev) => {
+      const next = [...(prev[targetMode] ?? [])];
       if (pendingText) {
         for (let i = next.length - 1; i >= 0; i -= 1) {
           const msg = next[i];
@@ -365,25 +425,26 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
           }
         }
       }
-      return trimConversation(next);
+      return { ...prev, [targetMode]: trimConversation(next) };
     });
     pendingUserTextRef.current = null;
+    pendingModeRef.current = null;
     try {
       await interruptNlp(activeRequestId);
     } catch (err) {
       const message = err instanceof Error ? err.message : "중단 요청에 실패했습니다.";
-      setError(message);
+      setErrorByMode((prev) => ({ ...prev, [targetMode]: message }));
     }
-  }, [appendConversation]);
+  }, [mode]);
 
   const apply = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+    setLoadingByMode((prev) => ({ ...prev, [mode]: true }));
+    setErrorByMode((prev) => ({ ...prev, [mode]: null }));
     try {
       if (mode === "add") {
         const items = (addPreview?.items || []).filter((_, idx) => selectedAddItems[idx]);
         if (!items.length) {
-          setError("추가할 항목을 선택해주세요.");
+          setErrorByMode((prev) => ({ ...prev, [mode]: "추가할 항목을 선택해주세요." }));
           return;
         }
         const created = await applyNlpAdd(items as unknown as Record<string, unknown>[]);
@@ -395,7 +456,7 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
           .flatMap((group) => group.ids || [])
           .filter((id) => (typeof id === "number" ? Number.isFinite(id) : Boolean(id)));
         if (!ids.length) {
-          setError("삭제할 항목을 선택해주세요.");
+          setErrorByMode((prev) => ({ ...prev, [mode]: "삭제할 항목을 선택해주세요." }));
           return;
         }
         const numericIds = ids.filter((id) => typeof id === "number") as number[];
@@ -409,20 +470,27 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
         options?.onDeleteApplied?.(ids);
       }
       setOpen(false);
-      setAddPreview(null);
-      setDeletePreview(null);
-      setConversation([]);
+      if (mode === "add") {
+        setAddPreview(null);
+      } else {
+        setDeletePreview(null);
+      }
+      setConversationByMode((prev) => ({ ...prev, [mode]: [] }));
+      setTextByMode((prev) => ({ ...prev, [mode]: "" }));
+      setAttachmentsByMode((prev) => ({ ...prev, [mode]: [] }));
       resetNlpContext().catch(() => {});
       options?.onApplied?.();
     } catch (err) {
       const message = err instanceof Error ? err.message : "적용에 실패했습니다.";
-      setError(message);
+      setErrorByMode((prev) => ({ ...prev, [mode]: message }));
     } finally {
-      setLoading(false);
+      setLoadingByMode((prev) => ({ ...prev, [mode]: false }));
     }
   }, [mode, addPreview, deletePreview, selectedAddItems, selectedDeleteGroups, options]);
 
   const attachmentList = useMemo(() => attachments, [attachments]);
+  const activeAddPreview = mode === "add" ? addPreview : null;
+  const activeDeletePreview = mode === "delete" ? deletePreview : null;
   const progressLabel = useMemo(() => {
     if (progress === "thinking") return "생각 중";
     if (progress === "context") return "일정을 살펴보는 중";
@@ -442,12 +510,12 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
     loading,
     progressLabel,
     error,
-    addPreview,
-    deletePreview,
+    addPreview: activeAddPreview,
+    deletePreview: activeDeletePreview,
     selectedAddItems,
     selectedDeleteGroups,
     setMode,
-    setText,
+    setText: (value: string) => setTextByMode((prev) => ({ ...prev, [mode]: value })),
     setReasoningEffort,
     setStartDate,
     setEndDate,
