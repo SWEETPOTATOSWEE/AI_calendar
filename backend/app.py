@@ -69,7 +69,10 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
 GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary")
-GCAL_SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
+GCAL_SCOPES = [
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/tasks"  # Tasks 권한 추가
+]
 
 ADMIN_COOKIE_NAME = "admin"
 ADMIN_COOKIE_VALUE = "1"
@@ -3439,6 +3442,38 @@ def fetch_recent_google_events(session_id: str,
 
 
 # -------------------------
+# Google Tasks 유틸
+# -------------------------
+def get_tasks_service(session_id: str):
+    token_data = load_gcal_token_for_session(session_id)
+    if not token_data:
+        raise RuntimeError("Google OAuth token not found.")
+    
+    creds = Credentials.from_authorized_user_info(token_data, GCAL_SCOPES)
+    if creds.expired and creds.refresh_token:
+        creds.refresh(GoogleRequest())
+        save_gcal_token_for_session(session_id, json.loads(creds.to_json()))
+    
+    return build("tasks", "v1", credentials=creds)
+
+def fetch_google_tasks(session_id: str):
+    service = get_tasks_service(session_id)
+    # 기본 할 일 목록(@default)에서 가져오기
+    results = service.tasks().list(tasklist='@default', showCompleted=True).execute()
+    return results.get('items', [])
+
+def create_google_task(session_id: str, title: str, notes: Optional[str] = None, due: Optional[str] = None):
+    service = get_tasks_service(session_id)
+    task_body = {
+        "title": title,
+        "notes": notes,
+    }
+    if due: # RFC 3339 format (e.g., "2026-01-11T00:00:00Z")
+        task_body["due"] = due
+    
+    return service.tasks().insert(tasklist='@default', body=task_body).execute()
+
+# -------------------------
 # 자연어 → 일정 생성(기존)
 # -------------------------
 async def create_events_from_natural_text_core(
@@ -4353,6 +4388,49 @@ def google_status(request: Request):
       "has_token": token_data is not None,
       "admin": is_admin(request),
   }
+  
+@app.get("/api/google/tasks")
+def list_google_tasks(request: Request):
+    session_id = get_google_session_id(request)
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
+    try:
+        return fetch_google_tasks(session_id)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Tasks fetch failed: {str(e)}")
+
+@app.post("/api/google/tasks")
+async def add_google_task(request: Request, payload: Dict[str, Any]):
+    session_id = get_google_session_id(request)
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
+    
+    title = payload.get("title")
+    if not title:
+        raise HTTPException(status_code=400, detail="제목은 필수입니다.")
+        
+    try:
+        task = create_google_task(
+            session_id, 
+            title=title, 
+            notes=payload.get("notes"), 
+            due=payload.get("due")
+        )
+        return task
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Task creation failed: {str(e)}")
+
+@app.delete("/api/google/tasks/{task_id}")
+def delete_google_task(request: Request, task_id: str):
+    session_id = get_google_session_id(request)
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
+    try:
+        service = get_tasks_service(session_id)
+        service.tasks().delete(tasklist='@default', task=task_id).execute()
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Task deletion failed: {str(e)}")
 
 
 # -------------------------
