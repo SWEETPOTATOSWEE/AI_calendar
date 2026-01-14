@@ -1,6 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type PointerEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type CSSProperties,
+  type PointerEvent,
+  type ReactNode,
+} from "react";
 import {
   ArrowUp,
   Calendar,
@@ -31,6 +39,8 @@ import { DatePopover } from "./EventModal";
 export type AiAssistantModalProps = {
   assistant: ReturnType<typeof useAiAssistant>;
   onEditAddItem?: (item: AddPreviewItem, index: number) => void;
+  variant?: "modal" | "drawer";
+  showHeaderControls?: boolean;
 };
 
 const safeArray = <T,>(value?: T[] | null) => (Array.isArray(value) ? value : []);
@@ -57,6 +67,208 @@ const PLACEHOLDER_TEXT = {
 } as const;
 const INPUT_ACTIONS = [{ type: "image", label: "이미지 추가" }] as const;
 
+type MarkdownBlock =
+  | { type: "heading"; level: number; text: string }
+  | { type: "paragraph"; text: string }
+  | { type: "list"; ordered: boolean; items: string[] }
+  | { type: "quote"; text: string }
+  | { type: "code"; text: string }
+  | { type: "hr" };
+
+const parseInlineMarkdown = (text: string) => {
+  const parts = text.split(
+    /(\*\*[^*]+\*\*|__[^_]+__|\*[^*]+\*|_[^_]+_|~~[^~]+~~|`[^`]+`)/g
+  );
+  return parts.map((part, index) => {
+    if (
+      (part.startsWith("**") && part.endsWith("**")) ||
+      (part.startsWith("__") && part.endsWith("__"))
+    ) {
+      return <strong key={`strong-${index}`}>{part.slice(2, -2)}</strong>;
+    }
+    if (
+      (part.startsWith("*") && part.endsWith("*")) ||
+      (part.startsWith("_") && part.endsWith("_"))
+    ) {
+      return <em key={`em-${index}`}>{part.slice(1, -1)}</em>;
+    }
+    if (part.startsWith("~~") && part.endsWith("~~")) {
+      return <del key={`del-${index}`}>{part.slice(2, -2)}</del>;
+    }
+    if (part.startsWith("`") && part.endsWith("`")) {
+      return (
+        <code key={`code-${index}`} className="rounded bg-slate-100 px-1 py-0.5 text-[12px]">
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+    return <span key={`text-${index}`}>{part}</span>;
+  });
+};
+
+const parseMarkdownBlocks = (text: string): MarkdownBlock[] => {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const blocks: MarkdownBlock[] = [];
+  let paragraph: string[] = [];
+  let code: string[] | null = null;
+
+  const flushParagraph = () => {
+    if (paragraph.length === 0) return;
+    blocks.push({ type: "paragraph", text: paragraph.join("\n") });
+    paragraph = [];
+  };
+
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    if (line.trim().startsWith("```")) {
+      if (code) {
+        blocks.push({ type: "code", text: code.join("\n") });
+        code = null;
+      } else {
+        flushParagraph();
+        code = [];
+      }
+      index += 1;
+      continue;
+    }
+    if (code) {
+      code.push(line);
+      index += 1;
+      continue;
+    }
+
+    const headingMatch = line.match(/^(#{1,4})\s+(.*)$/);
+    if (headingMatch) {
+      flushParagraph();
+      blocks.push({ type: "heading", level: headingMatch[1].length, text: headingMatch[2] });
+      index += 1;
+      continue;
+    }
+
+    const hrMatch = line.match(/^\s*(\*{3,}|-{3,}|_{3,})\s*$/);
+    if (hrMatch) {
+      flushParagraph();
+      blocks.push({ type: "hr" });
+      index += 1;
+      continue;
+    }
+
+    const ulMatch = line.match(/^\s*[-*+]\s+(.*)$/);
+    if (ulMatch) {
+      flushParagraph();
+      const items: string[] = [];
+      while (index < lines.length) {
+        const listLine = lines[index];
+        const match = listLine.match(/^\s*[-*+]\s+(.*)$/);
+        if (!match) break;
+        items.push(match[1]);
+        index += 1;
+      }
+      blocks.push({ type: "list", ordered: false, items });
+      continue;
+    }
+
+    const olMatch = line.match(/^\s*\d+\.\s+(.*)$/);
+    if (olMatch) {
+      flushParagraph();
+      const items: string[] = [];
+      while (index < lines.length) {
+        const listLine = lines[index];
+        const match = listLine.match(/^\s*\d+\.\s+(.*)$/);
+        if (!match) break;
+        items.push(match[1]);
+        index += 1;
+      }
+      blocks.push({ type: "list", ordered: true, items });
+      continue;
+    }
+
+    const quoteMatch = line.match(/^\s*>\s?(.*)$/);
+    if (quoteMatch) {
+      flushParagraph();
+      const quoteLines: string[] = [];
+      while (index < lines.length) {
+        const quoteLine = lines[index];
+        const match = quoteLine.match(/^\s*>\s?(.*)$/);
+        if (!match) break;
+        quoteLines.push(match[1]);
+        index += 1;
+      }
+      blocks.push({ type: "quote", text: quoteLines.join("\n") });
+      continue;
+    }
+
+    if (line.trim() === "") {
+      flushParagraph();
+      index += 1;
+      continue;
+    }
+
+    paragraph.push(line);
+    index += 1;
+  }
+  flushParagraph();
+  return blocks;
+};
+
+const renderMarkdown = (text: string, keyPrefix: string): ReactNode[] => {
+  const blocks = parseMarkdownBlocks(text);
+  return blocks.map((block, blockIndex) => {
+    const key = `${keyPrefix}-${blockIndex}`;
+    switch (block.type) {
+      case "heading": {
+        const headingClass =
+          block.level === 1
+            ? "text-[15px] font-semibold text-slate-900"
+            : block.level === 2
+              ? "text-[14px] font-semibold text-slate-900"
+              : block.level === 3
+                ? "text-[13px] font-semibold text-slate-900"
+                : "text-[12px] font-semibold text-slate-900";
+        return (
+          <div key={key} className={headingClass}>
+            {parseInlineMarkdown(block.text)}
+          </div>
+        );
+      }
+      case "list": {
+        const listClass = block.ordered ? "list-decimal" : "list-disc";
+        return (
+          <ul key={key} className={`${listClass} space-y-1 pl-5`}>
+            {block.items.map((item, itemIndex) => (
+              <li key={`${key}-item-${itemIndex}`} className="leading-6 text-slate-700">
+                {parseInlineMarkdown(item)}
+              </li>
+            ))}
+          </ul>
+        );
+      }
+      case "quote":
+        return (
+          <blockquote key={key} className="border-l-2 border-slate-200 pl-3 text-slate-600">
+            {parseInlineMarkdown(block.text)}
+          </blockquote>
+        );
+      case "code":
+        return (
+          <pre key={key} className="overflow-auto rounded-md bg-slate-900/90 p-3 text-[12px] text-slate-100">
+            <code>{block.text}</code>
+          </pre>
+        );
+      case "hr":
+        return <hr key={key} className="border-0 border-t border-slate-200" />;
+      case "paragraph":
+      default:
+        return (
+          <p key={key} className="whitespace-pre-line leading-6 text-slate-700">
+            {parseInlineMarkdown(block.text)}
+          </p>
+        );
+    }
+  });
+};
+
 const buildSnapshot = (assistant: ReturnType<typeof useAiAssistant>) => ({
   mode: assistant.mode,
   text: assistant.text,
@@ -78,8 +290,14 @@ const useAnimatedOpen = (open: boolean) => {
   return { visible: open, closing: false };
 };
 
-export default function AiAssistantModal({ assistant, onEditAddItem }: AiAssistantModalProps) {
+export default function AiAssistantModal({
+  assistant,
+  onEditAddItem,
+  variant = "modal",
+  showHeaderControls = true,
+}: AiAssistantModalProps) {
   const { visible, closing } = useAnimatedOpen(assistant.open);
+  const isDrawer = variant === "drawer";
   const tooltipClass =
     "pointer-events-none absolute left-1/2 top-full z-[9999] mt-2 w-max max-w-[360px] -translate-x-1/2 rounded-full border border-[#1F2937] bg-[#111827] px-3 py-1 text-[12px] font-medium leading-[1.4] text-white opacity-0 transition-opacity group-hover:opacity-100 group-disabled:opacity-100 group-disabled:text-[#D1D5DB] group-disabled:bg-[#374151] group-disabled:border-[#374151] whitespace-nowrap text-center";
   const [snapshot, setSnapshot] = useState(() => buildSnapshot(assistant));
@@ -235,6 +453,7 @@ export default function AiAssistantModal({ assistant, onEditAddItem }: AiAssista
     setMenuOpen(false);
   };
   const handleDragStart = (event: PointerEvent<HTMLDivElement>) => {
+    if (isDrawer) return;
     if (event.button !== 0) return;
     event.preventDefault();
     dragStartRef.current = { x: event.clientX, y: event.clientY };
@@ -244,94 +463,108 @@ export default function AiAssistantModal({ assistant, onEditAddItem }: AiAssista
 
   return (
     <>
-      <div className="fixed inset-0 z-[999] flex items-center justify-center px-4 pointer-events-none">
+      <div
+        className={
+          isDrawer
+            ? "flex h-full flex-col"
+            : "fixed inset-0 z-[999] flex items-center justify-center px-4 pointer-events-none"
+        }
+      >
         <div
-          className="w-[46vh] max-w-[90vw] aspect-[9/16] flex flex-col rounded-[2.5rem] bg-white border border-gray-100 shadow-xl overflow-visible pointer-events-auto"
-          style={{ transform: `translate3d(${dragOffset.x}px, ${dragOffset.y}px, 0)` }}
+          className={
+            isDrawer
+              ? "flex h-full w-full flex-col bg-[#F9FAFB]"
+            : "w-[46vh] max-w-[90vw] aspect-[9/16] flex flex-col rounded-[2.5rem] bg-white border border-gray-100 shadow-xl overflow-visible pointer-events-auto"
+          }
+          style={isDrawer ? undefined : { transform: `translate3d(${dragOffset.x}px, ${dragOffset.y}px, 0)` }}
         >
-        <div
-          className="relative flex items-center justify-center pb-1 pt-3"
-          onPointerDown={handleDragStart}
-        >
+        {!isDrawer && (
           <div
-            className="h-1.5 w-14 rounded-full bg-gray-200 cursor-grab active:cursor-grabbing select-none touch-none"
-            aria-label="모달 이동"
-            role="button"
-          />
-        </div>
-        <div className="relative z-50 flex items-center justify-between px-6 pb-0 pt-4">
-          <button
-            type="button"
-            onClick={assistant.close}
-            aria-label="닫기"
-            className="absolute right-6 top-0 flex size-8 items-center justify-center text-slate-500 transition hover:text-slate-700"
+            className="relative flex items-center justify-center pb-1 pt-3"
+            onPointerDown={handleDragStart}
           >
-            <X className="size-4" />
-          </button>
-          <div className="flex items-center gap-4">
             <div
-              className="relative flex items-center rounded-full bg-gray-100 p-0.5 segmented-toggle"
-              style={
-                {
-                  "--seg-count": "2",
-                  "--seg-index": view.mode === "add" ? "0" : "1",
-                  "--seg-inset": "0.125rem",
-                  "--seg-pad": "0.25rem",
-                } as CSSProperties
-              }
-            >
-              <span className="segmented-indicator">
-                <span className="view-indicator-pulse block h-full w-full rounded-full bg-white shadow-sm" />
-              </span>
-              <button
-                type="button"
-                aria-label="추가 모드"
-                aria-pressed={view.mode === "add"}
-                className={`relative z-10 group flex size-8 items-center justify-center rounded-full text-[11px] font-semibold transition-colors ${
-                  view.mode === "add"
-                    ? "text-slate-900"
-                    : "text-slate-500 hover:text-slate-900"
-                }`}
-                onClick={() => assistant.setMode("add")}
+              className="h-1.5 w-14 rounded-full bg-gray-200 cursor-grab active:cursor-grabbing select-none touch-none"
+              aria-label="모달 이동"
+              role="button"
+            />
+          </div>
+        )}
+        {showHeaderControls && (
+          <div
+            className={`relative z-50 flex items-center justify-between pb-0 ${
+              isDrawer ? "px-3 pt-0 -mt-3" : "px-6 pt-4"
+            }`}
+          >
+            <div className="flex items-center gap-4">
+              <div
+                className="relative flex items-center rounded-full bg-gray-100 p-0.5 segmented-toggle"
+                style={
+                  {
+                    "--seg-count": "2",
+                    "--seg-index": view.mode === "add" ? "0" : "1",
+                    "--seg-inset": "0.125rem",
+                    "--seg-pad": "0.25rem",
+                  } as CSSProperties
+                }
               >
-                <Plus className="size-4" />
-                <span className={tooltipClass}>
-                  일정 추가 모드
+                <span className="segmented-indicator">
+                  <span className="view-indicator-pulse block h-full w-full rounded-full bg-white shadow-sm" />
                 </span>
-              </button>
+                <button
+                  type="button"
+                  aria-label="추가 모드"
+                  aria-pressed={view.mode === "add"}
+                  className={`relative z-10 group flex size-8 items-center justify-center rounded-full text-[11px] font-semibold transition-colors ${
+                    view.mode === "add"
+                      ? "text-slate-900"
+                      : "text-slate-500 hover:text-slate-900"
+                  }`}
+                  onClick={() => assistant.setMode("add")}
+                >
+                  <Plus className="size-4" />
+                  <span className={tooltipClass}>
+                    일정 추가 모드
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  aria-label="삭제 모드"
+                  aria-pressed={view.mode === "delete"}
+                  className={`relative z-10 group flex size-8 items-center justify-center rounded-full text-[11px] font-semibold transition-colors ${
+                    view.mode === "delete"
+                      ? "text-slate-900"
+                      : "text-slate-500 hover:text-slate-900"
+                  }`}
+                  onClick={() => assistant.setMode("delete")}
+                >
+                  <Trash2 className="size-4" />
+                  <span className={tooltipClass}>
+                    일정 삭제 모드
+                  </span>
+                </button>
+              </div>
+              <div className="h-6 w-px bg-gray-200 mx-1" />
               <button
+                className="relative group size-9 rounded-full flex items-center justify-center bg-gray-100 text-slate-500 hover:text-primary"
                 type="button"
-                aria-label="삭제 모드"
-                aria-pressed={view.mode === "delete"}
-                className={`relative z-10 group flex size-8 items-center justify-center rounded-full text-[11px] font-semibold transition-colors ${
-                  view.mode === "delete"
-                    ? "text-slate-900"
-                    : "text-slate-500 hover:text-slate-900"
-                }`}
-                onClick={() => assistant.setMode("delete")}
+                onClick={assistant.resetConversation}
+                aria-label="대화 초기화"
               >
-                <Trash2 className="size-4" />
+                <RotateCcw className="size-4" />
                 <span className={tooltipClass}>
-                  일정 삭제 모드
+                  초기화
                 </span>
               </button>
             </div>
-            <div className="h-6 w-px bg-gray-200 mx-1" />
-            <button
-              className="relative group size-9 rounded-full flex items-center justify-center bg-gray-100 text-slate-500 hover:text-primary"
-              type="button"
-              onClick={assistant.resetConversation}
-              aria-label="대화 초기화"
-            >
-              <RotateCcw className="size-4" />
-              <span className={tooltipClass}>
-                초기화
-              </span>
-            </button>
           </div>
-        </div>
-        <div className="px-6 pb-5 pt-4 flex-1 min-h-0 flex flex-col gap-4">
-          <div className="flex-1 min-h-0 rounded-2xl border border-gray-100 bg-gray-50 flex flex-col overflow-visible">
+        )}
+        <div
+          className={`pb-0 pt-4 flex-1 min-h-0 flex flex-col gap-4 ${
+            isDrawer ? "px-0" : "px-6"
+          }`}
+        >
+          <div className="flex-1 min-h-0 bg-gray-50 flex flex-col overflow-visible">
             <div
               className={`flex-1 min-h-0 overflow-y-auto space-y-3 p-4 scrollbar-hidden ${
                 showConversation ? "" : "flex items-center justify-center"
@@ -400,7 +633,11 @@ export default function AiAssistantModal({ assistant, onEditAddItem }: AiAssista
                                   : "bg-white border border-gray-100 text-slate-700"
                               }`}
                             >
-                              <p className="whitespace-pre-line">{msg.text}</p>
+                              {msg.role === "assistant" ? (
+                                <div className="space-y-2">{renderMarkdown(msg.text, `${msg.role}-${index}`)}</div>
+                              ) : (
+                                <p className="whitespace-pre-line">{msg.text}</p>
+                              )}
                             </div>
                           </div>
                         )}
@@ -564,6 +801,37 @@ export default function AiAssistantModal({ assistant, onEditAddItem }: AiAssista
                           ))}
                         </div>
                       )}
+                      {(view.mode === "add" || view.mode === "delete") && (
+                        <div className="flex justify-end pt-2">
+                          <button
+                            className={`px-4 py-2 rounded-full text-[14px] font-semibold transition-colors ${
+                              view.mode === "delete"
+                                ? "bg-red-500 text-white hover:bg-red-600"
+                                : "bg-primary text-white hover:bg-blue-600"
+                            } ${
+                              (view.mode === "add" && selectedAddCount === 0) ||
+                              (view.mode === "delete" && selectedDeleteCount === 0)
+                                ? "opacity-50 pointer-events-none"
+                                : ""
+                            }`}
+                            type="button"
+                            onClick={assistant.apply}
+                            disabled={
+                              assistant.loading ||
+                              (view.mode === "add" && selectedAddCount === 0) ||
+                              (view.mode === "delete" && selectedDeleteCount === 0)
+                            }
+                          >
+                            {view.mode === "delete"
+                              ? selectedDeleteCount > 0
+                                ? `${selectedDeleteCount}건 일정 삭제`
+                                : "일정 삭제"
+                              : selectedAddCount > 0
+                              ? `${selectedAddCount}개의 일정 추가`
+                              : "일정 추가"}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                   {assistant.progressLabel && (
@@ -589,11 +857,7 @@ export default function AiAssistantModal({ assistant, onEditAddItem }: AiAssista
               ) : null}
             </div>
             <div className="p-4 pt-2">
-              <div
-                className={`rounded-[22px] border bg-white px-3 py-2 transition ${
-                  focused ? "border-[#1c1b18]" : "border-[#e6dfd6]"
-                }`}
-              >
+              <div className="rounded-[22px] border border-[#EEF2F6] bg-white px-3 py-2 shadow-[0_1px_2px_rgba(15,23,42,0.06)]">
                 <textarea
                   ref={inputRef}
                   rows={1}
@@ -772,35 +1036,6 @@ export default function AiAssistantModal({ assistant, onEditAddItem }: AiAssista
               </div>
             </div>
           </div>
-        </div>
-        <div className="flex items-center justify-end gap-2 px-6 pb-4 pt-0">
-          <button
-            className={`px-4 py-2 rounded-full text-[14px] font-semibold transition-colors ${
-              view.mode === "delete"
-                ? "bg-red-500 text-white hover:bg-red-600"
-                : "bg-primary text-white hover:bg-blue-600"
-            } ${
-              (view.mode === "add" && selectedAddCount === 0) ||
-              (view.mode === "delete" && selectedDeleteCount === 0)
-                ? "opacity-50 pointer-events-none"
-                : ""
-            }`}
-            type="button"
-            onClick={assistant.apply}
-            disabled={
-              assistant.loading ||
-              (view.mode === "add" && selectedAddCount === 0) ||
-              (view.mode === "delete" && selectedDeleteCount === 0)
-            }
-          >
-            {view.mode === "delete"
-              ? selectedDeleteCount > 0
-                ? `${selectedDeleteCount}건 일정 삭제`
-                : "일정 삭제"
-              : selectedAddCount > 0
-              ? `${selectedAddCount}개의 일정 추가`
-              : "일정 추가"}
-          </button>
         </div>
         <style jsx>{`
           @keyframes ai-thinking-dot-2 {

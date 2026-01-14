@@ -179,6 +179,13 @@
   width: 0;
   height: 0;
 }
+/* Clamp event titles to a single line with ellipsis when clipped. */
+.fc .fc-event-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* Remove reserved scrollbar gutter in timegrid (week/day) */
 .fc .fc-timegrid .fc-col-header,
 .fc .fc-timegrid .fc-timegrid-body,
@@ -314,9 +321,9 @@
   font-size: 12px;
   font-weight: 600;
   line-height: 1.25;
-  white-space: normal;
+  white-space: nowrap;
   overflow: hidden;
-  word-break: break-word;
+  text-overflow: ellipsis;
 }
 .fc .timegrid-event-content .fc-event-time {
   margin-top: auto;
@@ -458,8 +465,11 @@
   font-size: 12px;
   font-weight: 600;
   line-height: 1.25;
-  white-space: normal;
-  word-break: break-word;
+  display: block;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: inherit;
 }
 .fc .fc-daygrid-event .fc-event-time {

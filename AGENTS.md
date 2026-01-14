@@ -14,24 +14,6 @@ Your goal is to write accurate code that matches the actual project state.
 - Use official documentation when working with libraries or frameworks.
 - If information is missing or unclear, ask before proceeding.
 
----
-
-## Tool Usage
-
-- Prefer MCP tools whenever they are available.
-- Use Context7 when documentation is required.
-
----
-
-## Documentation Policy
-
-- When using documentation via Context7:
-  - **Next.js and Mantine are the primary frameworks and must be treated as the main sources of truth.**
-  - Always follow the official Context7 documentation for:
-    - Supported APIs
-    - Recommended patterns
-    - Version-specific behavior
-- Do not rely on memory, general conventions, or outdated examples for these frameworks.
 
 ---
 

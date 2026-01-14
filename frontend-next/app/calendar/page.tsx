@@ -40,10 +40,15 @@ import {
   MapPin,
   MoreVertical,
   Pencil,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
+  RotateCcw,
   Search,
+  Trash2,
   X,
-  Sparkles,
   Undo2,
 } from "lucide-react";
 
@@ -309,6 +314,7 @@ function CalendarPageInner() {
   const [aiDraftEvent, setAiDraftEvent] = useState<CalendarEvent | null>(null);
   const [aiDraftIndex, setAiDraftIndex] = useState<number | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [eventFormResetKey, setEventFormResetKey] = useState(0);
   const [monthEventPopup, setMonthEventPopup] = useState<MonthEventPopup | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchAdvancedOpen, setSearchAdvancedOpen] = useState(false);
@@ -332,7 +338,10 @@ function CalendarPageInner() {
   const [searchResultsHeight, setSearchResultsHeight] = useState(0);
   const lastSearchKeyRef = useRef<string | null>(null);
   const [nowSnapshot] = useState(() => new Date());
+  const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [leftPanelOpen, setLeftPanelOpen] = useState(false);
+  const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [sidebarScrollable, setSidebarScrollable] = useState(false);
   const [mobileScrollable, setMobileScrollable] = useState(false);
   const [sidebarAtTop, setSidebarAtTop] = useState(true);
@@ -347,6 +356,7 @@ function CalendarPageInner() {
   const searchAdvancedRef = useRef<HTMLDivElement | null>(null);
   const searchResultsPanelRef = useRef<HTMLDivElement | null>(null);
   const monthPopupRef = useRef<HTMLDivElement | null>(null);
+  const createMenuRef = useRef<HTMLDivElement | null>(null);
   const searchResultsCacheRef = useRef<CalendarEvent[]>([]);
   const searchIndexRef = useRef(0);
 
@@ -417,6 +427,43 @@ function CalendarPageInner() {
     const created = await actions.createRecurring(payload);
     if (created && created.length > 0) undo.record(created);
     return created;
+  };
+
+  const resetEventForm = () => {
+    setEventFormResetKey((prev) => prev + 1);
+  };
+
+  const openAiDrawer = () => {
+    setModalOpen(false);
+    setRightPanelOpen(true);
+    ai.openWithText("");
+  };
+
+  const openEventDrawer = (options?: { reset?: boolean; showForm?: boolean }) => {
+    if (options?.reset) {
+      resetEventForm();
+    }
+    if (options?.showForm) {
+      ai.close();
+    }
+    setRightPanelOpen(true);
+    if (options?.showForm) {
+      setModalOpen(true);
+    }
+  };
+
+  const hideEventForm = () => {
+    setModalOpen(false);
+    setAiDraftEvent(null);
+    setAiDraftIndex(null);
+  };
+
+  const hideEventFormOnly = () => {
+    setModalOpen(false);
+  };
+
+  const closeEventDrawer = () => {
+    setRightPanelOpen(false);
   };
 
   const selectedEvents = useMemo(() => {
@@ -593,6 +640,36 @@ function CalendarPageInner() {
       setSearchResultsHeight(0);
     }
   }, [searchResultsOpen, searchResults.length]);
+
+  useEffect(() => {
+    if (!createMenuOpen) return;
+    const handleClick = (event: MouseEvent) => {
+      if (!createMenuRef.current || createMenuRef.current.contains(event.target as Node)) return;
+      setCreateMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+    };
+  }, [createMenuOpen]);
+
+  useEffect(() => {
+    const monthApi = monthCalendarRef.current?.getApi();
+    const miniApi = miniCalendarRef.current?.getApi();
+    if (!monthApi && !miniApi) return;
+    const rafId = window.requestAnimationFrame(() => {
+      monthApi?.updateSize();
+      miniApi?.updateSize();
+    });
+    const timeoutId = window.setTimeout(() => {
+      monthApi?.updateSize();
+      miniApi?.updateSize();
+    }, 220);
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.clearTimeout(timeoutId);
+    };
+  }, [rightPanelOpen, leftPanelOpen]);
 
   const upcomingEvent = useMemo(() => {
     return state.allEvents
@@ -949,7 +1026,7 @@ function CalendarPageInner() {
     setActiveEvent(event);
     setAiDraftEvent(null);
     setAiDraftIndex(null);
-    setModalOpen(true);
+    openEventDrawer({ reset: true, showForm: true });
   };
 
   const handleToggleSearchResults = async () => {
@@ -971,6 +1048,10 @@ function CalendarPageInner() {
         ? `${getWeekOfMonth(currentMonth, weekStart)}주차`
         : formatLongDate(selectedDate);
   const viewBadge = null;
+  const headerDateLabel =
+    view === "month"
+      ? `${currentMonth.getFullYear()}년 ${viewTitle}`
+      : viewTitle;
   const hasSearchResults = searchResults.length > 0;
   const isSearchPrevDisabled = !hasSearchResults || searchIndex <= 0;
   const isSearchNextDisabled = !hasSearchResults || searchIndex >= searchResults.length - 1;
@@ -998,91 +1079,57 @@ function CalendarPageInner() {
     <div
       className={`month-shell bg-background-light dark:bg-background-dark text-slate-900 dark:text-white ${
         view === "month" ? "overflow-visible" : "overflow-hidden"
-      } h-screen flex flex-col transition-colors duration-200`}
+      } h-screen flex flex-col ${rightPanelOpen ? "pr-[320px]" : "pr-0"} ${
+        leftPanelOpen ? "pl-[320px]" : "pl-0"
+      }`}
     >
-      <AiAssistantModal
-        assistant={ai}
-        onEditAddItem={(item, index) => {
-          const draft = buildAiDraftEvent(item, selectedDate);
-          setAiDraftEvent(draft);
-          setAiDraftIndex(index);
-          setActiveEvent(null);
-          setModalOpen(true);
-        }}
-      />
-      <EventModal
-        open={modalOpen}
-        event={aiDraftEvent ?? activeEvent}
-        forceCreate={Boolean(aiDraftEvent)}
-        defaultDate={selectedDate}
-        onClose={() => {
-          setModalOpen(false);
-          setActiveEvent(null);
-          setAiDraftEvent(null);
-          setAiDraftIndex(null);
-        }}
-        onCreate={async (payload) => {
-          if (aiDraftIndex !== null) {
-            ai.updateAddPreviewItem(aiDraftIndex, {
-              type: "single",
-              title: payload.title,
-              start: payload.start,
-              end: payload.end ?? null,
-              location: payload.location ?? null,
-              description: payload.description ?? null,
-              attendees: payload.attendees ?? null,
-              reminders: payload.reminders ?? null,
-              visibility: payload.visibility ?? null,
-              transparency: payload.transparency ?? null,
-              meeting_url: payload.meeting_url ?? null,
-              timezone: payload.timezone ?? null,
-              color_id: payload.color_id ?? null,
-              all_day: Boolean(payload.all_day),
-            });
-            return null;
-          }
-          return handleCreate(payload);
-        }}
-        onCreateRecurring={async (payload) => {
-          if (aiDraftIndex !== null) {
-            const end = payload.recurrence.end || null;
-            ai.updateAddPreviewItem(aiDraftIndex, {
-              type: "recurring",
-              title: payload.title,
-              start_date: payload.start_date,
-              time: payload.time ?? null,
-              duration_minutes: payload.duration_minutes ?? null,
-              location: payload.location ?? null,
-              description: payload.description ?? null,
-              attendees: payload.attendees ?? null,
-              reminders: payload.reminders ?? null,
-              visibility: payload.visibility ?? null,
-              transparency: payload.transparency ?? null,
-              meeting_url: payload.meeting_url ?? null,
-              timezone: payload.timezone ?? null,
-              color_id: payload.color_id ?? null,
-              recurrence: payload.recurrence,
-              weekdays: payload.recurrence.byweekday ?? undefined,
-              end_date: end?.until ?? null,
-              count: end?.count ?? null,
-            });
-            return null;
-          }
-          return handleCreateRecurring(payload);
-        }}
-        onUpdate={actions.update}
-        onDelete={actions.remove}
-      />
 
-      <header className="relative flex flex-col whitespace-nowrap px-6 py-2 bg-white/80 dark:bg-[#111418]/80 backdrop-blur-md sticky top-0 z-50 border-b border-gray-100 dark:border-gray-800">
+      <header className="relative flex flex-col whitespace-nowrap px-3 py-3 bg-white backdrop-blur-md sticky top-0 z-50">
         <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4 text-slate-900 dark:text-white">
-            <div className="h-8 px-3 rounded-lg border border-dashed border-slate-300 dark:border-slate-600 text-xs font-medium flex items-center justify-center text-gray-500">
-              로고 예정
+          <div className="flex items-center gap-3 text-slate-900 dark:text-white">
+            {!leftPanelOpen && (
+              <button
+                type="button"
+                className="flex size-9 items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-slate-600 dark:text-slate-300"
+                onClick={() => setLeftPanelOpen(true)}
+                aria-label="왼쪽 탭 열기"
+                aria-expanded={leftPanelOpen}
+                aria-controls="calendar-left-panel"
+              >
+                <PanelLeftOpen className="size-5" />
+              </button>
+            )}
+            <div className="flex flex-col gap-0.5">
+              <span className="text-lg font-semibold leading-tight">{headerDateLabel}</span>
+              {viewBadge && <span className="text-xs font-semibold text-slate-500">{viewBadge}</span>}
             </div>
-            <div className="flex items-center gap-2"></div>
+            <div className="flex items-center gap-1 rounded-full px-2 py-1 hidden md:flex">
+              <button
+                className="size-7 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 text-slate-600 dark:text-slate-300"
+                type="button"
+                onClick={handlePrev}
+                aria-label="이전"
+              >
+                <ChevronLeft className="size-4" />
+              </button>
+              <button
+                className="px-3 py-1 rounded-full text-[13px] font-medium text-gray-700 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+                type="button"
+                onClick={handleToday}
+              >
+                오늘
+              </button>
+              <button
+                className="size-7 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 text-slate-600 dark:text-slate-300"
+                type="button"
+                onClick={handleNext}
+                aria-label="다음"
+              >
+                <ChevronRight className="size-4" />
+              </button>
+            </div>
           </div>
-          <div className="relative flex flex-1 items-center justify-end min-h-[48px]">
+          <div className="relative flex flex-1 items-center justify-end min-h-[48px] gap-3">
             {!searchOpen && (
               <motion.div
                 className="header-actions-layer flex flex-wrap items-center gap-3 justify-end"
@@ -1130,19 +1177,53 @@ function CalendarPageInner() {
                     </span>
                   )}
                 </button>
-                <button
-                  className="flex items-center justify-center rounded-full size-9 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-slate-600 dark:text-slate-300"
-                  type="button"
-                  onClick={() => {
-                    setActiveEvent(null);
-                    setAiDraftEvent(null);
-                    setAiDraftIndex(null);
-                    setModalOpen(true);
-                  }}
-                  aria-label="일정 추가"
-                >
-                  <Plus className="size-5" />
-                </button>
+                <div className="relative" ref={createMenuRef}>
+                  <button
+                    className="flex items-center justify-center rounded-full size-9 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-slate-600 dark:text-slate-300"
+                    type="button"
+                    onClick={() => setCreateMenuOpen((prev) => !prev)}
+                    aria-label="일정 추가"
+                    aria-expanded={createMenuOpen}
+                    aria-haspopup="menu"
+                  >
+                    <Plus className="size-5" />
+                  </button>
+                  {createMenuOpen && (
+                    <div className="absolute left-0 mt-2 z-50 w-max" role="menu">
+                      <div
+                        className="min-w-full overflow-hidden whitespace-nowrap popover-surface popover-animate border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-[#111418]"
+                        data-side="bottom"
+                        data-align="start"
+                      >
+                        <button
+                          type="button"
+                          className="flex w-full justify-start rounded-md px-3 py-2 text-[15px] text-left font-medium text-[#111827] transition-colors hover:bg-gray-50 dark:hover:bg-[#1a2632]"
+                          onClick={() => {
+                            setActiveEvent(null);
+                            setAiDraftEvent(null);
+                            setAiDraftIndex(null);
+                            openEventDrawer({ reset: true, showForm: true });
+                            setCreateMenuOpen(false);
+                          }}
+                          role="menuitem"
+                        >
+                          직접 추가
+                        </button>
+                        <button
+                          type="button"
+                          className="flex w-full justify-start rounded-md px-3 py-2 text-[15px] text-left font-medium text-[#111827] transition-colors hover:bg-gray-50 dark:hover:bg-[#1a2632]"
+                        onClick={() => {
+                          openAiDrawer();
+                          setCreateMenuOpen(false);
+                        }}
+                        role="menuitem"
+                      >
+                          알아서 추가
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
                 <button
                   className="flex items-center justify-center rounded-full size-9 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-slate-600 dark:text-slate-300"
                   type="button"
@@ -1153,6 +1234,7 @@ function CalendarPageInner() {
                   <Search className="size-5" />
                 </button>
               </div>
+              
               <div className="hidden md:flex">
                 <CalendarHeaderActions status={state.authStatus} />
               </div>
@@ -1174,29 +1256,21 @@ function CalendarPageInner() {
                       className="flex flex-col items-stretch gap-2"
                       buttonClassName="w-full text-left"
                     />
-                    <div className="h-px bg-gray-100 dark:bg-gray-800"></div>
-                    <div className="flex items-center gap-2 rounded-lg border border-gray-200 dark:border-gray-700 px-2 py-2">
-                      <div
-                        className="bg-center bg-no-repeat bg-cover rounded-full size-7 border border-gray-200 dark:border-gray-700 shadow-sm"
-                        data-alt="사용자 프로필 이미지"
-                        style={{
-                          backgroundImage:
-                            "url('https://lh3.googleusercontent.com/aida-public/AB6AXuDtp4EN6aKO3e3qE7dZReqE5nVIXN_43sBCdsgWGm4dzvClBNxW2Pt1ibIGwyQGQMdAIBX_9RVDwfqDlnwBKi8NUIR8rfqDGSj3ORylu9O-CXp3AbsLY8YZ3mR-GbbYWBsxTQB71hnJnS4lk0cKSAhR2Mze8_hVjC0o-hEK8J-0fJFYlA65gMBrartXdJiV-A1yCzwWF3mFEhJe5idk641dS6JWo1bXrr9PhY-ZLclsGGcfXhRrdchRQLXlbMpMc3vMNQXkbvxka-4')",
-                        }}
-                      ></div>
-                      <span className="text-xs font-medium text-slate-600 dark:text-slate-300">프로필 사진</span>
-                    </div>
                   </div>
                 )}
               </div>
-              <div
-                className="hidden md:block bg-center bg-no-repeat bg-cover rounded-full size-8 border border-gray-200 dark:border-gray-700 shadow-sm"
-                data-alt="사용자 프로필 이미지"
-                style={{
-                  backgroundImage:
-                    "url('https://lh3.googleusercontent.com/aida-public/AB6AXuDtp4EN6aKO3e3qE7dZReqE5nVIXN_43sBCdsgWGm4dzvClBNxW2Pt1ibIGwyQGQMdAIBX_9RVDwfqDlnwBKi8NUIR8rfqDGSj3ORylu9O-CXp3AbsLY8YZ3mR-GbbYWBsxTQB71hnJnS4lk0cKSAhR2Mze8_hVjC0o-hEK8J-0fJFYlA65gMBrartXdJiV-A1yCzwWF3mFEhJe5idk641dS6JWo1bXrr9PhY-ZLclsGGcfXhRrdchRQLXlbMpMc3vMNQXkbvxka-4')",
-                }}
-              ></div>
+              {!rightPanelOpen && (
+                <button
+                  type="button"
+                  className="flex size-9 items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-slate-600 dark:text-slate-300"
+                  onClick={() => openEventDrawer()}
+                  aria-label="오른쪽 탭 열기"
+                  aria-expanded={rightPanelOpen}
+                  aria-controls="calendar-right-panel"
+                >
+                  <PanelRightOpen className="size-5" />
+                </button>
+              )}
               </motion.div>
             )}
             {searchOpen && (
@@ -1208,11 +1282,15 @@ function CalendarPageInner() {
               >
                 <div className="flex w-full items-start justify-center gap-3">
                   <div
-                    className={`flex flex-1 max-w-3xl flex-col rounded-[28px] border border-gray-200 bg-white px-5 py-3 shadow-sm ${
-                      searchAdvancedOpen ? "" : "min-h-[60px]"
+                    className={`flex flex-1 max-w-3xl flex-col rounded-[28px] border border-gray-200 bg-white px-4 py-2 shadow-sm ${
+                      searchAdvancedOpen ? "" : "min-h-[48px]"
                     } ${searchAdvancedOpen || searchResultsOpen ? "justify-start" : "justify-center"}`}
                   >
-                    <div className="flex items-center gap-3">
+                    <div
+                      className={`flex items-center gap-3 transition-[padding] duration-300 ease-out ${
+                        searchResultsOpen || searchAdvancedOpen ? "pb-2" : "pb-0"
+                      }`}
+                    >
                       <div className="flex flex-1 items-center rounded-full bg-white">
                         <Search className="mr-2 size-4 text-gray-500" />
                         <input
@@ -1284,18 +1362,6 @@ function CalendarPageInner() {
                     >
                       <div ref={searchAdvancedRef} className="px-5 pb-4 pt-2">
                         <div className="grid grid-cols-[140px_1fr] gap-x-6 gap-y-3 text-sm">
-                          <div className="pt-2 text-gray-700">제목</div>
-                          <input
-                            className="w-full rounded-full border border-[#e6e6e1] bg-white px-4 py-2 text-[13px] text-[#6b6460] placeholder:text-[#6b6460] focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
-                            type="text"
-                            placeholder="일정에 포함된 키워드"
-                            value={searchFilters.title}
-                            onChange={(event) =>
-                              setSearchFilters((prev) => ({ ...prev, title: event.target.value }))
-                            }
-                            aria-label="제목"
-                          />
-
                           <div className="pt-2 text-gray-700">참석자</div>
                           <input
                             className="w-full rounded-full border border-[#e6e6e1] bg-white px-4 py-2 text-[13px] text-[#6b6460] placeholder:text-[#6b6460] focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
@@ -1443,471 +1509,191 @@ function CalendarPageInner() {
       </header>
 
       <main
-        className={`flex-1 flex flex-col max-w-[1600px] mx-auto w-full p-4 md:p-6 lg:p-6 gap-6 min-h-0 ${
+        className={`flex-1 flex flex-col max-w-[1600px] mx-auto w-full gap-6 min-h-0 ${
           view === "month" ? "overflow-visible" : "overflow-hidden"
         }`}
       >
         <div className="flex flex-col lg:flex-row gap-6 flex-1 min-h-0">
-          <aside className="hidden lg:flex order-2 lg:order-1 w-full lg:w-[320px] xl:w-[360px] flex-col gap-4 overflow-hidden min-h-0 lg:flex-none">
-            <div className="hidden lg:block rounded-2xl p-5 text-white shadow-lg shadow-blue-500/20 relative overflow-hidden bg-[#1E6BFF]">
-              <div className="relative z-10 flex flex-col gap-4">
-                <div className="flex items-start">
-                  <span className="bg-white/10 px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wider text-[#D6E4FF]">
-                    다음 일정
-                  </span>
-                </div>
-                <div>
-                  {upNextLabel ? (
-                    <div className="text-[#EAF1FF] text-xs font-medium leading-[1.4] mb-1">{upNextLabel}</div>
-                  ) : null}
-                  <h3 className="text-[22px] font-bold leading-[1.2] mb-2 text-white">
-                    {upcomingEvent ? upcomingEvent.title : "예정된 일정 없음"}
-                  </h3>
-                  <div className="flex items-center gap-2 text-[#EAF1FF] text-sm font-semibold leading-[1.4]">
-                    <Clock className="size-4 text-[#C3D6FF]" />
-                    <span>{upcomingEvent ? formatTimeRange(upcomingEvent.start, upcomingEvent.end) : ""}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-            {isTimeGridView && (
-              <div className="mini-calendar bg-white dark:bg-[#111418] rounded-2xl p-4 shadow-sm border border-gray-100 dark:border-gray-800">
-                <FullCalendar
-                  ref={miniCalendarRef}
-                  plugins={[dayGridPlugin, interactionPlugin]}
-                  initialView="dayGridMonth"
-                  initialDate={selectedDate}
-                  height="auto"
-                  fixedWeekCount={false}
-                  firstDay={1}
-                  locale="ko"
-                  headerToolbar={{ left: "title", center: "", right: "prev,next" }}
-                  titleFormat={{ year: "numeric", month: "long" }}
-                  events={[]}
-                  dayCellContent={(arg) => {
-                    const numberText = arg.dayNumberText.replace(/[^\d]/g, "");
-                    return <span>{numberText}</span>;
-                  }}
-                  dayCellDidMount={(info) => {
-                    const weekKey = getWeekKey(info.date);
-                    info.el.dataset.weekKey = weekKey;
-                    const handleEnter = () => toggleMiniWeekHover(weekKey, true);
-                    const handleLeave = () => toggleMiniWeekHover(weekKey, false);
-                    info.el.addEventListener("mouseenter", handleEnter);
-                    info.el.addEventListener("mouseleave", handleLeave);
-                    (info.el as HTMLElement & { __weekHoverHandlers?: { enter: () => void; leave: () => void } })
-                      .__weekHoverHandlers = { enter: handleEnter, leave: handleLeave };
-                  }}
-                  dayCellWillUnmount={(info) => {
-                    const el = info.el as HTMLElement & { __weekHoverHandlers?: { enter: () => void; leave: () => void } };
-                    if (el.__weekHoverHandlers) {
-                      el.removeEventListener("mouseenter", el.__weekHoverHandlers.enter);
-                      el.removeEventListener("mouseleave", el.__weekHoverHandlers.leave);
-                      delete el.__weekHoverHandlers;
-                    }
-                  }}
-                  dayCellClassNames={(arg) =>
-                    {
-                      const day = toDateOnly(arg.date);
-                      const weekStartDay = toDateOnly(startOfWeek(day));
-                      const weekEndDay = addDays(weekStartDay, 6);
-                      const classes: string[] = [];
-                      if (day >= selectedWeekStartDay && day <= selectedWeekEndDay) {
-                        classes.push("mini-week-selected");
-                      }
-                      if (isSameDay(day, weekStartDay)) classes.push("mini-week-start");
-                      if (isSameDay(day, weekEndDay)) classes.push("mini-week-end");
-                      if (view === "day" && isSameDay(day, selectedDate)) {
-                        classes.push("fc-day-selected");
-                      }
-                      return classes;
-                    }
-                  }
-                  dateClick={(info) => {
-                    const isWeekView = view === "week";
-                    const selectedAnchor = info.date;
-                    setSelectedDate(selectedAnchor);
-                    setCurrentMonth(startOfMonth(info.date));
-                    const api = monthCalendarRef.current?.getApi();
-                    if (api) {
-                      const targetView = isWeekView ? "timeGridWeek" : "timeGridDay";
-                      api.changeView(targetView, info.date);
-                    }
-                  }}
-                />
-              </div>
-            )}
-            {view === "month" && (
-              <div className="bg-white dark:bg-[#111418] rounded-2xl p-5 shadow-sm border border-gray-200 dark:border-gray-800 flex flex-col">
-                <div className="relative">
-                  {sidebarScrollable && !sidebarAtTop && (
-                    <div className="pointer-events-none absolute inset-x-0 top-0 h-6 bg-gradient-to-b from-white via-white/80 to-transparent dark:from-[#111418] dark:via-[#111418]/80 z-10"></div>
-                  )}
-                  {sidebarScrollable && !sidebarAtBottom && (
-                    <div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-white via-white/80 to-transparent dark:from-[#111418] dark:via-[#111418]/80 z-10"></div>
-                  )}
-                  <div
-                    ref={sidebarScrollRef}
-                    className="relative max-h-[calc(100vh-340px)] overflow-y-auto no-scrollbar pr-2"
-                    onScroll={() => {
-                      const el = sidebarScrollRef.current;
-                      if (!el) return;
-                      setSidebarAtTop(el.scrollTop <= 1);
-                      setSidebarAtBottom(el.scrollTop + el.clientHeight >= el.scrollHeight - 1);
-                    }}
-                  >
-                    <div className="pointer-events-none absolute left-[7px] top-0 bottom-0 w-px bg-gray-100 dark:bg-gray-800"></div>
-                    <div className="space-y-6">
-                      {selectedEvents.length === 0 && (
-                        <p className="text-xs text-slate-400 pl-6">해당 날짜에 일정이 없습니다.</p>
-                      )}
-                    {selectedEvents.map((event) => (
-                      <div key={event.id} className="relative group pl-6">
-                        <div className="absolute left-0 top-1 bg-white dark:bg-[#111418] border-2 border-gray-200 dark:border-gray-700 size-3.5 rounded-full group-hover:border-primary transition-colors"></div>
-                        <div className="flex flex-col gap-1">
-                          <span className="text-xs font-semibold text-gray-700 leading-[1.5]">
-                            {formatTime(event.start)}
-                          </span>
-                          <button
-                            className={`rounded-lg px-3 py-2.5 text-left transition-colors cursor-pointer group-hover:shadow-sm ${
-                              activeEvent?.id === event.id
-                                ? "bg-[#EFF6FF]"
-                                : "bg-background-light dark:bg-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-800"
-                            }`}
-                            type="button"
-                            onClick={() => {
-                              setActiveEvent(event);
-                              setAiDraftEvent(null);
-                              setAiDraftIndex(null);
-                              setModalOpen(true);
-                            }}
-                          >
-                            <p className="text-gray-900 dark:text-white font-semibold text-[15px] leading-[1.4]">
-                              {event.title}
-                            </p>
-                            <p className="text-gray-500 text-xs font-normal leading-[1.4]">
-                              {event.location || ""}
-                            </p>
-                          </button>
-                        </div>
-                      </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </aside>
-
           <div className="order-1 lg:order-2 flex-1 flex flex-col gap-4 min-h-0 min-w-0">
-            <div className="hidden lg:hidden rounded-2xl p-5 text-white shadow-lg shadow-blue-500/20 relative overflow-hidden bg-[#1E6BFF]">
-              <div className="relative z-10 flex flex-col gap-4">
-                <div className="flex items-start">
-                  <span className="bg-white/10 px-2.5 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wider text-[#D6E4FF]">
-                    다음 일정
-                  </span>
-                </div>
-                <div>
-                  {upNextLabel ? (
-                    <div className="text-[#EAF1FF] text-xs font-medium leading-[1.4] mb-1">{upNextLabel}</div>
-                  ) : null}
-                  <h3 className="text-[22px] font-bold leading-[1.2] mb-2 text-white">
-                    {upcomingEvent ? upcomingEvent.title : "예정된 일정 없음"}
-                  </h3>
-                  <div className="flex items-center gap-2 text-[#EAF1FF] text-sm font-semibold leading-[1.4]">
-                    <Clock className="size-4 text-[#C3D6FF]" />
-                    <span>{upcomingEvent ? formatTimeRange(upcomingEvent.start, upcomingEvent.end) : ""}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
             <section
-              className={`flex-1 bg-white dark:bg-[#111418] rounded-2xl shadow-sm border border-gray-100 dark:border-gray-800 flex flex-col ${
+              className={`flex-1 bg-white dark:bg-[#111418] shadow-sm flex flex-col ${
                 view === "month" ? "overflow-visible" : "overflow-hidden"
               } min-h-[300px]`}
             >
-            <div className="flex items-center gap-3 px-6 py-4 shrink-0">
-              <div className="flex items-baseline gap-2">
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-visible border border-gray-100 dark:border-gray-800 border-t-0 border-l-0 border-r-0 bg-white dark:bg-[#111418] flex flex-col relative z-10">
                 {view === "month" && (
-                  <span className="text-[24px] font-bold leading-[1.2] text-gray-900 dark:text-white">
-                    {currentMonth.getFullYear()}년
-                  </span>
+                  <div className="grid grid-cols-7">
+                    {weekdayLabels.map((label) => (
+                      <div
+                        key={label}
+                        className="py-2 text-center text-[12px] font-semibold uppercase tracking-[0.08em] text-gray-600"
+                      >
+                        {label}
+                      </div>
+                    ))}
+                  </div>
                 )}
-                <h2 className="text-[24px] font-bold leading-[1.2] text-gray-900 dark:text-white">
-                  {viewTitle}
-                </h2>
-              </div>
-              {viewBadge && (
-                <span className="text-xs font-semibold text-slate-500">{viewBadge}</span>
-              )}
-              <div className="ml-auto flex items-center gap-1">
-                <button
-                  className="size-8 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 text-slate-600 dark:text-slate-300"
-                  type="button"
-                  onClick={handlePrev}
-                  aria-label="이전"
-                >
-                  <ChevronLeft className="size-5" />
-                </button>
-                <button
-                  className="px-3 py-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-[13px] font-medium text-gray-700 dark:text-slate-300"
-                  type="button"
-                  onClick={handleToday}
-                >
-                  오늘
-                </button>
-                <button
-                  className="size-8 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 text-slate-600 dark:text-slate-300"
-                  type="button"
-                  onClick={handleNext}
-                  aria-label="다음"
-                >
-                  <ChevronRight className="size-5" />
-                </button>
-              </div>
-            </div>
-            <div className="flex-1 px-4 py-3 flex flex-col min-h-0 overflow-hidden">
-              <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-              <div className="flex-1 min-h-0 flex flex-col">
-                <div className="flex-1 min-h-0 overflow-visible border border-gray-100 dark:border-gray-800 border-t-0 border-l-0 border-r-0 bg-white dark:bg-[#111418] flex flex-col relative z-10">
-                  {view === "month" && (
-                    <div className="grid grid-cols-7">
-                      {weekdayLabels.map((label) => (
-                        <div
-                          key={label}
-                          className="py-2 text-center text-[12px] font-semibold uppercase tracking-[0.08em] text-gray-600"
-                        >
-                          {label}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <div className="flex-1 min-h-0 overflow-visible">
-                    <FullCalendar
-                      ref={monthCalendarRef}
-                      plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-                      initialView={
-                        view === "month" ? "dayGridMonth" : view === "week" ? "timeGridWeek" : "timeGridDay"
+                <div className="flex-1 min-h-0 overflow-visible">
+                  <FullCalendar
+                    ref={monthCalendarRef}
+                    plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+                    initialView={
+                      view === "month" ? "dayGridMonth" : view === "week" ? "timeGridWeek" : "timeGridDay"
+                    }
+                    initialDate={selectedDate}
+                    height={view === "month" ? (hasMonthEvents ? "100%" : "auto") : "100%"}
+                    fixedWeekCount={false}
+                    firstDay={1}
+                    locale="ko"
+                    headerToolbar={false}
+                    allDayText="종일 일정"
+                    displayEventTime={view !== "month"}
+                    eventTimeFormat={{ hour: "numeric", minute: "2-digit", hour12: true }}
+                    eventDisplay="block"
+                    eventMinWidth={0}
+                    slotEventOverlap={false}
+                    dayMaxEventRows={6}
+                    slotLabelContent={(arg) => {
+                      if (arg.view.type === "timeGridWeek" || arg.view.type === "timeGridDay") {
+                        const { period, time } = formatTimeGridSlotLabel(arg.date);
+                        return (
+                          <div className="fc-timegrid-slot-label-custom">
+                            <span className="fc-timegrid-weekday">{period}</span>
+                            <span className="fc-timegrid-date">{time}</span>
+                          </div>
+                        );
                       }
-                      initialDate={selectedDate}
-                      height={view === "month" ? (hasMonthEvents ? "100%" : "auto") : "100%"}
-                      fixedWeekCount={false}
-                      firstDay={1}
-                      locale="ko"
-                      headerToolbar={false}
-                      allDayText="종일 일정"
-                      displayEventTime={view !== "month"}
-                      eventTimeFormat={{ hour: "numeric", minute: "2-digit", hour12: true }}
-                      eventDisplay="block"
-                      eventMinWidth={0}
-                      slotEventOverlap={false}
-                      dayMaxEventRows={6}
-                      slotLabelContent={(arg) => {
-                        if (arg.view.type === "timeGridWeek" || arg.view.type === "timeGridDay") {
-                          const { period, time } = formatTimeGridSlotLabel(arg.date);
-                          return (
-                            <div className="fc-timegrid-slot-label-custom">
-                              <span className="fc-timegrid-weekday">{period}</span>
-                              <span className="fc-timegrid-date">{time}</span>
-                            </div>
-                          );
-                        }
-                        return arg.text;
-                      }}
-                      dayHeaderContent={(arg) => {
-                        if (arg.view.type === "timeGridWeek" || arg.view.type === "timeGridDay") {
-                          const weekday = arg.date.toLocaleDateString("ko-KR", { weekday: "short" });
-                          const dayNumber = arg.date.getDate();
-                          return (
-                            <div className="fc-timegrid-day-header">
-                              <span className="fc-timegrid-weekday">{weekday}</span>
-                              <span className="fc-timegrid-date">{dayNumber}</span>
-                            </div>
-                          );
-                        }
-                        return arg.text;
-                      }}
-                      events={monthCalendarEvents}
-                      dayCellContent={(arg) => {
-                        const numberText = arg.dayNumberText.replace(/[^\d]/g, "");
-                        return <span>{numberText}</span>;
-                      }}
-                      dayCellClassNames={(arg) =>
-                        view === "month" && isSameDay(arg.date, selectedDate) ? ["fc-day-selected"] : []
+                      return arg.text;
+                    }}
+                    dayHeaderContent={(arg) => {
+                      if (arg.view.type === "timeGridWeek" || arg.view.type === "timeGridDay") {
+                        const weekday = arg.date.toLocaleDateString("ko-KR", { weekday: "short" });
+                        const dayNumber = arg.date.getDate();
+                        return (
+                          <div className="fc-timegrid-day-header">
+                            <span className="fc-timegrid-weekday">{weekday}</span>
+                            <span className="fc-timegrid-date">{dayNumber}</span>
+                          </div>
+                        );
                       }
-                      dayCellDidMount={(info) => {
-                        const el = info.el as HTMLElement & { __dblClickHandler?: (event: MouseEvent) => void };
-                        const handler = () => {
-                          setSelectedDate(info.date);
-                          setActiveEvent(null);
-                          setAiDraftEvent(null);
-                          setAiDraftIndex(null);
-                          setModalOpen(true);
-                          setMonthEventPopup(null);
-                        };
-                        el.__dblClickHandler = handler;
-                        el.addEventListener("dblclick", handler);
-                      }}
-                      dayCellWillUnmount={(info) => {
-                        const el = info.el as HTMLElement & { __dblClickHandler?: (event: MouseEvent) => void };
-                        if (el.__dblClickHandler) {
-                          el.removeEventListener("dblclick", el.__dblClickHandler);
-                          delete el.__dblClickHandler;
-                        }
-                      }}
-                      eventContent={(arg) => {
-                        const textColor = arg.event.textColor || "#2f5bd6";
-                        const continued = !arg.isStart;
-                        const timeText = arg.timeText?.replace(/(오전|오후)\s*/g, "").trim();
-                        const rawColorId = (arg.event.extendedProps as { raw?: CalendarEvent })?.raw?.color_id;
-                        const isDefaultColor = !rawColorId || rawColorId === "default";
-                        const backgroundColor = String(arg.event.backgroundColor || "#ffffff");
-                        const borderColor = String(arg.event.borderColor || textColor);
-                        const accentBase = isDefaultColor
-                          ? textColor
-                          : mixHexColors(borderColor, backgroundColor, 0.6);
-                        const accentStrong = toRgba(accentBase, 1);
-                        const accentFade = toRgba(accentBase, 0.3);
-                        if (arg.view.type === "timeGridWeek" || arg.view.type === "timeGridDay") {
-                          if (arg.event.allDay) {
-                            return (
-                              <div
-                                className={`month-event-content${continued ? " month-event-continued" : ""} cursor-pointer`}
-                                style={{
-                                  color: textColor,
-                                  ["--event-accent" as never]: accentStrong,
-                                  ["--event-accent-fade" as never]: accentFade,
-                                }}
-                              >
-                                <span className="fc-event-title">{arg.event.title}</span>
-                              </div>
-                            );
-                          }
+                      return arg.text;
+                    }}
+                    events={monthCalendarEvents}
+                    dayCellContent={(arg) => {
+                      const numberText = arg.dayNumberText.replace(/[^\d]/g, "");
+                      return <span>{numberText}</span>;
+                    }}
+                    dayCellClassNames={(arg) =>
+                      view === "month" && isSameDay(arg.date, selectedDate) ? ["fc-day-selected"] : []
+                    }
+                    dayCellDidMount={(info) => {
+                      const el = info.el as HTMLElement & { __dblClickHandler?: (event: MouseEvent) => void };
+                      const handler = () => {
+                        setSelectedDate(info.date);
+                        setActiveEvent(null);
+                        setAiDraftEvent(null);
+                        setAiDraftIndex(null);
+                        openEventDrawer({ reset: true, showForm: true });
+                        setMonthEventPopup(null);
+                      };
+                      el.__dblClickHandler = handler;
+                      el.addEventListener("dblclick", handler);
+                    }}
+                    dayCellWillUnmount={(info) => {
+                      const el = info.el as HTMLElement & { __dblClickHandler?: (event: MouseEvent) => void };
+                      if (el.__dblClickHandler) {
+                        el.removeEventListener("dblclick", el.__dblClickHandler);
+                        delete el.__dblClickHandler;
+                      }
+                    }}
+                    eventContent={(arg) => {
+                      const textColor = arg.event.textColor || "#2f5bd6";
+                      const continued = !arg.isStart;
+                      const timeText = arg.timeText?.replace(/(오전|오후)\s*/g, "").trim();
+                      const rawColorId = (arg.event.extendedProps as { raw?: CalendarEvent })?.raw?.color_id;
+                      const isDefaultColor = !rawColorId || rawColorId === "default";
+                      const backgroundColor = String(arg.event.backgroundColor || "#ffffff");
+                      const borderColor = String(arg.event.borderColor || textColor);
+                      const accentBase = isDefaultColor
+                        ? textColor
+                        : mixHexColors(borderColor, backgroundColor, 0.6);
+                      const accentStrong = toRgba(accentBase, 1);
+                      const accentFade = toRgba(accentBase, 0.3);
+                      if (arg.view.type === "timeGridWeek" || arg.view.type === "timeGridDay") {
+                        if (arg.event.allDay) {
                           return (
-                            <div className="timegrid-event-content cursor-pointer" style={{ color: textColor }}>
+                            <div
+                              className={`month-event-content${continued ? " month-event-continued" : ""} cursor-pointer`}
+                              style={{
+                                color: textColor,
+                                ["--event-accent" as never]: accentStrong,
+                                ["--event-accent-fade" as never]: accentFade,
+                              }}
+                            >
                               <span className="fc-event-title">{arg.event.title}</span>
-                              {timeText && <span className="fc-event-time">{timeText}</span>}
                             </div>
                           );
                         }
                         return (
-                          <div
-                            className={`month-event-content${continued ? " month-event-continued" : ""} cursor-pointer`}
-                            style={{
-                              color: textColor,
-                              ["--event-accent" as never]: accentStrong,
-                              ["--event-accent-fade" as never]: accentFade,
-                            }}
-                          >
+                          <div className="timegrid-event-content cursor-pointer" style={{ color: textColor }}>
                             <span className="fc-event-title">{arg.event.title}</span>
+                            {timeText && <span className="fc-event-time">{timeText}</span>}
                           </div>
                         );
-                      }}
-                      moreLinkText={(num) => `+${num}`}
-                      datesSet={(info) => {
-                        if (info.view.type === "timeGridWeek") return;
-                        const baseDate = info.view?.currentStart ?? info.start ?? new Date();
-                        setCurrentMonth(startOfMonth(baseDate));
-                        if (info.view.type === "dayGridMonth") {
-                          const rangeStart = toDateOnly(info.start ?? baseDate);
-                          const rangeEnd = toDateOnly(info.end ?? addDays(baseDate, 1));
-                          const selected = toDateOnly(selectedDate);
-                          if (selected < rangeStart || selected >= rangeEnd) {
-                            setSelectedDate(baseDate);
-                          }
-                          return;
+                      }
+                      return (
+                        <div
+                          className={`month-event-content${continued ? " month-event-continued" : ""} cursor-pointer`}
+                          style={{
+                            color: textColor,
+                            ["--event-accent" as never]: accentStrong,
+                            ["--event-accent-fade" as never]: accentFade,
+                          }}
+                        >
+                          <span className="fc-event-title">{arg.event.title}</span>
+                        </div>
+                      );
+                    }}
+                    moreLinkText={(num) => `+${num}`}
+                    datesSet={(info) => {
+                      if (info.view.type === "timeGridWeek") return;
+                      const baseDate = info.view?.currentStart ?? info.start ?? new Date();
+                      setCurrentMonth(startOfMonth(baseDate));
+                      if (info.view.type === "dayGridMonth") {
+                        const rangeStart = toDateOnly(info.start ?? baseDate);
+                        const rangeEnd = toDateOnly(info.end ?? addDays(baseDate, 1));
+                        const selected = toDateOnly(selectedDate);
+                        if (selected < rangeStart || selected >= rangeEnd) {
+                          setSelectedDate(baseDate);
                         }
-                        setSelectedDate(baseDate);
-                      }}
-                      dateClick={(info) => {
-                        setSelectedDate(info.date);
-                        setMonthEventPopup(null);
-                      }}
-                      eventClick={(info) => {
-                        const target = state.allEvents.find((ev) => String(ev.id) === String(info.event.id));
-                        if (info.event.start) setSelectedDate(info.event.start);
-                        if (target) {
-                          setActiveEvent(target);
-                          setAiDraftEvent(null);
-                          setAiDraftIndex(null);
-                          if (view === "month" && info.view.type === "dayGridMonth") {
-                            setModalOpen(false);
-                            openMonthEventPopup(target, info.el);
-                          } else {
-                            setModalOpen(true);
-                          }
+                        return;
+                      }
+                      setSelectedDate(baseDate);
+                    }}
+                    dateClick={(info) => {
+                      setSelectedDate(info.date);
+                      setMonthEventPopup(null);
+                    }}
+                    eventClick={(info) => {
+                      const target = state.allEvents.find((ev) => String(ev.id) === String(info.event.id));
+                      if (info.event.start) setSelectedDate(info.event.start);
+                      if (target) {
+                        setActiveEvent(target);
+                        setAiDraftEvent(null);
+                        setAiDraftIndex(null);
+                        if (view === "month" && info.view.type === "dayGridMonth") {
+                          openMonthEventPopup(target, info.el);
+                        } else {
+                          openEventDrawer({ reset: true, showForm: true });
                         }
-                      }}
-                    />
-                  </div>
+                      }
+                    }}
+                  />
                 </div>
               </div>
-
-              {view === "month" && (
-                <div className="lg:hidden mt-2 pt-2">
-                  <div className="text-xs font-semibold text-slate-500 mb-3">선택한 날짜 일정</div>
-                  <div className="relative max-h-[20vh] overflow-hidden min-h-0">
-                    {mobileScrollable && !mobileAtTop && (
-                    <div className="pointer-events-none absolute inset-x-0 top-0 h-6 bg-gradient-to-b from-white via-white/80 to-transparent dark:from-[#111418] dark:via-[#111418]/80 z-10"></div>
-                  )}
-                  {mobileScrollable && !mobileAtBottom && (
-                    <div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-white via-white/80 to-transparent dark:from-[#111418] dark:via-[#111418]/80 z-10"></div>
-                  )}
-                  <div
-                    ref={mobileScrollRef}
-                    className="relative max-h-[20vh] overflow-y-auto no-scrollbar pr-2"
-                    onScroll={() => {
-                      const el = mobileScrollRef.current;
-                      if (!el) return;
-                      setMobileAtTop(el.scrollTop <= 1);
-                      setMobileAtBottom(el.scrollTop + el.clientHeight >= el.scrollHeight - 1);
-                    }}
-                  >
-                    <div className="pointer-events-none absolute left-[7px] top-0 bottom-0 w-px bg-gray-100 dark:bg-gray-800"></div>
-                    <div className="space-y-4">
-                      {selectedEvents.length === 0 && (
-                        <p className="text-xs text-slate-400 pl-6">해당 날짜에 일정이 없습니다.</p>
-                      )}
-                      {selectedEvents.map((event) => (
-                        <div key={`mobile-${event.id}`} className="relative group pl-6">
-                          <div className="absolute left-0 top-1 bg-white dark:bg-[#111418] border-2 border-gray-200 dark:border-gray-700 size-3.5 rounded-full group-hover:border-primary transition-colors"></div>
-                          <div className="flex flex-col gap-1">
-                            <span className="text-xs font-semibold text-gray-700 leading-[1.5]">
-                              {formatTime(event.start)}
-                            </span>
-                            <button
-                              className={`rounded-lg px-3 py-2.5 text-left transition-colors cursor-pointer group-hover:shadow-sm ${
-                                activeEvent?.id === event.id
-                                  ? "bg-[#EFF6FF]"
-                                  : "bg-background-light dark:bg-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-800"
-                              }`}
-                              type="button"
-                              onClick={() => {
-                                setActiveEvent(event);
-                                setAiDraftEvent(null);
-                                setAiDraftIndex(null);
-                                setModalOpen(true);
-                              }}
-                            >
-                              <p className="text-gray-900 dark:text-white font-semibold text-[15px] leading-[1.4]">
-                                {event.title}
-                              </p>
-                              <p className="text-gray-500 text-xs font-normal leading-[1.4]">
-                                {event.location || ""}
-                              </p>
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-                </div>
-              )}
-
               {state.loading && <p className="text-xs text-slate-400 mt-3">일정 불러오는 중...</p>}
               {state.error && <p className="text-xs text-red-500 mt-3">{state.error}</p>}
-            </div>
             </div>
             </section>
           </div>
@@ -2018,14 +1804,255 @@ function CalendarPageInner() {
           </div>
         </>
       )}
-      <button
-        className="fixed bottom-6 right-6 z-50 size-14 rounded-full bg-primary text-white shadow-lg shadow-blue-500/30 hover:bg-blue-600 transition-colors flex items-center justify-center"
-        type="button"
-        aria-label="AI 어시스턴트 열기"
-        onClick={() => ai.openWithText("")}
+      <div
+        className={`fixed left-0 top-0 z-40 flex h-full items-center ${
+          leftPanelOpen ? "pointer-events-auto" : "pointer-events-none"
+        }`}
       >
-        <Sparkles className="size-6" />
-      </button>
+        <div
+          id="calendar-left-panel"
+          className={`h-full w-[320px] border-r border-gray-200 bg-[#F9FAFB] backdrop-blur ${
+            leftPanelOpen ? "translate-x-0 pointer-events-auto" : "-translate-x-full pointer-events-none"
+          }`}
+        >
+          <div className="flex h-full flex-col gap-4 px-3 py-3 text-slate-900">
+            {leftPanelOpen && (
+              <div className="flex justify-start">
+                <button
+                  type="button"
+                  className="flex size-9 items-center justify-center rounded-full hover:bg-gray-100 transition-colors text-slate-600"
+                  onClick={() => setLeftPanelOpen(false)}
+                  aria-label="왼쪽 탭 닫기"
+                >
+                  <PanelLeftClose className="size-5" />
+                </button>
+              </div>
+            )}
+            {isTimeGridView && (
+              <div className="mini-calendar bg-white dark:bg-[#111418] p-4">
+                <FullCalendar
+                  ref={miniCalendarRef}
+                  plugins={[dayGridPlugin, interactionPlugin]}
+                  initialView="dayGridMonth"
+                  initialDate={selectedDate}
+                  height="auto"
+                  fixedWeekCount={false}
+                  firstDay={1}
+                  locale="ko"
+                  headerToolbar={{ left: "title", center: "", right: "prev,next" }}
+                  titleFormat={{ year: "numeric", month: "long" }}
+                  events={[]}
+                  dayCellContent={(arg) => {
+                    const numberText = arg.dayNumberText.replace(/[^\d]/g, "");
+                    return <span>{numberText}</span>;
+                  }}
+                  dayCellDidMount={(info) => {
+                    const weekKey = getWeekKey(info.date);
+                    info.el.dataset.weekKey = weekKey;
+                    const handleEnter = () => toggleMiniWeekHover(weekKey, true);
+                    const handleLeave = () => toggleMiniWeekHover(weekKey, false);
+                    info.el.addEventListener("mouseenter", handleEnter);
+                    info.el.addEventListener("mouseleave", handleLeave);
+                    (info.el as HTMLElement & { __weekHoverHandlers?: { enter: () => void; leave: () => void } })
+                      .__weekHoverHandlers = { enter: handleEnter, leave: handleLeave };
+                  }}
+                  dayCellWillUnmount={(info) => {
+                    const el = info.el as HTMLElement & { __weekHoverHandlers?: { enter: () => void; leave: () => void } };
+                    if (el.__weekHoverHandlers) {
+                      el.removeEventListener("mouseenter", el.__weekHoverHandlers.enter);
+                      el.removeEventListener("mouseleave", el.__weekHoverHandlers.leave);
+                      delete el.__weekHoverHandlers;
+                    }
+                  }}
+                  dayCellClassNames={(arg) => {
+                    const day = toDateOnly(arg.date);
+                    const weekStartDay = toDateOnly(startOfWeek(day));
+                    const weekEndDay = addDays(weekStartDay, 6);
+                    const classes: string[] = [];
+                    if (day >= selectedWeekStartDay && day <= selectedWeekEndDay) {
+                      classes.push("mini-week-selected");
+                    }
+                    if (isSameDay(day, weekStartDay)) classes.push("mini-week-start");
+                    if (isSameDay(day, weekEndDay)) classes.push("mini-week-end");
+                    if (view === "day" && isSameDay(day, selectedDate)) {
+                      classes.push("fc-day-selected");
+                    }
+                    return classes;
+                  }}
+                  dateClick={(info) => {
+                    const isWeekView = view === "week";
+                    const selectedAnchor = info.date;
+                    setSelectedDate(selectedAnchor);
+                    setCurrentMonth(startOfMonth(info.date));
+                    const api = monthCalendarRef.current?.getApi();
+                    if (api) {
+                      const targetView = isWeekView ? "timeGridWeek" : "timeGridDay";
+                      api.changeView(targetView, info.date);
+                    }
+                  }}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+      <div
+        className={`fixed right-0 top-0 z-40 flex h-full items-center ${
+          rightPanelOpen ? "pointer-events-auto" : "pointer-events-none"
+        }`}
+      >
+        <div
+          id="calendar-right-panel"
+          className={`h-full w-[320px] border-l border-gray-200 bg-[#F9FAFB] backdrop-blur flex flex-col ${
+            rightPanelOpen ? "translate-x-0 pointer-events-auto" : "translate-x-full pointer-events-none"
+          }`}
+        >
+          {rightPanelOpen && (
+            <div className="flex items-center justify-between px-3 pt-3">
+              {ai.open ? (
+                <div className="flex items-center gap-4">
+                  <div
+                    className="relative flex items-center rounded-full bg-gray-100 p-0.5 segmented-toggle"
+                    style={
+                      {
+                        "--seg-count": "2",
+                        "--seg-index": ai.mode === "add" ? "0" : "1",
+                        "--seg-inset": "0.125rem",
+                        "--seg-pad": "0.25rem",
+                      } as CSSProperties
+                    }
+                  >
+                    <span className="segmented-indicator">
+                      <span className="view-indicator-pulse block h-full w-full rounded-full bg-white shadow-sm" />
+                    </span>
+                    <button
+                      type="button"
+                      aria-label="추가 모드"
+                      aria-pressed={ai.mode === "add"}
+                      className={`relative z-10 flex size-8 items-center justify-center rounded-full text-[11px] font-semibold transition-colors ${
+                        ai.mode === "add" ? "text-slate-900" : "text-slate-500 hover:text-slate-900"
+                      }`}
+                      onClick={() => ai.setMode("add")}
+                    >
+                      <Plus className="size-4" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="삭제 모드"
+                      aria-pressed={ai.mode === "delete"}
+                      className={`relative z-10 flex size-8 items-center justify-center rounded-full text-[11px] font-semibold transition-colors ${
+                        ai.mode === "delete" ? "text-slate-900" : "text-slate-500 hover:text-slate-900"
+                      }`}
+                      onClick={() => ai.setMode("delete")}
+                    >
+                      <Trash2 className="size-4" />
+                    </button>
+                  </div>
+                  <div className="h-6 w-px bg-gray-200 mx-1" />
+                  <button
+                    className="size-9 rounded-full flex items-center justify-center bg-gray-100 text-slate-500 hover:text-primary"
+                    type="button"
+                    onClick={ai.resetConversation}
+                    aria-label="대화 초기화"
+                  >
+                    <RotateCcw className="size-4" />
+                  </button>
+                </div>
+              ) : (
+                <span />
+              )}
+              <button
+                type="button"
+                className="flex size-9 items-center justify-center rounded-full hover:bg-gray-100 transition-colors text-slate-600"
+                onClick={closeEventDrawer}
+                aria-label="오른쪽 탭 닫기"
+              >
+                <PanelRightClose className="size-5" />
+              </button>
+            </div>
+          )}
+          <div className="flex-1 overflow-hidden">
+            {ai.open ? (
+              <AiAssistantModal
+                assistant={ai}
+                variant="drawer"
+                showHeaderControls={false}
+                onEditAddItem={(item, index) => {
+                  const draft = buildAiDraftEvent(item, selectedDate);
+                  setAiDraftEvent(draft);
+                  setAiDraftIndex(index);
+                  setActiveEvent(null);
+                  ai.close();
+                  openEventDrawer({ reset: true, showForm: true });
+                }}
+              />
+            ) : (
+              <EventModal
+                open={modalOpen}
+                variant="drawer"
+                showCloseButton={false}
+                resetKey={eventFormResetKey}
+                event={aiDraftEvent ?? activeEvent}
+                forceCreate={Boolean(aiDraftEvent)}
+                defaultDate={selectedDate}
+                onClose={closeEventDrawer}
+                onCancel={hideEventFormOnly}
+                onCreate={async (payload) => {
+                  if (aiDraftIndex !== null) {
+                    ai.updateAddPreviewItem(aiDraftIndex, {
+                      type: "single",
+                      title: payload.title,
+                      start: payload.start,
+                      end: payload.end ?? null,
+                      location: payload.location ?? null,
+                      description: payload.description ?? null,
+                      attendees: payload.attendees ?? null,
+                      reminders: payload.reminders ?? null,
+                      visibility: payload.visibility ?? null,
+                      transparency: payload.transparency ?? null,
+                      meeting_url: payload.meeting_url ?? null,
+                      timezone: payload.timezone ?? null,
+                      color_id: payload.color_id ?? null,
+                      all_day: Boolean(payload.all_day),
+                    });
+                    return null;
+                  }
+                  return handleCreate(payload);
+                }}
+                onCreateRecurring={async (payload) => {
+                  if (aiDraftIndex !== null) {
+                    const end = payload.recurrence.end || null;
+                    ai.updateAddPreviewItem(aiDraftIndex, {
+                      type: "recurring",
+                      title: payload.title,
+                      start_date: payload.start_date,
+                      time: payload.time ?? null,
+                      duration_minutes: payload.duration_minutes ?? null,
+                      location: payload.location ?? null,
+                      description: payload.description ?? null,
+                      attendees: payload.attendees ?? null,
+                      reminders: payload.reminders ?? null,
+                      visibility: payload.visibility ?? null,
+                      transparency: payload.transparency ?? null,
+                      meeting_url: payload.meeting_url ?? null,
+                      timezone: payload.timezone ?? null,
+                      color_id: payload.color_id ?? null,
+                      recurrence: payload.recurrence,
+                      weekdays: payload.recurrence.byweekday ?? undefined,
+                      end_date: end?.until ?? null,
+                      count: end?.count ?? null,
+                    });
+                    return null;
+                  }
+                  return handleCreateRecurring(payload);
+                }}
+                onUpdate={actions.update}
+                onDelete={actions.remove}
+              />
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

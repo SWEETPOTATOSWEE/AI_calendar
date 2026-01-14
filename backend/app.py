@@ -1027,7 +1027,7 @@ EVENTS_SYSTEM_PROMPT_TEMPLATE = """너는 한국어 일정 문장을 구조화�
 10. 사용자의 요청이 없다면 과거 이벤트는 생성하지 않는다.
 11. recurrence가 있으면 우선 사용한다. end_date/weekday는 이전 버전 호환용으로만 사용(필수 아님).
 12. need_more_information=false이면 content는 빈 문자열로 둔다.
-13. 마크다운은 need_more_information=true인 경우 content에서만 제한적으로 사용한다(**굵게**, *기울임*, - 리스트, 줄바꿈). 그 외 필드에는 마크다운을 쓰지 않는다.
+13. 마크다운은 need_more_information=true인 경우 content에서만 제한적으로 사용한다(제목, **굵게**, *기울임*, 리스트, 줄바꿈, 구분선). 그 외 필드에는 마크다운을 쓰지 않는다.
 14. needs_context와 need_more_information은 동시에 true로 두지 않는다.
 15. 질문은 최대 3개까지만 작성한다.
 
@@ -1122,7 +1122,7 @@ EVENTS_SYSTEM_PROMPT_WITH_CONTEXT_TEMPLATE = """너는 한국어 일정 문장�
 15. 가려진 구간이나 알아볼 수 없는 내용은 제외
 16. 꼭 필요한 정보만 질문한다. 문맥이나 context.events로 알 수 있으면 묻지 않는다.
 17. need_more_information=false이면 content는 빈 문자열로 둔다.
-18. 마크다운은 need_more_information=true인 경우 content에서만 제한적으로 사용한다(**굵게**, *기울임*, - 리스트, 줄바꿈). 그 외 필드에는 마크다운을 쓰지 않는다.
+18. 마크다운은 need_more_information=true인 경우 content에서만 제한적으로 사용한다(제목, **굵게**, *기울임*, 리스트, 줄바꿈, 구분선). 그 외 필드에는 마크다운을 쓰지 않는다.
 19. 질문은 최대 3개까지만 작성한다.
 
 """
@@ -1209,7 +1209,7 @@ EVENTS_MULTIMODAL_PROMPT_TEMPLATE = """너는 한국어 일정 정보를 텍스�
 12. 이미지 또는 텍스트에 정보가 없으면 null 처리
 13. 가려진 구간이나 알아볼 수 없는 내용은 제외
 14. need_more_information=false이면 content는 빈 문자열로 둔다.
-15. 마크다운은 need_more_information=true인 경우 content에서만 제한적으로 사용한다(**굵게**, *기울임*, - 리스트, 줄바꿈). 그 외 필드에는 마크다운을 쓰지 않는다.
+15. 마크다운은 need_more_information=true인 경우 content에서만 제한적으로 사용한다(제목, **굵게**, *기울임*, 리스트, 줄바꿈, 구분선). 그 외 필드에는 마크다운을 쓰지 않는다.
 16. needs_context와 need_more_information은 동시에 true로 두지 않는다.
 17. 질문은 최대 3개까지만 작성한다.
 
@@ -1309,7 +1309,7 @@ EVENTS_MULTIMODAL_PROMPT_WITH_CONTEXT_TEMPLATE = """너는 한국어 일정 정�
 15. 가려진 구간이나 알아볼 수 없는 내용은 제외
 16. 꼭 필요한 정보만 질문한다. 문맥이나 context.events로 알 수 있으면 묻지 않는다.
 17. need_more_information=false이면 content는 빈 문자열로 둔다.
-18. 마크다운은 need_more_information=true인 경우 content에서만 제한적으로 사용한다(**굵게**, *기울임*, - 리스트, 줄바꿈). 그 외 필드에는 마크다운을 쓰지 않는다.
+18. 마크다운은 need_more_information=true인 경우 content에서만 제한적으로 사용한다(제목, **굵게**, *기울임*, - 리스트, 줄바꿈, 구분선). 그 외 필드에는 마크다운을 쓰지 않는다.
 19. 질문은 최대 3개까지만 작성한다.
 
 """

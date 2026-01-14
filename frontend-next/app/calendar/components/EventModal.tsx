@@ -20,7 +20,13 @@ import {
   ChevronUp,
   ChevronsUpDown,
   Clock,
+  FileText,
+  Link,
+  MapPin,
+  Minus,
+  Pencil,
   Plus,
+  Users,
 } from "lucide-react";
 import type {
   CalendarEvent,
@@ -209,7 +215,11 @@ export type EventModalProps = {
   event?: CalendarEvent | null;
   defaultDate?: Date | null;
   forceCreate?: boolean;
+  variant?: "modal" | "drawer";
+  showCloseButton?: boolean;
+  resetKey?: number;
   onClose: () => void;
+  onCancel?: () => void;
   onCreate: (payload: EventPayload) => Promise<CalendarEvent | void | null>;
   onCreateRecurring: (payload: RecurringEventPayload) => Promise<CalendarEvent[] | null>;
   onUpdate: (event: CalendarEvent, payload: EventPayload) => Promise<void>;
@@ -938,7 +948,11 @@ export default function EventModal({
   event,
   defaultDate,
   forceCreate = false,
+  variant = "modal",
+  showCloseButton = true,
+  resetKey = 0,
   onClose,
+  onCancel = onClose,
   onCreate,
   onCreateRecurring,
   onUpdate,
@@ -950,6 +964,7 @@ export default function EventModal({
   const [form, setForm] = useState(() => buildInitialState(event, defaultDate));
   const [activeTab, setActiveTab] = useState<"basic" | "advanced">("basic");
   const [showAllColors, setShowAllColors] = useState(false);
+  const [descriptionMultiline, setDescriptionMultiline] = useState(false);
   const activeTabIndex = EVENT_MODAL_TABS.indexOf(activeTab);
   const tabToggleStyle = useMemo(
     () =>
@@ -962,6 +977,15 @@ export default function EventModal({
   const isEdit = Boolean(stableEvent) && !forceCreate;
   const isRecurring = !forceCreate && stableEvent?.recur === "recurring";
   const descriptionRef = useRef<HTMLTextAreaElement | null>(null);
+  const isDrawer = variant === "drawer";
+  const lastResetKeyRef = useRef<number | null>(null);
+  const resetFormState = (nextEvent: CalendarEvent | null, nextDefaultDate: Date | null) => {
+    setStableEvent(nextEvent);
+    setStableDefaultDate(nextDefaultDate);
+    setForm(buildInitialState(nextEvent, nextDefaultDate));
+    setActiveTab("basic");
+    setShowAllColors(false);
+  };
   const resizeDescription = () => {
     if (!descriptionRef.current) return;
     const lineHeight = parseFloat(getComputedStyle(descriptionRef.current).lineHeight || "0") || 22;
@@ -971,19 +995,24 @@ export default function EventModal({
     descriptionRef.current.style.height = `${nextHeight}px`;
     descriptionRef.current.style.overflowY =
       descriptionRef.current.scrollHeight > maxHeight ? "auto" : "hidden";
+    const isLong = descriptionRef.current.scrollHeight > lineHeight * 1.6;
+    const isShort = descriptionRef.current.scrollHeight < lineHeight * 1.2;
+    setDescriptionMultiline((prev) => (prev ? !isShort : isLong));
   };
 
   useEffect(() => {
     if (!open) return;
-    setStableEvent(event ?? null);
-    setStableDefaultDate(defaultDate ?? null);
-    setForm(buildInitialState(event, defaultDate));
-    setActiveTab("basic");
-    setShowAllColors(false);
-    requestAnimationFrame(() => resizeDescription());
-  }, [open, event, defaultDate]);
+    if (isDrawer) {
+      if (lastResetKeyRef.current !== resetKey) {
+        resetFormState(event ?? null, defaultDate ?? null);
+        lastResetKeyRef.current = resetKey;
+      }
+      return;
+    }
+    resetFormState(event ?? null, defaultDate ?? null);
+  }, [open, event, defaultDate, isDrawer, resetKey]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     resizeDescription();
   }, [form.description]);
 
@@ -997,6 +1026,12 @@ export default function EventModal({
   const [customReminderValue, setCustomReminderValue] = useState("1");
   const [customReminderUnit, setCustomReminderUnit] = useState<"days" | "hours" | "minutes">("days");
   const [customReminderValues, setCustomReminderValues] = useState<number[]>([]);
+  const handleClose = () => {
+    if (!isDrawer) onClose();
+  };
+  const handleCancel = () => {
+    onCancel();
+  };
 
   const closeCustomReminder = () => {
     if (!customReminderOpen || customReminderClosing) return;
@@ -1155,11 +1190,27 @@ export default function EventModal({
   if (!visible) return null;
 
   return (
-    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 px-4">
+    <div
+      className={
+        isDrawer
+          ? "flex h-full flex-col"
+          : "fixed inset-0 z-[999] flex items-center justify-center bg-black/40 px-4"
+      }
+    >
       <div
-        className="w-full max-w-2xl rounded-2xl bg-[#F9FAFB] border border-gray-100 shadow-xl"
+        className={
+          isDrawer
+            ? "flex h-full flex-col bg-[#F9FAFB]"
+            : "w-full max-w-2xl rounded-2xl bg-[#F9FAFB] border border-gray-100 shadow-xl"
+        }
       >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-800">
+        <div
+          className={
+            isDrawer
+              ? "flex items-center justify-between px-3 py-3 border-b border-gray-100 dark:border-gray-800"
+              : "flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-800"
+          }
+        >
           <div className="flex items-center gap-3">
             <h3 className="text-[18px] font-semibold text-[#111827]">
               {isEdit ? "일정 수정" : "새 일정"}
@@ -1190,11 +1241,23 @@ export default function EventModal({
               ))}
             </div>
           </div>
-          <button className="text-slate-400 hover:text-slate-900 dark:hover:text-white" onClick={onClose} type="button">
-            ✕
-          </button>
+          {showCloseButton && (
+            <button
+              className="text-slate-400 hover:text-slate-900 dark:hover:text-white"
+              onClick={onClose}
+              type="button"
+            >
+              ✕
+            </button>
+          )}
         </div>
-        <div className="px-6 py-5 space-y-4 max-h-[70vh] overflow-y-auto">
+        <div
+          className={
+            isDrawer
+              ? "flex-1 px-3 py-3 space-y-4 overflow-y-auto"
+              : "px-6 py-5 space-y-4 max-h-[70vh] overflow-y-auto"
+          }
+        >
           {isRecurring && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
               반복 일정은 수정할 수 없습니다. 삭제 후 새로 등록해 주세요.
@@ -1203,10 +1266,10 @@ export default function EventModal({
           {activeTab === "basic" && (
             <>
               <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632]">
-                <div className="flex h-12 items-center px-4 py-2">
+                <div className="flex min-h-12 items-center px-4">
                   <label className="sr-only">제목</label>
                   <input
-                    className="w-full border-none bg-transparent text-[15px] font-medium text-[#111827] placeholder:text-[15px] placeholder:font-normal placeholder:text-[#9CA3AF] focus:outline-none focus:ring-0"
+                    className="h-10 w-full -translate-y-[1px] appearance-none border-none bg-transparent py-0 text-[15px] leading-none font-medium text-[#111827] placeholder:text-[15px] placeholder:font-normal placeholder:text-[#9CA3AF] focus:outline-none focus:ring-0"
                     placeholder="제목"
                     value={form.title}
                     onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
@@ -1284,10 +1347,11 @@ export default function EventModal({
                 </div>
               </div>
               <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632]">
-                <div className="flex h-12 items-center px-4 py-2">
+                <div className="flex min-h-12 items-center gap-2 px-4">
+                  <MapPin className="size-4 text-slate-400" />
                   <label className="sr-only">장소</label>
                   <input
-                    className="w-full border-none bg-transparent text-[15px] font-medium text-[#111827] placeholder:text-[15px] placeholder:font-normal placeholder:text-[#9CA3AF] focus:outline-none focus:ring-0"
+                    className="h-10 w-full -translate-y-[1px] appearance-none border-none bg-transparent py-0 text-[15px] leading-none font-medium text-[#111827] placeholder:text-[15px] placeholder:font-normal placeholder:text-[#9CA3AF] focus:outline-none focus:ring-0"
                     placeholder="장소"
                     value={form.location}
                     onChange={(event) => setForm((prev) => ({ ...prev, location: event.target.value }))}
@@ -1311,10 +1375,10 @@ export default function EventModal({
                       <button
                         key={value}
                         type="button"
-                        className={`px-3 py-1 rounded-full text-[13px] font-medium border transition-colors ${
+                        className={`px-3 py-1 rounded-full text-[13px] font-medium transition-colors ${
                           active
-                            ? "border-[#2563EB] text-[#2563EB] font-semibold"
-                            : "border-gray-200 text-[#374151] hover:border-[#2563EB]/30"
+                            ? "text-[#2563EB] font-semibold underline"
+                            : "text-[#374151]"
                         }`}
                         onClick={() =>
                           setForm((prev) => ({
@@ -1428,56 +1492,389 @@ export default function EventModal({
               <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632] px-4 py-2 min-h-12 flex items-center">
                 <div className="flex w-full items-center justify-between gap-2">
                   <label className="text-[14px] font-medium text-[#374151] whitespace-nowrap shrink-0">색상</label>
-                  <div className="ml-auto flex flex-wrap justify-end gap-2">
+                  <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
                     {visibleColorOptions.map((option) => {
                       const active = form.colorId === option.id;
                       return (
                         <button
                           key={option.id}
                           type="button"
-                        className={`flex items-center gap-2 rounded-full border px-3 py-1 text-[13px] font-medium transition-colors ${
-                          active
-                            ? "border-[#2563EB] text-[#2563EB] font-semibold"
-                            : "border-gray-200 text-[#374151] hover:border-[#2563EB]/30"
-                        }`}
+                          className={`flex items-center rounded-full p-1 text-[13px] font-medium transition-colors ${
+                            active
+                              ? "text-[#2563EB] font-semibold"
+                              : "text-[#374151]"
+                          }`}
                           onClick={() => setForm((prev) => ({ ...prev, colorId: option.id }))}
                           disabled={isRecurring}
+                          aria-label={option.label}
+                          title={option.label}
                         >
-                          <span className={`h-2.5 w-2.5 rounded-full ${option.chip}`}></span>
-                          {option.label}
+                          <span
+                            className={`relative rounded-full ${option.chip} ${
+                              active ? "h-6 w-6" : "h-5 w-5"
+                            }`}
+                          >
+                            {active ? (
+                              <Check className="absolute inset-0 m-auto size-3 text-black" />
+                            ) : null}
+                          </span>
                         </button>
                       );
                     })}
                     {!showAllColors && (
                       <button
                         type="button"
-                        className="rounded-full border border-gray-300 px-3 py-1 text-[13px] font-medium text-[#374151] transition-colors hover:border-[#2563EB]/40 hover:text-[#2563EB]"
+                        className="relative size-8 rounded-full text-[#374151] transition-colors hover:text-[#2563EB]"
                         onClick={() => setShowAllColors(true)}
                         disabled={isRecurring}
+                        aria-label="모든 색상"
+                        title="모든 색상"
                       >
-                        모든 색상
+                        <Plus className="absolute inset-0 m-auto size-4" />
                       </button>
                     )}
                     {showAllColors && (
                       <button
                         type="button"
-                        className="rounded-full border border-gray-300 px-3 py-1 text-[13px] font-medium text-[#374151] transition-colors hover:border-[#2563EB]/40 hover:text-[#2563EB]"
+                        className="relative size-8 rounded-full text-[#374151] transition-colors hover:text-[#2563EB]"
                         onClick={() => setShowAllColors(false)}
                         disabled={isRecurring}
+                        aria-label="닫기"
+                        title="닫기"
                       >
-                        닫기
+                        <Minus className="absolute inset-0 m-auto size-4" />
                       </button>
                     )}
                   </div>
                 </div>
               </div>
+              <div className="flex items-center gap-2 px-1">
+                <p className="text-[14px] font-medium text-[#4B5563]">반복</p>
+                <button
+                  type="button"
+                  className="flex size-6 items-center justify-center text-slate-500 hover:text-primary disabled:opacity-50"
+                  onClick={() =>
+                    setForm((prev) => ({
+                      ...prev,
+                      recurrenceEnabled: !prev.recurrenceEnabled,
+                    }))
+                  }
+                  disabled={isEdit}
+                  aria-label={form.recurrenceEnabled ? "반복 일정 접기" : "반복 일정 펼치기"}
+                >
+                  {form.recurrenceEnabled ? (
+                    <ChevronUp className="size-5" />
+                  ) : (
+                    <ChevronDown className="size-5" />
+                  )}
+                </button>
+              </div>
+              {form.recurrenceEnabled && (
+                <div className="space-y-3">
+                  {isEdit && (
+                    <p className="text-[10px] text-slate-400">
+                      기존 일정은 반복 규칙으로 전환할 수 없습니다.
+                    </p>
+                  )}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632] px-4 py-1 min-h-12 flex items-center">
+                      <div className="flex w-full items-center justify-between gap-2">
+                        <label className="text-[14px] font-medium text-[#4B5563] whitespace-nowrap shrink-0">
+                          빈도
+                        </label>
+                        <CustomSelect
+                          value={form.recurrenceFrequency}
+                          options={[
+                            { value: "DAILY", label: "매일" },
+                            { value: "WEEKLY", label: "매주" },
+                            { value: "MONTHLY", label: "매월" },
+                            { value: "YEARLY", label: "매년" },
+                          ]}
+                          onChange={(nextValue) =>
+                            setForm((prev) => ({
+                              ...prev,
+                              recurrenceFrequency: nextValue as EventRecurrence["freq"],
+                            }))
+                          }
+                          disabled={isEdit}
+                          wrapperClassName="ml-auto"
+                        />
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632] px-4 py-1 min-h-12 flex items-center">
+                      <div className="flex w-full items-center justify-between gap-2">
+                        <label className="text-[14px] font-medium text-[#4B5563] whitespace-nowrap shrink-0">
+                          간격
+                        </label>
+                        <div className="ml-auto flex items-center gap-2">
+                          <input
+                            type="number"
+                            min={1}
+                            className="flex-none border-none bg-transparent px-2 py-2 text-[15px] font-medium text-[#111827] focus:outline-none focus:ring-0"
+                            style={{ width: recurrenceIntervalWidth }}
+                            value={form.recurrenceInterval}
+                            onChange={(event) =>
+                              setForm((prev) => ({
+                                ...prev,
+                                recurrenceInterval: Number(event.target.value || 1),
+                              }))
+                            }
+                            disabled={isEdit}
+                          />
+                          {recurrenceIntervalUnit ? (
+                            <span className="text-[14px] font-medium text-[#4B5563]">
+                              {recurrenceIntervalUnit}
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {form.recurrenceFrequency === "WEEKLY" && (
+                    <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632] px-4 py-2 min-h-12 flex items-center">
+                      <div className="flex w-full items-center justify-between gap-2">
+                        <label className="text-[14px] font-medium text-[#374151] whitespace-nowrap shrink-0">
+                          요일 선택
+                        </label>
+                        <div className="ml-auto flex flex-wrap justify-end gap-2">
+                          {WEEKDAY_OPTIONS.map((day) => {
+                            const active = form.recurrenceWeekdays.includes(day.value);
+                            return (
+                              <button
+                                key={day.value}
+                                type="button"
+                                className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
+                                  active
+                                    ? "bg-primary text-white border-primary"
+                                    : "border-gray-200 text-slate-500 hover:border-primary/30"
+                                }`}
+                                onClick={() =>
+                                  setForm((prev) => ({
+                                    ...prev,
+                                    recurrenceWeekdays: active
+                                      ? prev.recurrenceWeekdays.filter((item) => item !== day.value)
+                                      : [...prev.recurrenceWeekdays, day.value],
+                                  }))
+                                }
+                                disabled={isEdit}
+                              >
+                                {day.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {form.recurrenceFrequency === "MONTHLY" && (
+                    <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632]">
+                      <div className="flex h-12 items-center px-4 py-2">
+                        <span className="w-14 shrink-0 text-[14px] font-medium text-[#374151]">월간</span>
+                        <div className="flex w-full items-center justify-end gap-2">
+                          {(["date", "weekday"] as const).map((mode) => (
+                            <button
+                              key={mode}
+                              type="button"
+                              className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
+                                form.recurrenceMonthlyMode === mode
+                                  ? "bg-primary text-white border-primary"
+                                  : "border-gray-200 text-slate-500 hover:border-primary/30"
+                              }`}
+                              onClick={() =>
+                                setForm((prev) => ({ ...prev, recurrenceMonthlyMode: mode }))
+                              }
+                              disabled={isEdit}
+                            >
+                              {mode === "date" ? "같은 날짜" : "요일 기준"}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="h-px bg-gray-200 dark:bg-gray-700 mx-4" />
+                      {form.recurrenceMonthlyMode === "date" ? (
+                        <div className="flex h-12 items-center px-4 py-2">
+                          <span className="w-14 shrink-0 text-[14px] font-medium text-[#374151]">날짜</span>
+                          <label className="sr-only">매월 날짜</label>
+                          <div className="flex w-full items-center justify-end gap-1">
+                            <input
+                              type="number"
+                              min={1}
+                              max={31}
+                              className="flex-none border-none bg-transparent px-2 py-2 text-[15px] font-medium text-[#111827] focus:outline-none focus:ring-0"
+                              style={{ width: recurrenceMonthDayWidth }}
+                              value={form.recurrenceMonthDay}
+                              onChange={(event) =>
+                                setForm((prev) => ({
+                                  ...prev,
+                                  recurrenceMonthDay: Number(event.target.value || 1),
+                                }))
+                              }
+                              disabled={isEdit}
+                            />
+                            <span className="text-[14px] font-medium text-[#4B5563]">일</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex h-12 items-center px-4 py-2">
+                          <span className="w-14 shrink-0 text-[14px] font-medium text-[#374151]">요일</span>
+                          <label className="sr-only">월간 규칙 요일</label>
+                          <div className="flex w-full items-center justify-end gap-2">
+                            <CustomSelect
+                              value={form.recurrenceWeekdayPos}
+                              options={[
+                                { value: 1, label: "첫 번째" },
+                                { value: 2, label: "두 번째" },
+                                { value: 3, label: "세 번째" },
+                                { value: 4, label: "네 번째" },
+                                { value: -1, label: "마지막" },
+                              ]}
+                              onChange={(nextValue) =>
+                                setForm((prev) => ({
+                                  ...prev,
+                                  recurrenceWeekdayPos: Number(nextValue),
+                                }))
+                              }
+                              disabled={isEdit}
+                            />
+                            <CustomSelect
+                              value={form.recurrenceWeekday}
+                              options={WEEKDAY_OPTIONS.map((day) => ({
+                                value: day.value,
+                                label: `${day.label}요일`,
+                              }))}
+                              onChange={(nextValue) =>
+                                setForm((prev) => ({
+                                  ...prev,
+                                  recurrenceWeekday: Number(nextValue),
+                                }))
+                              }
+                              disabled={isEdit}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {form.recurrenceFrequency === "YEARLY" && (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632]">
+                        <div className="flex h-12 items-center justify-between gap-2 px-4 py-2">
+                          <span className="text-[14px] font-medium text-[#374151]">날짜</span>
+                          <label className="sr-only">월</label>
+                          <div className="flex items-center justify-end gap-0">
+                            <div className="flex items-center gap-1">
+                              <CustomSelect
+                                value={form.recurrenceYearMonth}
+                                options={Array.from({ length: 12 }, (_, idx) => idx + 1).map(
+                                  (month) => ({
+                                    value: month,
+                                    label: `${month}월`,
+                                  })
+                                )}
+                                onChange={(nextValue) =>
+                                  setForm((prev) => ({
+                                    ...prev,
+                                    recurrenceYearMonth: Number(nextValue),
+                                  }))
+                                }
+                                disabled={isEdit}
+                              />
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <label className="sr-only">일</label>
+                              <CustomSelect
+                                value={form.recurrenceYearDay}
+                                options={Array.from({ length: 31 }, (_, idx) => idx + 1).map(
+                                  (day) => ({
+                                    value: day,
+                                    label: `${day}일`,
+                                  })
+                                )}
+                                onChange={(nextValue) =>
+                                  setForm((prev) => ({
+                                    ...prev,
+                                    recurrenceYearDay: Number(nextValue),
+                                  }))
+                                }
+                                disabled={isEdit}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632] px-4 py-1 min-h-12 flex items-center">
+                    <div className="flex w-full items-center justify-between gap-2">
+                      <label className="text-[14px] font-medium text-[#374151]">종료</label>
+                      <div className="ml-auto flex items-center gap-2">
+                        <CustomSelect
+                          value={form.recurrenceEndMode}
+                          options={[
+                            { value: "none", label: "없음" },
+                            { value: "until", label: "날짜" },
+                            { value: "count", label: "횟수" },
+                          ]}
+                          onChange={(nextValue) =>
+                            setForm((prev) => ({ ...prev, recurrenceEndMode: nextValue }))
+                          }
+                          disabled={isEdit}
+                        />
+                        {form.recurrenceEndMode === "until" && (
+                          <>
+                            <label className="sr-only">종료 날짜</label>
+                            <input
+                              type="date"
+                              className="w-auto flex-none border-none bg-transparent px-3 py-2 text-[15px] font-medium text-[#111827] focus:outline-none focus:ring-0"
+                              value={form.recurrenceEndDate}
+                              onChange={(event) =>
+                                setForm((prev) => ({ ...prev, recurrenceEndDate: event.target.value }))
+                              }
+                              disabled={isEdit}
+                            />
+                          </>
+                        )}
+                        {form.recurrenceEndMode === "count" && (
+                          <>
+                            <label className="sr-only">횟수</label>
+                            <input
+                              type="number"
+                              min={1}
+                              className="flex-none border-none bg-transparent px-2 py-2 text-[15px] font-medium text-[#111827] focus:outline-none focus:ring-0"
+                              style={{ width: recurrenceCountWidth }}
+                              value={form.recurrenceEndCount}
+                              onChange={(event) =>
+                                setForm((prev) => ({ ...prev, recurrenceEndCount: event.target.value }))
+                              }
+                              disabled={isEdit}
+                            />
+                            <span className="text-[14px] font-medium text-[#4B5563]">회</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  {recurrenceError && (
+                    <p className="text-xs text-red-500">{recurrenceError}</p>
+                  )}
+                </div>
+              )}
             </>
           )}
 
           {activeTab === "advanced" && (
             <>
               <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632]">
-                <div className="flex min-h-12 items-center px-4 py-2">
+                <div
+                  className={`flex min-h-12 gap-2 px-4 py-2 ${
+                    descriptionMultiline ? "items-start" : "items-center"
+                  }`}
+                >
+                  <FileText className={`size-4 text-slate-400 ${descriptionMultiline ? "mt-1" : ""}`} />
                   <label className="sr-only">설명</label>
                   <textarea
                     ref={descriptionRef}
@@ -1491,10 +1888,11 @@ export default function EventModal({
                 </div>
               </div>
               <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632]">
-                <div className="flex h-12 items-center px-4 py-2">
+                <div className="flex h-12 items-center gap-2 px-4 py-2">
+                  <Users className="size-4 text-slate-400" />
                   <label className="sr-only">참석자</label>
                   <input
-                    className="w-full border-none bg-transparent text-[15px] font-medium text-[#111827] placeholder:text-[15px] placeholder:font-normal placeholder:text-[#9CA3AF] focus:outline-none focus:ring-0"
+                    className="w-full -translate-y-[1px] border-none bg-transparent text-[15px] font-medium text-[#111827] placeholder:text-[15px] placeholder:font-normal placeholder:text-[#9CA3AF] focus:outline-none focus:ring-0"
                     placeholder="참석자"
                     value={form.attendees}
                     onChange={(event) => setForm((prev) => ({ ...prev, attendees: event.target.value }))}
@@ -1502,10 +1900,11 @@ export default function EventModal({
                   />
                 </div>
                 <div className="h-px bg-gray-200 dark:bg-gray-700 mx-4" />
-                <div className="flex h-12 items-center px-4 py-2">
+                <div className="flex h-12 items-center gap-2 px-4 py-2">
+                  <Link className="size-4 text-slate-400" />
                   <label className="sr-only">회의 링크</label>
                   <input
-                    className="w-full border-none bg-transparent text-[15px] font-medium text-[#111827] placeholder:text-[15px] placeholder:font-normal placeholder:text-[#9CA3AF] focus:outline-none focus:ring-0"
+                    className="w-full -translate-y-[1px] border-none bg-transparent text-[15px] font-medium text-[#111827] placeholder:text-[15px] placeholder:font-normal placeholder:text-[#9CA3AF] focus:outline-none focus:ring-0"
                     placeholder="회의 링크"
                     value={form.meetingUrl}
                     onChange={(event) => setForm((prev) => ({ ...prev, meetingUrl: event.target.value }))}
@@ -1565,332 +1964,23 @@ export default function EventModal({
                   />
                 </div>
               </div>
-              <div className="flex items-center gap-2 px-1">
-                <p className="text-[14px] font-medium text-[#4B5563]">반복</p>
-                <button
-                  type="button"
-                  className="flex size-6 items-center justify-center text-slate-500 hover:text-primary disabled:opacity-50"
-                  onClick={() =>
-                    setForm((prev) => ({
-                      ...prev,
-                      recurrenceEnabled: !prev.recurrenceEnabled,
-                    }))
-                  }
-                  disabled={isEdit}
-                  aria-label={form.recurrenceEnabled ? "반복 일정 접기" : "반복 일정 펼치기"}
-                >
-                  {form.recurrenceEnabled ? (
-                    <ChevronUp className="size-5" />
-                  ) : (
-                    <ChevronDown className="size-5" />
-                  )}
-                </button>
-              </div>
-              {form.recurrenceEnabled && (
-                <div className="space-y-3">
-                  {isEdit && (
-                    <p className="text-[10px] text-slate-400">
-                      기존 일정은 반복 규칙으로 전환할 수 없습니다.
-                    </p>
-                  )}
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632] px-4 py-1 min-h-12 flex items-center">
-                        <div className="flex w-full items-center justify-between gap-2">
-                          <label className="text-[14px] font-medium text-[#4B5563] whitespace-nowrap shrink-0">
-                            빈도
-                          </label>
-                          <CustomSelect
-                            value={form.recurrenceFrequency}
-                            options={[
-                              { value: "DAILY", label: "매일" },
-                              { value: "WEEKLY", label: "매주" },
-                              { value: "MONTHLY", label: "매월" },
-                              { value: "YEARLY", label: "매년" },
-                            ]}
-                            onChange={(nextValue) =>
-                              setForm((prev) => ({
-                                ...prev,
-                                recurrenceFrequency: nextValue as EventRecurrence["freq"],
-                              }))
-                            }
-                            disabled={isEdit}
-                            wrapperClassName="ml-auto"
-                          />
-                        </div>
-                      </div>
-                      <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632] px-4 py-1 min-h-12 flex items-center">
-                        <div className="flex w-full items-center justify-between gap-2">
-                          <label className="text-[14px] font-medium text-[#4B5563] whitespace-nowrap shrink-0">
-                            간격
-                          </label>
-                          <div className="ml-auto flex items-center gap-2">
-                            <input
-                              type="number"
-                              min={1}
-                              className="flex-none border-none bg-transparent px-2 py-2 text-[15px] font-medium text-[#111827] focus:outline-none focus:ring-0"
-                              style={{ width: recurrenceIntervalWidth }}
-                              value={form.recurrenceInterval}
-                              onChange={(event) =>
-                                setForm((prev) => ({
-                                  ...prev,
-                                  recurrenceInterval: Number(event.target.value || 1),
-                                }))
-                              }
-                              disabled={isEdit}
-                            />
-                            {recurrenceIntervalUnit ? (
-                              <span className="text-[14px] font-medium text-[#4B5563]">
-                                {recurrenceIntervalUnit}
-                              </span>
-                            ) : null}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {form.recurrenceFrequency === "WEEKLY" && (
-                      <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632] px-4 py-2 min-h-12 flex items-center">
-                        <div className="flex w-full items-center justify-between gap-2">
-                          <label className="text-[14px] font-medium text-[#374151] whitespace-nowrap shrink-0">
-                            요일 선택
-                          </label>
-                          <div className="ml-auto flex flex-wrap justify-end gap-2">
-                            {WEEKDAY_OPTIONS.map((day) => {
-                              const active = form.recurrenceWeekdays.includes(day.value);
-                              return (
-                                <button
-                                  key={day.value}
-                                  type="button"
-                                  className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
-                                    active
-                                      ? "bg-primary text-white border-primary"
-                                      : "border-gray-200 text-slate-500 hover:border-primary/30"
-                                  }`}
-                                  onClick={() =>
-                                    setForm((prev) => ({
-                                      ...prev,
-                                      recurrenceWeekdays: active
-                                        ? prev.recurrenceWeekdays.filter((item) => item !== day.value)
-                                        : [...prev.recurrenceWeekdays, day.value],
-                                    }))
-                                  }
-                                  disabled={isEdit}
-                                >
-                                  {day.label}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {form.recurrenceFrequency === "MONTHLY" && (
-                      <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632]">
-                        <div className="flex h-12 items-center px-4 py-2">
-                          <span className="w-14 shrink-0 text-[14px] font-medium text-[#374151]">월간</span>
-                          <div className="flex w-full items-center justify-end gap-2">
-                            {(["date", "weekday"] as const).map((mode) => (
-                              <button
-                                key={mode}
-                                type="button"
-                                className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
-                                  form.recurrenceMonthlyMode === mode
-                                    ? "bg-primary text-white border-primary"
-                                    : "border-gray-200 text-slate-500 hover:border-primary/30"
-                                }`}
-                                onClick={() =>
-                                  setForm((prev) => ({ ...prev, recurrenceMonthlyMode: mode }))
-                                }
-                                disabled={isEdit}
-                              >
-                                {mode === "date" ? "같은 날짜" : "요일 기준"}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                        <div className="h-px bg-gray-200 dark:bg-gray-700 mx-4" />
-                        {form.recurrenceMonthlyMode === "date" ? (
-                          <div className="flex h-12 items-center px-4 py-2">
-                            <span className="w-14 shrink-0 text-[14px] font-medium text-[#374151]">날짜</span>
-                            <label className="sr-only">매월 날짜</label>
-                            <div className="flex w-full items-center justify-end gap-1">
-                              <input
-                                type="number"
-                                min={1}
-                                max={31}
-                                className="flex-none border-none bg-transparent px-2 py-2 text-[15px] font-medium text-[#111827] focus:outline-none focus:ring-0"
-                                style={{ width: recurrenceMonthDayWidth }}
-                                value={form.recurrenceMonthDay}
-                                onChange={(event) =>
-                                  setForm((prev) => ({
-                                    ...prev,
-                                    recurrenceMonthDay: Number(event.target.value || 1),
-                                  }))
-                                }
-                                disabled={isEdit}
-                              />
-                              <span className="text-[14px] font-medium text-[#4B5563]">일</span>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex h-12 items-center px-4 py-2">
-                            <span className="w-14 shrink-0 text-[14px] font-medium text-[#374151]">요일</span>
-                            <label className="sr-only">월간 규칙 요일</label>
-                            <div className="flex w-full items-center justify-end gap-2">
-                              <CustomSelect
-                                value={form.recurrenceWeekdayPos}
-                                options={[
-                                  { value: 1, label: "첫 번째" },
-                                  { value: 2, label: "두 번째" },
-                                  { value: 3, label: "세 번째" },
-                                  { value: 4, label: "네 번째" },
-                                  { value: -1, label: "마지막" },
-                                ]}
-                                onChange={(nextValue) =>
-                                  setForm((prev) => ({
-                                    ...prev,
-                                    recurrenceWeekdayPos: Number(nextValue),
-                                  }))
-                                }
-                                disabled={isEdit}
-                              />
-                              <CustomSelect
-                                value={form.recurrenceWeekday}
-                                options={WEEKDAY_OPTIONS.map((day) => ({
-                                  value: day.value,
-                                  label: `${day.label}요일`,
-                                }))}
-                                onChange={(nextValue) =>
-                                  setForm((prev) => ({
-                                    ...prev,
-                                    recurrenceWeekday: Number(nextValue),
-                                  }))
-                                }
-                                disabled={isEdit}
-                              />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {form.recurrenceFrequency === "YEARLY" && (
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632]">
-                          <div className="flex h-12 items-center justify-between gap-2 px-4 py-2">
-                            <span className="text-[14px] font-medium text-[#374151]">날짜</span>
-                            <label className="sr-only">월</label>
-                            <div className="flex items-center justify-end gap-0">
-                              <div className="flex items-center gap-1">
-                                <CustomSelect
-                                  value={form.recurrenceYearMonth}
-                                  options={Array.from({ length: 12 }, (_, idx) => idx + 1).map(
-                                    (month) => ({
-                                      value: month,
-                                      label: `${month}월`,
-                                    })
-                                  )}
-                                  onChange={(nextValue) =>
-                                    setForm((prev) => ({
-                                      ...prev,
-                                      recurrenceYearMonth: Number(nextValue),
-                                    }))
-                                  }
-                                  disabled={isEdit}
-                                />
-                              </div>
-                              <div className="flex items-center gap-1">
-                                <label className="sr-only">일</label>
-                                <CustomSelect
-                                  value={form.recurrenceYearDay}
-                                  options={Array.from({ length: 31 }, (_, idx) => idx + 1).map(
-                                    (day) => ({
-                                      value: day,
-                                      label: `${day}일`,
-                                    })
-                                  )}
-                                  onChange={(nextValue) =>
-                                    setForm((prev) => ({
-                                      ...prev,
-                                      recurrenceYearDay: Number(nextValue),
-                                    }))
-                                  }
-                                  disabled={isEdit}
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632] px-4 py-1 min-h-12 flex items-center">
-                      <div className="flex w-full items-center justify-between gap-2">
-                        <label className="text-[14px] font-medium text-[#374151]">종료</label>
-                        <div className="ml-auto flex items-center gap-2">
-                          <CustomSelect
-                            value={form.recurrenceEndMode}
-                            options={[
-                              { value: "none", label: "없음" },
-                              { value: "until", label: "날짜" },
-                              { value: "count", label: "횟수" },
-                            ]}
-                            onChange={(nextValue) =>
-                              setForm((prev) => ({ ...prev, recurrenceEndMode: nextValue }))
-                            }
-                            disabled={isEdit}
-                          />
-                          {form.recurrenceEndMode === "until" && (
-                            <>
-                              <label className="sr-only">종료 날짜</label>
-                              <input
-                                type="date"
-                                className="w-auto flex-none border-none bg-transparent px-3 py-2 text-[15px] font-medium text-[#111827] focus:outline-none focus:ring-0"
-                                value={form.recurrenceEndDate}
-                                onChange={(event) =>
-                                  setForm((prev) => ({ ...prev, recurrenceEndDate: event.target.value }))
-                                }
-                                disabled={isEdit}
-                              />
-                            </>
-                          )}
-                          {form.recurrenceEndMode === "count" && (
-                            <>
-                              <label className="sr-only">횟수</label>
-                              <input
-                                type="number"
-                                min={1}
-                                className="flex-none border-none bg-transparent px-2 py-2 text-[15px] font-medium text-[#111827] focus:outline-none focus:ring-0"
-                                style={{ width: recurrenceCountWidth }}
-                                value={form.recurrenceEndCount}
-                                onChange={(event) =>
-                                  setForm((prev) => ({ ...prev, recurrenceEndCount: event.target.value }))
-                                }
-                                disabled={isEdit}
-                              />
-                              <span className="text-[14px] font-medium text-[#4B5563]">회</span>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    {recurrenceError && (
-                      <p className="text-xs text-red-500">{recurrenceError}</p>
-                    )}
-                  </div>
-                )}
             </>
           )}
         </div>
-        <div className="flex items-center justify-between px-6 py-4 border-t border-gray-100 dark:border-gray-800">
+        <div
+          className={
+            isDrawer
+              ? "flex items-center justify-between px-3 py-3 border-t border-gray-100 dark:border-gray-800"
+              : "flex items-center justify-between px-6 py-4 border-t border-gray-100 dark:border-gray-800"
+          }
+        >
           {stableEvent && !forceCreate ? (
             <button
               className="text-sm font-semibold text-red-500 hover:text-red-600"
               onClick={async () => {
                 if (!stableEvent) return;
                 await onDelete(stableEvent);
-                onClose();
+                handleClose();
               }}
               type="button"
             >
@@ -1902,7 +1992,7 @@ export default function EventModal({
           <div className="flex gap-2">
             <button
               className="px-4 py-2 rounded-lg border text-[14px] font-semibold text-[#374151]"
-              onClick={onClose}
+              onClick={handleCancel}
               type="button"
             >
               취소
@@ -1913,7 +2003,7 @@ export default function EventModal({
                 if (isRecurring) return;
                 if (form.recurrenceEnabled && recurringPayload && !isEdit) {
                   await onCreateRecurring(recurringPayload);
-                  onClose();
+                  handleClose();
                   return;
                 }
                 if (!forceCreate && stableEvent) {
@@ -1921,7 +2011,7 @@ export default function EventModal({
                 } else {
                   await onCreate(payload);
                 }
-                onClose();
+                handleClose();
               }}
               type="button"
               disabled={Boolean(recurrenceError) || isRecurring}
