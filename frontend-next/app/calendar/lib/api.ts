@@ -1,4 +1,4 @@
-import type { AuthStatus, CalendarEvent, EventPayload } from "./types";
+import type { AuthStatus, CalendarEvent, EventPayload, RecurringEventPayload } from "./types";
 
 type NlpPreviewResponse = Record<string, unknown>;
 type NlpDeletePreviewResponse = Record<string, unknown>;
@@ -13,6 +13,15 @@ const buildUrl = (base: string, path: string) => {
 
 const apiUrl = (path: string) => buildUrl(API_BASE, path);
 const backendUrl = (path: string) => buildUrl(BACKEND_BASE, path);
+
+const buildGoogleEventKey = (calendarId?: string | null, eventId?: string | number | null) => {
+  if (!eventId) return "";
+  if (!calendarId) return String(eventId);
+  return `${calendarId}::${eventId}`;
+};
+
+const resolveGoogleEventId = (event: CalendarEvent) =>
+  event.google_event_id ?? (event.id ? String(event.id) : "");
 
 const fetchJson = async <T>(url: string, options?: RequestInit): Promise<T> => {
   const res = await fetch(url, {
@@ -36,6 +45,8 @@ export const fetchAuthStatus = async (): Promise<AuthStatus> => {
   return fetchJson<AuthStatus>(url, { method: "GET" });
 };
 
+export const getGoogleStreamUrl = () => apiUrl("/google/stream");
+
 export const listEvents = async (startDate: string, endDate: string, useGoogle: boolean) => {
   if (useGoogle) {
     const params = new URLSearchParams({ start_date: startDate, end_date: endDate });
@@ -43,8 +54,9 @@ export const listEvents = async (startDate: string, endDate: string, useGoogle: 
     const data = await fetchJson<CalendarEvent[]>(url, { method: "GET" });
     return (data || []).map((event) => ({
       ...event,
+      id: buildGoogleEventKey(event.calendar_id, event.google_event_id ?? event.id),
       source: "google" as const,
-      google_event_id: String(event.id || ""),
+      google_event_id: event.google_event_id ? String(event.google_event_id) : String(event.id || ""),
     }));
   }
 
@@ -68,7 +80,12 @@ export const createEvent = async (payload: EventPayload) => {
 
 export const updateEvent = async (event: CalendarEvent, payload: EventPayload) => {
   if (event.source === "google") {
-    const url = apiUrl(`/google/events/${encodeURIComponent(String(event.id))}`);
+    const params = new URLSearchParams();
+    if (event.calendar_id) params.set("calendar_id", event.calendar_id);
+    const googleId = resolveGoogleEventId(event);
+    const url = apiUrl(
+      `/google/events/${encodeURIComponent(googleId)}${params.toString() ? `?${params}` : ""}`
+    );
     return fetchJson<{ ok: boolean }>(url, {
       method: "PATCH",
       body: JSON.stringify(payload),
@@ -83,9 +100,35 @@ export const updateEvent = async (event: CalendarEvent, payload: EventPayload) =
   return { ...updated, source: "local" as const };
 };
 
+export const updateRecurringEvent = async (
+  event: CalendarEvent,
+  payload: RecurringEventPayload
+) => {
+  const url = apiUrl(`/recurring-events/${encodeURIComponent(String(event.id))}`);
+  const { type: _type, ...body } = payload;
+  const updated = await fetchJson<CalendarEvent>(url, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+  return { ...updated, source: "local" as const };
+};
+
+export const addRecurringException = async (event: CalendarEvent, date: string) => {
+  const url = apiUrl(`/recurring-events/${encodeURIComponent(String(event.id))}/exceptions`);
+  return fetchJson<{ ok: boolean }>(url, {
+    method: "POST",
+    body: JSON.stringify({ date }),
+  });
+};
+
 export const deleteEvent = async (event: CalendarEvent) => {
   if (event.source === "google") {
-    const url = apiUrl(`/google/events/${encodeURIComponent(String(event.id))}`);
+    const params = new URLSearchParams();
+    if (event.calendar_id) params.set("calendar_id", event.calendar_id);
+    const googleId = resolveGoogleEventId(event);
+    const url = apiUrl(
+      `/google/events/${encodeURIComponent(googleId)}${params.toString() ? `?${params}` : ""}`
+    );
     return fetchJson<{ ok: boolean }>(url, { method: "DELETE" });
   }
 
@@ -93,8 +136,12 @@ export const deleteEvent = async (event: CalendarEvent) => {
   return fetchJson<{ ok: boolean }>(url, { method: "DELETE" });
 };
 
-export const deleteGoogleEventById = async (eventId: string) => {
-  const url = apiUrl(`/google/events/${encodeURIComponent(eventId)}`);
+export const deleteGoogleEventById = async (eventId: string, calendarId?: string | null) => {
+  const params = new URLSearchParams();
+  if (calendarId) params.set("calendar_id", calendarId);
+  const url = apiUrl(
+    `/google/events/${encodeURIComponent(eventId)}${params.toString() ? `?${params}` : ""}`
+  );
   return fetchJson<{ ok: boolean }>(url, { method: "DELETE" });
 };
 

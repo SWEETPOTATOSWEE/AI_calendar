@@ -144,39 +144,86 @@ const calcDurationMinutes = (startTime: string, endTime: string) => {
   return Math.round(diff);
 };
 
+const calcEndTimeFromDuration = (startTime: string, durationMinutes: number) => {
+  const start = new Date(`1970-01-01T${to24Hour(startTime)}`);
+  if (Number.isNaN(start.getTime()) || !Number.isFinite(durationMinutes)) {
+    return { endTime: startTime, dayOffset: 0 };
+  }
+  const end = new Date(start.getTime() + durationMinutes * 60000);
+  const dayOffset = end.getDate() - start.getDate();
+  const endTime = end.toLocaleTimeString("ko-KR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  return { endTime, dayOffset };
+};
+
 const buildInitialState = (event?: CalendarEvent | null, defaultDate?: Date | null) => {
+  const isRecurring = event?.recur === "recurring";
   const seed = parseISODateTime(event?.start) || defaultDate || new Date();
+  const startDate = isRecurring && event?.start_date ? event.start_date : toISODate(seed);
+  const startTimeSeed = formatTime(event?.start) || "09:00";
+  const recurringStartTime = event?.time ? normalizeTime(event.time) : "";
+  const startTime = isRecurring
+    ? event?.all_day
+      ? "00:00"
+      : recurringStartTime || startTimeSeed
+    : startTimeSeed;
   const endSeed = parseISODateTime(event?.end || "") || seed;
-  const startDate = toISODate(seed);
-  const endDate = toISODate(endSeed);
+  let endDate = isRecurring ? startDate : toISODate(endSeed);
+  let endTime = formatTime(event?.end) || "10:00";
+  if (isRecurring) {
+    if (event?.all_day) {
+      endTime = "23:59";
+    } else if (typeof event?.duration_minutes === "number") {
+      const { endTime: computedEnd, dayOffset } = calcEndTimeFromDuration(
+        startTime,
+        event.duration_minutes
+      );
+      endTime = computedEnd;
+      if (dayOffset) {
+        const nextDate = addDays(new Date(startDate), dayOffset);
+        endDate = toISODate(nextDate);
+      }
+    } else {
+      endTime = startTime;
+    }
+  }
   const weekdayIndex = getWeekdayIndex(seed);
   const monthDay = seed.getDate();
   const weekdayPos = getWeekdayPos(seed);
   const recurrence = event?.recurrence || null;
   const recurrenceEnabled = Boolean(recurrence);
-  const recurrenceFrequency = recurrence?.freq || "WEEKLY";
-  const recurrenceInterval = recurrence?.interval || 1;
-  const recurrenceWeekdays = recurrence?.byweekday?.length ? recurrence.byweekday : [weekdayIndex];
+  const recurrenceFrequency = recurrenceEnabled ? recurrence?.freq || "WEEKLY" : "";
+  const recurrenceInterval = recurrenceEnabled ? recurrence?.interval || 1 : "";
+  const recurrenceWeekdays = recurrenceEnabled
+    ? recurrence?.byweekday?.length
+      ? recurrence.byweekday
+      : [weekdayIndex]
+    : [];
   const recurrenceMonthlyMode =
     recurrence?.freq === "MONTHLY" && recurrence?.bysetpos && recurrence?.byweekday?.length
       ? "weekday"
       : "date";
   const recurrenceMonthDay =
-    recurrence?.bymonthday?.length && recurrence.bymonthday[0] !== -1
+    recurrenceEnabled && recurrence?.bymonthday?.length && recurrence.bymonthday[0] !== -1
       ? recurrence.bymonthday[0]
       : monthDay;
-  const recurrenceWeekday = recurrence?.byweekday?.[0] ?? weekdayIndex;
-  const recurrenceWeekdayPos = recurrence?.bysetpos ?? weekdayPos;
-  const recurrenceYearMonth = recurrence?.bymonth?.[0] ?? seed.getMonth() + 1;
+  const recurrenceWeekday = recurrenceEnabled ? recurrence?.byweekday?.[0] ?? weekdayIndex : weekdayIndex;
+  const recurrenceWeekdayPos = recurrenceEnabled ? recurrence?.bysetpos ?? weekdayPos : weekdayPos;
+  const recurrenceYearMonth = recurrenceEnabled ? recurrence?.bymonth?.[0] ?? seed.getMonth() + 1 : seed.getMonth() + 1;
   const recurrenceYearDay =
-    recurrence?.bymonthday?.length && recurrence.bymonthday[0] !== -1
+    recurrenceEnabled && recurrence?.bymonthday?.length && recurrence.bymonthday[0] !== -1
       ? recurrence.bymonthday[0]
       : monthDay;
-  const recurrenceEndMode = recurrence?.end?.until
-    ? "until"
-    : recurrence?.end?.count
-      ? "count"
-      : "none";
+  const recurrenceEndMode = recurrenceEnabled
+    ? recurrence?.end?.until
+      ? "until"
+      : recurrence?.end?.count
+        ? "count"
+        : "none"
+    : "none";
 
   return {
     title: event?.title || "",
@@ -191,9 +238,9 @@ const buildInitialState = (event?: CalendarEvent | null, defaultDate?: Date | nu
     colorId: event?.color_id || "default",
     allDay: Boolean(event?.all_day),
     startDate,
-    startTime: formatTime(event?.start) || "09:00",
+    startTime,
     endDate,
-    endTime: formatTime(event?.end) || "10:00",
+    endTime,
     recurrenceEnabled,
     recurrenceFrequency,
     recurrenceInterval,
@@ -205,8 +252,8 @@ const buildInitialState = (event?: CalendarEvent | null, defaultDate?: Date | nu
     recurrenceYearMonth,
     recurrenceYearDay,
     recurrenceEndMode,
-    recurrenceEndDate: recurrence?.end?.until || "",
-    recurrenceEndCount: recurrence?.end?.count ? String(recurrence.end.count) : "",
+    recurrenceEndDate: recurrenceEnabled ? recurrence?.end?.until || "" : "",
+    recurrenceEndCount: recurrenceEnabled && recurrence?.end?.count ? String(recurrence.end.count) : "",
   };
 };
 
@@ -223,6 +270,8 @@ export type EventModalProps = {
   onCreate: (payload: EventPayload) => Promise<CalendarEvent | void | null>;
   onCreateRecurring: (payload: RecurringEventPayload) => Promise<CalendarEvent[] | null>;
   onUpdate: (event: CalendarEvent, payload: EventPayload) => Promise<void>;
+  onUpdateRecurring: (event: CalendarEvent, payload: RecurringEventPayload) => Promise<void>;
+  onDeleteOccurrence: (event: CalendarEvent) => Promise<void>;
   onDelete: (event: CalendarEvent) => Promise<void>;
 };
 
@@ -956,6 +1005,8 @@ export default function EventModal({
   onCreate,
   onCreateRecurring,
   onUpdate,
+  onUpdateRecurring,
+  onDeleteOccurrence,
   onDelete,
 }: EventModalProps) {
   const { visible } = useAnimatedOpen(open);
@@ -965,6 +1016,7 @@ export default function EventModal({
   const [activeTab, setActiveTab] = useState<"basic" | "advanced">("basic");
   const [showAllColors, setShowAllColors] = useState(false);
   const [descriptionMultiline, setDescriptionMultiline] = useState(false);
+  const [deleteMenuOpen, setDeleteMenuOpen] = useState(false);
   const activeTabIndex = EVENT_MODAL_TABS.indexOf(activeTab);
   const tabToggleStyle = useMemo(
     () =>
@@ -977,6 +1029,7 @@ export default function EventModal({
   const isEdit = Boolean(stableEvent) && !forceCreate;
   const isRecurring = !forceCreate && stableEvent?.recur === "recurring";
   const descriptionRef = useRef<HTMLTextAreaElement | null>(null);
+  const deleteMenuRef = useRef<HTMLDivElement | null>(null);
   const isDrawer = variant === "drawer";
   const lastResetKeyRef = useRef<number | null>(null);
   const resetFormState = (nextEvent: CalendarEvent | null, nextDefaultDate: Date | null) => {
@@ -985,6 +1038,7 @@ export default function EventModal({
     setForm(buildInitialState(nextEvent, nextDefaultDate));
     setActiveTab("basic");
     setShowAllColors(false);
+    setDeleteMenuOpen(false);
   };
   const resizeDescription = () => {
     if (!descriptionRef.current) return;
@@ -1012,6 +1066,20 @@ export default function EventModal({
     resetFormState(event ?? null, defaultDate ?? null);
   }, [open, event, defaultDate, isDrawer, resetKey]);
 
+  useEffect(() => {
+    if (!deleteMenuOpen) return;
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (deleteMenuRef.current && !deleteMenuRef.current.contains(target)) {
+        setDeleteMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+    };
+  }, [deleteMenuOpen]);
+
   useLayoutEffect(() => {
     resizeDescription();
   }, [form.description]);
@@ -1027,7 +1095,7 @@ export default function EventModal({
   const [customReminderUnit, setCustomReminderUnit] = useState<"days" | "hours" | "minutes">("days");
   const [customReminderValues, setCustomReminderValues] = useState<number[]>([]);
   const handleClose = () => {
-    if (!isDrawer) onClose();
+    onClose();
   };
   const handleCancel = () => {
     onCancel();
@@ -1047,6 +1115,8 @@ export default function EventModal({
 
   const recurrenceRule = useMemo<EventRecurrence | null>(() => {
     if (!form.recurrenceEnabled) return null;
+    if (!form.recurrenceFrequency) return null;
+    if (!form.recurrenceInterval) return null;
     const interval = Math.max(1, Number(form.recurrenceInterval) || 1);
     const rule: EventRecurrence = {
       freq: form.recurrenceFrequency,
@@ -1091,6 +1161,8 @@ export default function EventModal({
 
   const recurrenceError = useMemo(() => {
     if (!form.recurrenceEnabled) return "";
+    if (!form.recurrenceFrequency) return "반복 빈도를 선택해 주세요.";
+    if (!form.recurrenceInterval) return "반복 간격을 입력해 주세요.";
     if (form.recurrenceFrequency === "WEEKLY" && form.recurrenceWeekdays.length === 0) {
       return "반복 요일을 선택해 주세요.";
     }
@@ -1258,11 +1330,6 @@ export default function EventModal({
               : "px-6 py-5 space-y-4 max-h-[70vh] overflow-y-auto"
           }
         >
-          {isRecurring && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
-              반복 일정은 수정할 수 없습니다. 삭제 후 새로 등록해 주세요.
-            </div>
-          )}
           {activeTab === "basic" && (
             <>
               <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632]">
@@ -1273,7 +1340,6 @@ export default function EventModal({
                     placeholder="제목"
                     value={form.title}
                     onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
-                    disabled={isRecurring}
                   />
                 </div>
               </div>
@@ -1287,7 +1353,6 @@ export default function EventModal({
                       type="checkbox"
                       checked={form.allDay}
                       onChange={(event) => setForm((prev) => ({ ...prev, allDay: event.target.checked }))}
-                      disabled={isRecurring}
                     />
                     <span className="pointer-events-none absolute text-slate-300 transition-colors peer-checked:text-white">
                       <Check className="size-4" />
@@ -1304,7 +1369,6 @@ export default function EventModal({
                       label="시작 날짜"
                       value={form.startDate}
                       onChange={(value) => setForm((prev) => ({ ...prev, startDate: value }))}
-                      disabled={isRecurring}
                       placeholder="날짜 선택"
                     />
                     {!form.allDay && (
@@ -1314,7 +1378,6 @@ export default function EventModal({
                         onChange={(value) =>
                           setForm((prev) => ({ ...prev, startTime: normalizeTime(value) }))
                         }
-                        disabled={isRecurring}
                         placeholder="시간 선택"
                       />
                     )}
@@ -1329,7 +1392,6 @@ export default function EventModal({
                       label="종료 날짜"
                       value={form.endDate}
                       onChange={(value) => setForm((prev) => ({ ...prev, endDate: value }))}
-                      disabled={isRecurring}
                       placeholder="날짜 선택"
                     />
                     {!form.allDay && (
@@ -1339,7 +1401,6 @@ export default function EventModal({
                         onChange={(value) =>
                           setForm((prev) => ({ ...prev, endTime: normalizeTime(value) }))
                         }
-                        disabled={isRecurring}
                         placeholder="시간 선택"
                       />
                     )}
@@ -1355,7 +1416,6 @@ export default function EventModal({
                     placeholder="장소"
                     value={form.location}
                     onChange={(event) => setForm((prev) => ({ ...prev, location: event.target.value }))}
-                    disabled={isRecurring}
                   />
                 </div>
               </div>
@@ -1388,7 +1448,6 @@ export default function EventModal({
                               : [...prev.reminders, value],
                           }))
                         }
-                        disabled={isRecurring}
                       >
                         {label}
                       </button>
@@ -1410,14 +1469,13 @@ export default function EventModal({
                         }
                         setCustomReminderOpen(true);
                       }}
-                      disabled={isRecurring}
                       aria-expanded={customReminderOpen}
                       aria-haspopup="dialog"
                       aria-label="알림 직접 추가"
                     >
                       <Plus className="size-4" />
                     </button>
-                    {customReminderOpen && !isRecurring && (
+                    {customReminderOpen && (
                       <div
                         className={`absolute right-0 bottom-full mb-2 w-52 max-w-[calc(100vw-2rem)] popover-surface popover-animate border border-gray-100 dark:border-gray-700 bg-white dark:bg-[#111418] shadow-lg p-3 z-10 ${
                           customReminderClosing ? "is-closing" : ""
@@ -1505,7 +1563,6 @@ export default function EventModal({
                               : "text-[#374151]"
                           }`}
                           onClick={() => setForm((prev) => ({ ...prev, colorId: option.id }))}
-                          disabled={isRecurring}
                           aria-label={option.label}
                           title={option.label}
                         >
@@ -1526,7 +1583,6 @@ export default function EventModal({
                         type="button"
                         className="relative size-8 rounded-full text-[#374151] transition-colors hover:text-[#2563EB]"
                         onClick={() => setShowAllColors(true)}
-                        disabled={isRecurring}
                         aria-label="모든 색상"
                         title="모든 색상"
                       >
@@ -1538,7 +1594,6 @@ export default function EventModal({
                         type="button"
                         className="relative size-8 rounded-full text-[#374151] transition-colors hover:text-[#2563EB]"
                         onClick={() => setShowAllColors(false)}
-                        disabled={isRecurring}
                         aria-label="닫기"
                         title="닫기"
                       >
@@ -1559,7 +1614,6 @@ export default function EventModal({
                       recurrenceEnabled: !prev.recurrenceEnabled,
                     }))
                   }
-                  disabled={isEdit}
                   aria-label={form.recurrenceEnabled ? "반복 일정 접기" : "반복 일정 펼치기"}
                 >
                   {form.recurrenceEnabled ? (
@@ -1571,11 +1625,6 @@ export default function EventModal({
               </div>
               {form.recurrenceEnabled && (
                 <div className="space-y-3">
-                  {isEdit && (
-                    <p className="text-[10px] text-slate-400">
-                      기존 일정은 반복 규칙으로 전환할 수 없습니다.
-                    </p>
-                  )}
                   <div className="grid grid-cols-2 gap-3">
                     <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632] px-4 py-1 min-h-12 flex items-center">
                       <div className="flex w-full items-center justify-between gap-2">
@@ -1585,6 +1634,7 @@ export default function EventModal({
                         <CustomSelect
                           value={form.recurrenceFrequency}
                           options={[
+                            { value: "", label: "선택" },
                             { value: "DAILY", label: "매일" },
                             { value: "WEEKLY", label: "매주" },
                             { value: "MONTHLY", label: "매월" },
@@ -1593,10 +1643,9 @@ export default function EventModal({
                           onChange={(nextValue) =>
                             setForm((prev) => ({
                               ...prev,
-                              recurrenceFrequency: nextValue as EventRecurrence["freq"],
+                              recurrenceFrequency: nextValue as EventRecurrence["freq"] | "",
                             }))
                           }
-                          disabled={isEdit}
                           wrapperClassName="ml-auto"
                         />
                       </div>
@@ -1616,10 +1665,11 @@ export default function EventModal({
                             onChange={(event) =>
                               setForm((prev) => ({
                                 ...prev,
-                                recurrenceInterval: Number(event.target.value || 1),
+                                recurrenceInterval: event.target.value
+                                  ? Number(event.target.value)
+                                  : "",
                               }))
                             }
-                            disabled={isEdit}
                           />
                           {recurrenceIntervalUnit ? (
                             <span className="text-[14px] font-medium text-[#4B5563]">
@@ -1657,7 +1707,6 @@ export default function EventModal({
                                       : [...prev.recurrenceWeekdays, day.value],
                                   }))
                                 }
-                                disabled={isEdit}
                               >
                                 {day.label}
                               </button>
@@ -1685,7 +1734,6 @@ export default function EventModal({
                               onClick={() =>
                                 setForm((prev) => ({ ...prev, recurrenceMonthlyMode: mode }))
                               }
-                              disabled={isEdit}
                             >
                               {mode === "date" ? "같은 날짜" : "요일 기준"}
                             </button>
@@ -1711,7 +1759,6 @@ export default function EventModal({
                                   recurrenceMonthDay: Number(event.target.value || 1),
                                 }))
                               }
-                              disabled={isEdit}
                             />
                             <span className="text-[14px] font-medium text-[#4B5563]">일</span>
                           </div>
@@ -1736,7 +1783,6 @@ export default function EventModal({
                                   recurrenceWeekdayPos: Number(nextValue),
                                 }))
                               }
-                              disabled={isEdit}
                             />
                             <CustomSelect
                               value={form.recurrenceWeekday}
@@ -1750,7 +1796,6 @@ export default function EventModal({
                                   recurrenceWeekday: Number(nextValue),
                                 }))
                               }
-                              disabled={isEdit}
                             />
                           </div>
                         </div>
@@ -1780,7 +1825,6 @@ export default function EventModal({
                                     recurrenceYearMonth: Number(nextValue),
                                   }))
                                 }
-                                disabled={isEdit}
                               />
                             </div>
                             <div className="flex items-center gap-1">
@@ -1799,7 +1843,6 @@ export default function EventModal({
                                     recurrenceYearDay: Number(nextValue),
                                   }))
                                 }
-                                disabled={isEdit}
                               />
                             </div>
                           </div>
@@ -1822,7 +1865,6 @@ export default function EventModal({
                           onChange={(nextValue) =>
                             setForm((prev) => ({ ...prev, recurrenceEndMode: nextValue }))
                           }
-                          disabled={isEdit}
                         />
                         {form.recurrenceEndMode === "until" && (
                           <>
@@ -1834,7 +1876,6 @@ export default function EventModal({
                               onChange={(event) =>
                                 setForm((prev) => ({ ...prev, recurrenceEndDate: event.target.value }))
                               }
-                              disabled={isEdit}
                             />
                           </>
                         )}
@@ -1850,7 +1891,6 @@ export default function EventModal({
                               onChange={(event) =>
                                 setForm((prev) => ({ ...prev, recurrenceEndCount: event.target.value }))
                               }
-                              disabled={isEdit}
                             />
                             <span className="text-[14px] font-medium text-[#4B5563]">회</span>
                           </>
@@ -1883,7 +1923,6 @@ export default function EventModal({
                     placeholder="설명"
                     value={form.description}
                     onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
-                    disabled={isRecurring}
                   />
                 </div>
               </div>
@@ -1896,7 +1935,6 @@ export default function EventModal({
                     placeholder="참석자"
                     value={form.attendees}
                     onChange={(event) => setForm((prev) => ({ ...prev, attendees: event.target.value }))}
-                    disabled={isRecurring}
                   />
                 </div>
                 <div className="h-px bg-gray-200 dark:bg-gray-700 mx-4" />
@@ -1908,7 +1946,6 @@ export default function EventModal({
                     placeholder="회의 링크"
                     value={form.meetingUrl}
                     onChange={(event) => setForm((prev) => ({ ...prev, meetingUrl: event.target.value }))}
-                    disabled={isRecurring}
                   />
                 </div>
               </div>
@@ -1925,7 +1962,6 @@ export default function EventModal({
                         { value: "private", label: "비공개" },
                       ]}
                       onChange={(nextValue) => setForm((prev) => ({ ...prev, visibility: nextValue }))}
-                      disabled={isRecurring}
                       wrapperClassName="ml-auto"
                     />
                   </div>
@@ -1941,7 +1977,6 @@ export default function EventModal({
                         { value: "transparent", label: "한가함" },
                       ]}
                       onChange={(nextValue) => setForm((prev) => ({ ...prev, transparency: nextValue }))}
-                      disabled={isRecurring}
                       wrapperClassName="ml-auto"
                     />
                   </div>
@@ -1959,7 +1994,6 @@ export default function EventModal({
                       label: option.label,
                     }))}
                     onChange={(nextValue) => setForm((prev) => ({ ...prev, timezone: nextValue }))}
-                    disabled={isRecurring}
                     wrapperClassName="ml-auto"
                   />
                 </div>
@@ -1975,17 +2009,57 @@ export default function EventModal({
           }
         >
           {stableEvent && !forceCreate ? (
-            <button
-              className="text-sm font-semibold text-red-500 hover:text-red-600"
-              onClick={async () => {
-                if (!stableEvent) return;
-                await onDelete(stableEvent);
-                handleClose();
-              }}
-              type="button"
-            >
-              삭제
-            </button>
+            <div className="relative" ref={deleteMenuRef}>
+              <button
+                className="text-sm font-semibold text-red-500 hover:text-red-600"
+                onClick={async () => {
+                  if (!stableEvent) return;
+                  if (isRecurring) {
+                    setDeleteMenuOpen((prev) => !prev);
+                    return;
+                  }
+                  await onDelete(stableEvent);
+                  handleClose();
+                }}
+                type="button"
+              >
+                삭제
+              </button>
+              {isRecurring && deleteMenuOpen && (
+                <div className="absolute left-0 bottom-full mb-2 z-50 w-max">
+                  <div
+                    className="min-w-full overflow-hidden whitespace-nowrap popover-surface popover-animate border border-gray-200 bg-white shadow-lg"
+                    data-side="top"
+                    data-align="start"
+                  >
+                    <button
+                      type="button"
+                      className="flex w-full justify-start rounded-md px-3 py-2 text-[15px] text-left font-medium text-[#111827] transition-colors hover:bg-gray-50"
+                      onClick={async () => {
+                        if (!stableEvent) return;
+                        await onDeleteOccurrence(stableEvent);
+                        setDeleteMenuOpen(false);
+                        handleClose();
+                      }}
+                    >
+                      이 일정만 삭제
+                    </button>
+                    <button
+                      type="button"
+                      className="flex w-full justify-start rounded-md px-3 py-2 text-[15px] text-left font-medium text-red-600 transition-colors hover:bg-red-50"
+                      onClick={async () => {
+                        if (!stableEvent) return;
+                        await onDelete(stableEvent);
+                        setDeleteMenuOpen(false);
+                        handleClose();
+                      }}
+                    >
+                      반복 일정 전체 삭제
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           ) : (
             <span />
           )}
@@ -2000,21 +2074,36 @@ export default function EventModal({
             <button
               className="px-4 py-2 rounded-lg bg-primary text-[14px] font-semibold text-white disabled:opacity-50"
               onClick={async () => {
-                if (isRecurring) return;
                 if (form.recurrenceEnabled && recurringPayload && !isEdit) {
                   await onCreateRecurring(recurringPayload);
                   handleClose();
                   return;
                 }
                 if (!forceCreate && stableEvent) {
-                  await onUpdate(stableEvent, payload);
+                  if (form.recurrenceEnabled && recurringPayload) {
+                    if (isRecurring) {
+                      await onUpdateRecurring(stableEvent, recurringPayload);
+                    } else {
+                      const created = await onCreateRecurring(recurringPayload);
+                      if (created && created.length) {
+                        await onDelete(stableEvent);
+                      }
+                    }
+                  } else if (isRecurring) {
+                    const created = await onCreate(payload);
+                    if (created) {
+                      await onDelete(stableEvent);
+                    }
+                  } else {
+                    await onUpdate(stableEvent, payload);
+                  }
                 } else {
                   await onCreate(payload);
                 }
                 handleClose();
               }}
               type="button"
-              disabled={Boolean(recurrenceError) || isRecurring}
+              disabled={Boolean(recurrenceError)}
             >
               저장
             </button>

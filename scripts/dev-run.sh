@@ -6,6 +6,7 @@ BACKEND_HOST="${BACKEND_HOST:-0.0.0.0}"
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 FRONTEND_HOST="${FRONTEND_HOST:-0.0.0.0}"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
+BACKEND_PUBLIC_BASE="${BACKEND_PUBLIC_BASE:-http://localhost:${BACKEND_PORT}}"
 
 cleanup() {
   if [[ -n "${BACKEND_PID:-}" ]]; then
@@ -21,4 +22,7 @@ HOST="${BACKEND_HOST}" PORT="${BACKEND_PORT}" "${ROOT_DIR}/scripts/restart-backe
 BACKEND_PID=$!
 
 echo "Starting frontend on ${FRONTEND_HOST}:${FRONTEND_PORT}..."
-HOST="${FRONTEND_HOST}" PORT="${FRONTEND_PORT}" "${ROOT_DIR}/scripts/restart-frontend.sh"
+HOST="${FRONTEND_HOST}" PORT="${FRONTEND_PORT}" \
+  NEXT_PUBLIC_BACKEND_BASE="${BACKEND_PUBLIC_BASE}" \
+  NEXT_PUBLIC_API_BASE="${BACKEND_PUBLIC_BASE}/api" \
+  "${ROOT_DIR}/scripts/restart-frontend.sh"

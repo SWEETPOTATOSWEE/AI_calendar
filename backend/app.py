@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException, Request, Query, Response
-from fastapi.responses import RedirectResponse, JSONResponse, HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse, JSONResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, Tuple, Union
@@ -69,7 +70,10 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
 GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary")
-GCAL_SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
+GCAL_SCOPES = [
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar.readonly",
+]
 
 ADMIN_COOKIE_NAME = "admin"
 ADMIN_COOKIE_VALUE = "1"
@@ -77,6 +81,12 @@ ADMIN_COOKIE_VALUE = "1"
 BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
 GOOGLE_TOKEN_DIR = pathlib.Path(
     os.getenv("GOOGLE_TOKEN_DIR", str(BASE_DIR / "gcal_tokens")))
+GOOGLE_WEBHOOK_URL = os.getenv("GOOGLE_WEBHOOK_URL", "").strip()
+GOOGLE_WEBHOOK_TOKEN = os.getenv("GOOGLE_WEBHOOK_TOKEN", "").strip()
+GCAL_WATCH_STATE_PATH = pathlib.Path(
+    os.getenv("GCAL_WATCH_STATE_PATH", str(GOOGLE_TOKEN_DIR / "gcal_watch_state.json")))
+GCAL_WATCH_LEEWAY_SECONDS = int(
+    os.getenv("GCAL_WATCH_LEEWAY_SECONDS", "3600"))
 SESSION_COOKIE_NAME = "gcal_session"
 OAUTH_STATE_COOKIE_NAME = "gcal_oauth_state"
 SESSION_COOKIE_MAX_AGE_SECONDS = int(
@@ -93,6 +103,30 @@ FRONTEND_DIR = NEXT_FRONTEND_DIR if USE_NEXT_FRONTEND else LEGACY_FRONTEND_DIR
 FRONTEND_STATIC_DIR = NEXT_FRONTEND_DIR if USE_NEXT_FRONTEND else None
 EVENTS_DATA_FILE = pathlib.Path(
     os.getenv("EVENTS_DATA_FILE", str(BASE_DIR / "events_data.json")))
+
+CORS_ALLOW_ORIGINS = os.getenv("CORS_ALLOW_ORIGINS", "")
+CORS_ALLOW_ORIGIN_REGEX = os.getenv("CORS_ALLOW_ORIGIN_REGEX", "").strip()
+cors_origins = []
+if FRONTEND_BASE_URL:
+  cors_origins.append(FRONTEND_BASE_URL)
+if CORS_ALLOW_ORIGINS:
+  cors_origins.extend(
+      [origin.strip() for origin in CORS_ALLOW_ORIGINS.split(",") if origin.strip()])
+
+if not CORS_ALLOW_ORIGIN_REGEX:
+  codespaces_domain = os.getenv("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN", "").strip()
+  if codespaces_domain:
+    CORS_ALLOW_ORIGIN_REGEX = rf"^https://.*\.{re.escape(codespaces_domain)}$"
+
+if cors_origins or CORS_ALLOW_ORIGIN_REGEX:
+  app.add_middleware(
+      CORSMiddleware,
+      allow_origins=cors_origins,
+      allow_origin_regex=CORS_ALLOW_ORIGIN_REGEX or None,
+      allow_credentials=True,
+      allow_methods=["*"],
+      allow_headers=["*"],
+  )
 
 
 def _load_frontend_html(filename: str) -> str:
@@ -176,6 +210,42 @@ class EventUpdate(BaseModel):
   all_day: Optional[bool] = None
 
 
+class RecurrenceEndPayload(BaseModel):
+  until: Optional[str] = None
+  count: Optional[int] = None
+
+
+class RecurrencePayload(BaseModel):
+  freq: str
+  interval: Optional[int] = None
+  byweekday: Optional[List[int]] = None
+  bymonthday: Optional[List[int]] = None
+  bysetpos: Optional[int] = None
+  bymonth: Optional[List[int]] = None
+  end: Optional[RecurrenceEndPayload] = None
+
+
+class RecurringEventUpdate(BaseModel):
+  title: str
+  start_date: str
+  time: Optional[str] = None
+  duration_minutes: Optional[int] = None
+  location: Optional[str] = None
+  description: Optional[str] = None
+  attendees: Optional[List[str]] = None
+  reminders: Optional[List[int]] = None
+  visibility: Optional[str] = None
+  transparency: Optional[str] = None
+  meeting_url: Optional[str] = None
+  timezone: Optional[str] = None
+  color_id: Optional[str] = None
+  recurrence: RecurrencePayload
+
+
+class RecurringExceptionPayload(BaseModel):
+  date: str
+
+
 class NaturalText(BaseModel):
   text: str
   images: Optional[List[str]] = None
@@ -257,6 +327,7 @@ MODEL_PRICING = {
 google_events_cache: Dict[str, Dict[str, Dict[str, Any]]] = {}
 context_cache: Dict[str, Dict[str, Any]] = {}
 oauth_state_store: Dict[str, Dict[str, Any]] = {}
+google_sse_subscribers: Dict[str, List[asyncio.Queue]] = {}
 
 
 def _serialize_events_payload() -> Dict[str, Any]:
@@ -313,6 +384,13 @@ def _load_events_from_disk() -> None:
         normalized = _normalize_recurrence_dict(recurrence)
         if not normalized:
           continue
+        raw_exceptions = item.get("exceptions") or []
+        exceptions: List[str] = []
+        if isinstance(raw_exceptions, list):
+          for raw in raw_exceptions:
+            normalized = _normalize_exception_date(raw)
+            if normalized:
+              exceptions.append(normalized)
         item = {
             "id": rid,
             "title": title,
@@ -328,6 +406,7 @@ def _load_events_from_disk() -> None:
             "meeting_url": item.get("meeting_url"),
             "color_id": item.get("color_id"),
             "recurrence": normalized,
+            "exceptions": exceptions,
             "timezone": item.get("timezone") or "Asia/Seoul",
             "google_event_id": item.get("google_event_id"),
             "created_at": item.get("created_at") or _now_iso_minute(),
@@ -400,6 +479,22 @@ def _split_iso_date_time(value: Optional[str]) -> Tuple[Optional[date], Optional
   if len(raw) >= 16:
     time_part = raw[11:16]
   return (dt, time_part)
+
+
+def _normalize_exception_date(value: Any) -> Optional[str]:
+  if not isinstance(value, str):
+    return None
+  raw = value.strip()
+  if not raw:
+    return None
+  if ISO_DATE_RE.match(raw):
+    return raw
+  if ISO_DATETIME_RE.match(raw) or ISO_DATETIME_24_RE.match(raw):
+    return raw[:10]
+  normalized = _normalize_datetime_minute(raw)
+  if normalized:
+    return normalized[:10]
+  return None
 
 
 def _normalize_end_datetime(raw_end: Any) -> Optional[str]:
@@ -772,7 +867,8 @@ def store_recurring_event(title: str,
                           meeting_url: Optional[str] = None,
                           color_id: Optional[str] = None,
                           timezone_value: str = "Asia/Seoul",
-                          google_event_id: Optional[str] = None) -> Dict[str, Any]:
+                          google_event_id: Optional[str] = None,
+                          exceptions: Optional[List[str]] = None) -> Dict[str, Any]:
   global next_id, recurring_events
   recurrence_copy = copy.deepcopy(recurrence)
   record = {
@@ -790,6 +886,7 @@ def store_recurring_event(title: str,
       "meeting_url": meeting_url,
       "color_id": color_id,
       "recurrence": recurrence_copy,
+      "exceptions": exceptions or [],
       "timezone": timezone_value or "Asia/Seoul",
       "google_event_id": google_event_id,
       "created_at": _now_iso_minute(),
@@ -913,6 +1010,7 @@ def _collect_local_recurring_occurrences(
         "duration_minutes": rec.get("duration_minutes"),
         "location": rec.get("location"),
         "recurrence": recurrence_spec,
+        "exceptions": rec.get("exceptions"),
         "timezone": rec.get("timezone"),
     }
     expanded = _expand_recurring_item(base_dict, scope=scope)
@@ -2376,10 +2474,19 @@ def _expand_recurring_item(item: Dict[str, Any],
       dur = None
 
   location_str = (location or "").strip() or None
+  exceptions_raw = item.get("exceptions") or []
+  exceptions: set[str] = set()
+  if isinstance(exceptions_raw, list):
+    for raw in exceptions_raw:
+      normalized = _normalize_exception_date(raw)
+      if normalized:
+        exceptions.add(normalized)
 
   results: List[Dict[str, Any]] = []
 
   for cur in _collect_recurrence_dates(recurrence, start_date, scope=scope):
+    if cur.strftime("%Y-%m-%d") in exceptions:
+      continue
     if time_valid:
       start_dt = datetime(cur.year, cur.month, cur.day, hh, mm, tzinfo=tzinfo)
       start_str = start_dt.strftime("%Y-%m-%dT%H:%M")
@@ -2568,6 +2675,59 @@ def _session_key(session_id: str) -> str:
   return hashlib.sha256(session_id.encode("utf-8")).hexdigest()
 
 
+def _register_google_sse(session_id: str) -> Tuple[str, asyncio.Queue]:
+  key = _session_key(session_id)
+  queue: asyncio.Queue = asyncio.Queue()
+  google_sse_subscribers.setdefault(key, []).append(queue)
+  return key, queue
+
+
+def _unregister_google_sse(key: str, queue: asyncio.Queue) -> None:
+  listeners = google_sse_subscribers.get(key)
+  if not listeners:
+    return
+  try:
+    listeners.remove(queue)
+  except ValueError:
+    return
+  if not listeners:
+    google_sse_subscribers.pop(key, None)
+
+
+def _emit_google_sse(session_id: str,
+                     event_type: str,
+                     payload: Optional[Dict[str, Any]] = None) -> None:
+  if not session_id:
+    return
+  key = _session_key(session_id)
+  listeners = google_sse_subscribers.get(key, [])
+  if not listeners:
+    return
+  data = payload.copy() if isinstance(payload, dict) else {}
+  data["type"] = event_type
+  for queue in list(listeners):
+    try:
+      queue.put_nowait(data)
+    except Exception:
+      continue
+
+
+def _format_sse_event(event_type: str, payload: Dict[str, Any]) -> str:
+  body = json.dumps(payload, ensure_ascii=False)
+  return f"event: {event_type}\ndata: {body}\n\n"
+
+
+def _split_gcal_event_key(event_id: str) -> Tuple[str, Optional[str]]:
+  if not isinstance(event_id, str):
+    return (event_id, None)
+  if "::" not in event_id:
+    return (event_id, None)
+  calendar_id, raw_id = event_id.split("::", 1)
+  if raw_id:
+    return (raw_id, calendar_id or None)
+  return (event_id, None)
+
+
 def _session_token_path(session_id: str) -> pathlib.Path:
   return GOOGLE_TOKEN_DIR / f"token_{_session_key(session_id)}.json"
 
@@ -2577,6 +2737,140 @@ def _ensure_token_dir() -> None:
     GOOGLE_TOKEN_DIR.mkdir(parents=True, exist_ok=True)
   except Exception:
     pass
+
+
+def _gcal_watch_enabled() -> bool:
+  return bool(GOOGLE_WEBHOOK_URL)
+
+
+def _empty_watch_state() -> Dict[str, Any]:
+  return {"sessions": {}, "channels": {}}
+
+
+def _load_gcal_watch_state() -> Dict[str, Any]:
+  _ensure_token_dir()
+  if not GCAL_WATCH_STATE_PATH.exists():
+    return _empty_watch_state()
+  try:
+    with GCAL_WATCH_STATE_PATH.open("r", encoding="utf-8") as f:
+      data = json.load(f)
+      if isinstance(data, dict):
+        data.setdefault("sessions", {})
+        data.setdefault("channels", {})
+        return data
+  except Exception:
+    pass
+  return _empty_watch_state()
+
+
+def _save_gcal_watch_state(state: Dict[str, Any]) -> None:
+  _ensure_token_dir()
+  try:
+    GCAL_WATCH_STATE_PATH.write_text(
+        json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+  except Exception:
+    pass
+
+
+def _get_watch_session_entry(state: Dict[str, Any],
+                             session_id: str) -> Dict[str, Any]:
+  sessions = state.setdefault("sessions", {})
+  session_key = _session_key(session_id)
+  entry = sessions.get(session_key)
+  if not isinstance(entry, dict):
+    entry = {"session_id": session_id, "calendars": {}}
+    sessions[session_key] = entry
+  return entry
+
+
+def _watch_expiring(expiration_ms: Optional[int]) -> bool:
+  if not expiration_ms:
+    return True
+  now_ms = int(time.time() * 1000)
+  return expiration_ms <= now_ms + GCAL_WATCH_LEEWAY_SECONDS * 1000
+
+
+def _stop_gcal_watch_channel(session_id: str,
+                             channel_id: str,
+                             resource_id: Optional[str]) -> None:
+  if not channel_id or not resource_id:
+    return
+  try:
+    service = get_gcal_service(session_id)
+    service.channels().stop(
+        body={"id": channel_id, "resourceId": resource_id}).execute()
+  except Exception:
+    pass
+
+
+def _register_gcal_watch(session_id: str,
+                         calendar_id: str,
+                         summary: Optional[str],
+                         primary: bool) -> Optional[Dict[str, Any]]:
+  if not _gcal_watch_enabled():
+    return None
+  if not calendar_id:
+    return None
+  try:
+    service = get_gcal_service(session_id)
+    channel_id = secrets.token_urlsafe(16)
+    body: Dict[str, Any] = {
+        "id": channel_id,
+        "type": "web_hook",
+        "address": GOOGLE_WEBHOOK_URL,
+    }
+    if GOOGLE_WEBHOOK_TOKEN:
+      body["token"] = GOOGLE_WEBHOOK_TOKEN
+    response = service.events().watch(calendarId=calendar_id, body=body).execute()
+    resource_id = response.get("resourceId")
+    expiration_raw = response.get("expiration")
+    expiration_ms: Optional[int] = None
+    if isinstance(expiration_raw, (int, float)):
+      expiration_ms = int(expiration_raw)
+    elif isinstance(expiration_raw, str) and expiration_raw.isdigit():
+      expiration_ms = int(expiration_raw)
+    return {
+        "calendar_id": calendar_id,
+        "summary": summary,
+        "primary": bool(primary),
+        "channel_id": channel_id,
+        "resource_id": resource_id,
+        "expiration": expiration_ms,
+    }
+  except Exception as exc:
+    _log_debug(f"[GCAL] watch registration failed: {exc}")
+    return None
+
+
+def _remove_watch_entry(state: Dict[str, Any],
+                        session_id: str,
+                        calendar_id: str,
+                        watch: Dict[str, Any]) -> None:
+  channel_id = watch.get("channel_id")
+  if channel_id:
+    state.get("channels", {}).pop(channel_id, None)
+  session_entry = _get_watch_session_entry(state, session_id)
+  calendars = session_entry.get("calendars", {})
+  if isinstance(calendars, dict):
+    calendars.pop(calendar_id, None)
+
+
+def _clear_watches_for_session(session_id: str) -> None:
+  if not session_id:
+    return
+  state = _load_gcal_watch_state()
+  session_entry = _get_watch_session_entry(state, session_id)
+  calendars = session_entry.get("calendars", {})
+  if isinstance(calendars, dict):
+    for calendar_id, entry in list(calendars.items()):
+      if not isinstance(entry, dict):
+        calendars.pop(calendar_id, None)
+        continue
+      _stop_gcal_watch_channel(session_id,
+                               entry.get("channel_id", ""),
+                               entry.get("resource_id"))
+      _remove_watch_entry(state, session_id, calendar_id, entry)
+  _save_gcal_watch_state(state)
 
 
 def _get_session_id(request: Request) -> Optional[str]:
@@ -2628,10 +2922,11 @@ def _set_cookie(response: Response,
                 name: str,
                 value: str,
                 max_age: Optional[int] = None) -> None:
+  samesite_value = "none" if COOKIE_SECURE else "lax"
   response.set_cookie(name,
                       value,
                       httponly=True,
-                      samesite="lax",
+                      samesite=samesite_value,
                       secure=COOKIE_SECURE,
                       max_age=max_age,
                       path="/")
@@ -2777,6 +3072,86 @@ def get_gcal_service(session_id: str):
   return service
 
 
+def list_google_calendars(session_id: str) -> List[Dict[str, Any]]:
+  service = get_gcal_service(session_id)
+  calendars: List[Dict[str, Any]] = []
+  page_token: Optional[str] = None
+  while True:
+    response = service.calendarList().list(pageToken=page_token).execute()
+    items = response.get("items", [])
+    for raw in items:
+      if not isinstance(raw, dict):
+        continue
+      if raw.get("deleted"):
+        continue
+      calendar_id = raw.get("id")
+      if not isinstance(calendar_id, str) or not calendar_id.strip():
+        continue
+      access_role = raw.get("accessRole")
+      if access_role not in ("owner", "writer", "reader"):
+        continue
+      calendars.append({
+          "id": calendar_id,
+          "summary": raw.get("summary"),
+          "primary": bool(raw.get("primary")),
+          "access_role": access_role,
+      })
+    page_token = response.get("nextPageToken")
+    if not page_token:
+      break
+  return calendars
+
+
+def ensure_gcal_watches(session_id: str) -> None:
+  if not session_id or not _gcal_watch_enabled():
+    return
+  try:
+    calendars = list_google_calendars(session_id)
+  except Exception as exc:
+    _log_debug(f"[GCAL] watch calendar list failed: {exc}")
+    return
+  state = _load_gcal_watch_state()
+  session_entry = _get_watch_session_entry(state, session_id)
+  calendars_state = session_entry.setdefault("calendars", {})
+  if not isinstance(calendars_state, dict):
+    calendars_state = {}
+    session_entry["calendars"] = calendars_state
+
+  active_ids = {item["id"] for item in calendars}
+  for calendar_id in list(calendars_state.keys()):
+    if calendar_id not in active_ids:
+      existing = calendars_state.get(calendar_id)
+      if isinstance(existing, dict):
+        _stop_gcal_watch_channel(session_id,
+                                 existing.get("channel_id", ""),
+                                 existing.get("resource_id"))
+        _remove_watch_entry(state, session_id, calendar_id, existing)
+
+  for item in calendars:
+    calendar_id = item["id"]
+    existing = calendars_state.get(calendar_id)
+    if isinstance(existing, dict) and not _watch_expiring(existing.get("expiration")):
+      continue
+    if isinstance(existing, dict):
+      _stop_gcal_watch_channel(session_id,
+                               existing.get("channel_id", ""),
+                               existing.get("resource_id"))
+      _remove_watch_entry(state, session_id, calendar_id, existing)
+    new_watch = _register_gcal_watch(session_id,
+                                     calendar_id,
+                                     item.get("summary"),
+                                     bool(item.get("primary")))
+    if new_watch:
+      calendars_state[calendar_id] = new_watch
+      state.setdefault("channels", {})[new_watch["channel_id"]] = {
+          "session_id": session_id,
+          "calendar_id": calendar_id,
+          "resource_id": new_watch.get("resource_id"),
+          "expiration": new_watch.get("expiration"),
+      }
+  _save_gcal_watch_state(state)
+
+
 def gcal_create_single_event(title: str,
                              start_iso: str,
                              end_iso: Optional[str],
@@ -2790,7 +3165,8 @@ def gcal_create_single_event(title: str,
                              transparency: Optional[str] = None,
                              meeting_url: Optional[str] = None,
                              timezone_value: Optional[str] = None,
-                             color_id: Optional[str] = None) -> Optional[str]:
+                             color_id: Optional[str] = None,
+                             calendar_id: Optional[str] = None) -> Optional[str]:
   if not is_gcal_configured() or not session_id:
     return None
 
@@ -2845,7 +3221,8 @@ def gcal_create_single_event(title: str,
     if location:
       event_body["location"] = location
 
-    created = service.events().insert(calendarId=GOOGLE_CALENDAR_ID,
+    created = service.events().insert(calendarId=calendar_id
+                                      or GOOGLE_CALENDAR_ID,
                                       body=event_body).execute()
     return created.get("id")
   except Exception as e:
@@ -2932,7 +3309,11 @@ def gcal_update_event(event_id: str,
                       transparency: Optional[str] = None,
                       meeting_url: Optional[str] = None,
                       timezone_value: Optional[str] = None,
-                      color_id: Optional[str] = None) -> None:
+                      color_id: Optional[str] = None,
+                      calendar_id: Optional[str] = None) -> None:
+  event_id, parsed_calendar = _split_gcal_event_key(event_id)
+  if calendar_id is None:
+    calendar_id = parsed_calendar
   if not event_id:
     raise ValueError("event_id is empty")
   if not is_gcal_configured():
@@ -2954,13 +3335,14 @@ def gcal_update_event(event_id: str,
                                 meeting_url=meeting_url,
                                 timezone_value=timezone_value,
                                 color_id=color_id)
-  service.events().patch(calendarId=GOOGLE_CALENDAR_ID,
+  service.events().patch(calendarId=calendar_id or GOOGLE_CALENDAR_ID,
                          eventId=event_id,
                          body=body).execute()
 
 
 def gcal_create_recurring_event(item: Dict[str, Any],
-                                session_id: Optional[str] = None) -> Optional[str]:
+                                session_id: Optional[str] = None,
+                                calendar_id: Optional[str] = None) -> Optional[str]:
   if not is_gcal_configured() or not session_id:
     return None
 
@@ -3057,7 +3439,8 @@ def gcal_create_recurring_event(item: Dict[str, Any],
     if location:
       event_body["location"] = (location or "").strip() or None
 
-    created = service.events().insert(calendarId=GOOGLE_CALENDAR_ID,
+    created = service.events().insert(calendarId=calendar_id
+                                      or GOOGLE_CALENDAR_ID,
                                       body=event_body).execute()
     return created.get("id")
   except Exception as e:
@@ -3065,7 +3448,12 @@ def gcal_create_recurring_event(item: Dict[str, Any],
     return None
 
 
-def gcal_delete_event(event_id: str, session_id: Optional[str] = None) -> None:
+def gcal_delete_event(event_id: str,
+                      session_id: Optional[str] = None,
+                      calendar_id: Optional[str] = None) -> None:
+  event_id, parsed_calendar = _split_gcal_event_key(event_id)
+  if calendar_id is None:
+    calendar_id = parsed_calendar
   if not event_id:
     raise ValueError("event_id is empty")
   if not is_gcal_configured():
@@ -3073,7 +3461,8 @@ def gcal_delete_event(event_id: str, session_id: Optional[str] = None) -> None:
   if not session_id:
     raise RuntimeError("Google OAuth session is missing.")
   service = get_gcal_service(session_id)
-  service.events().delete(calendarId=GOOGLE_CALENDAR_ID, eventId=event_id).execute()
+  service.events().delete(calendarId=calendar_id or GOOGLE_CALENDAR_ID,
+                          eventId=event_id).execute()
 
 
 def _convert_gcal_time(obj: Dict[str, Any],
@@ -3122,6 +3511,19 @@ def _google_cache_key(range_start: date, range_end: date) -> str:
   return f"{range_start.isoformat()}:{range_end.isoformat()}"
 
 
+def _ensure_google_cache_entry(session_cache: Dict[str, Dict[str, Any]],
+                               cache_key: str) -> Dict[str, Any]:
+  entry = session_cache.get(cache_key)
+  if not isinstance(entry, dict):
+    entry = {}
+    session_cache[cache_key] = entry
+  if not isinstance(entry.get("events"), dict):
+    entry["events"] = {}
+  if not isinstance(entry.get("calendars"), dict):
+    entry["calendars"] = {}
+  return entry
+
+
 def _event_in_date_range(ev: Dict[str, Any],
                          range_start: date,
                          range_end: date) -> bool:
@@ -3136,7 +3538,8 @@ def _event_in_date_range(ev: Dict[str, Any],
   return True
 
 
-def _normalize_gcal_event(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _normalize_gcal_event(raw: Dict[str, Any],
+                          calendar_id: Optional[str]) -> Optional[Dict[str, Any]]:
   start_raw = raw.get("start") or {}
   start_iso, all_day_flag = _convert_gcal_time(start_raw, False, None)
   if not start_iso:
@@ -3193,6 +3596,8 @@ def _normalize_gcal_event(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
   return {
       "id": raw.get("id"),
+      "calendar_id": calendar_id,
+      "google_event_id": raw.get("id"),
       "title": raw.get("summary") or "(제목 없음)",
       "start": start_iso,
       "end": end_iso,
@@ -3240,6 +3645,7 @@ def _sync_token_error_kind(exc: Exception) -> Optional[str]:
 def _fetch_google_events_raw(service,
                              range_start: date,
                              range_end: date,
+                             calendar_id: str,
                              sync_token: Optional[str] = None
                              ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
   time_min = datetime(range_start.year,
@@ -3261,7 +3667,7 @@ def _fetch_google_events_raw(service,
 
   while True:
     params: Dict[str, Any] = {
-        "calendarId": GOOGLE_CALENDAR_ID,
+        "calendarId": calendar_id,
         "singleEvents": True,
         "pageToken": page_token,
         "timeMin": time_min.isoformat(),
@@ -3298,23 +3704,41 @@ def _fetch_google_events_raw(service,
 def _apply_gcal_items_to_cache(cache: Dict[str, Dict[str, Any]],
                                raw_items: List[Dict[str, Any]],
                                range_start: date,
-                               range_end: date) -> None:
+                               range_end: date,
+                               calendar_id: Optional[str]) -> None:
   for raw in raw_items:
     if not isinstance(raw, dict):
       continue
     event_id = raw.get("id")
     if not event_id:
       continue
+    cache_key = f"{calendar_id}::{event_id}" if calendar_id else event_id
     if raw.get("status") == "cancelled":
-      cache.pop(event_id, None)
+      cache.pop(cache_key, None)
       continue
-    normalized = _normalize_gcal_event(raw)
+    normalized = _normalize_gcal_event(raw, calendar_id)
     if not normalized:
       continue
     if _event_in_date_range(normalized, range_start, range_end):
-      cache[event_id] = normalized
+      cache[cache_key] = normalized
     else:
-      cache.pop(event_id, None)
+      cache.pop(cache_key, None)
+
+
+def _reset_gcal_cache_range(cache: Dict[str, Dict[str, Any]],
+                            range_start: date,
+                            range_end: date,
+                            calendar_id: Optional[str]) -> None:
+  if not calendar_id:
+    return
+  prefix = f"{calendar_id}::"
+  for key, event in list(cache.items()):
+    if not isinstance(key, str) or not key.startswith(prefix):
+      continue
+    if not isinstance(event, dict):
+      continue
+    if _event_in_date_range(event, range_start, range_end):
+      cache.pop(key, None)
 
 
 def fetch_google_events_between(range_start: date,
@@ -3332,41 +3756,162 @@ def fetch_google_events_between(range_start: date,
     raise HTTPException(status_code=502,
                         detail=f"Google Calendar 인증에 실패했습니다: {exc}") from exc
 
+  if _gcal_watch_enabled():
+    ensure_gcal_watches(session_id)
+
+  try:
+    calendars = list_google_calendars(session_id)
+  except Exception as exc:
+    raise HTTPException(status_code=502,
+                        detail=f"Google Calendar 목록 조회 실패: {exc}") from exc
+
+  calendar_ids = [item["id"] for item in calendars if isinstance(item, dict)]
+  if not calendar_ids:
+    return []
+
   session_cache = _get_google_cache(session_id)
   cache_key = _google_cache_key(range_start, range_end)
-  cache_entry = session_cache.get(cache_key)
-  if cache_entry and cache_entry.get("sync_token") and not cache_entry.get("sync_disabled"):
-    try:
-      raw_items, next_sync = _fetch_google_events_raw(service,
-                                                      range_start,
-                                                      range_end,
-                                                      sync_token=cache_entry.get(
-                                                          "sync_token"))
-      cache_events = cache_entry.get("events") or {}
-      if not isinstance(cache_events, dict):
-        cache_events = {}
-      _apply_gcal_items_to_cache(cache_events, raw_items, range_start, range_end)
-      cache_entry["events"] = cache_events
-      if next_sync:
-        cache_entry["sync_token"] = next_sync
-      cache_entry["updated_at"] = _now_iso_minute()
-      return _sorted_google_cache_items(cache_events)
-    except SyncTokenInvalid as exc:
-      cache_entry["sync_token"] = None
-      if getattr(exc, "kind", "") == "unsupported":
-        cache_entry["sync_disabled"] = True
+  cache_entry = _ensure_google_cache_entry(session_cache, cache_key)
+  cache_events = cache_entry.get("events", {})
+  calendars_state = cache_entry.get("calendars", {})
+  if not isinstance(cache_events, dict):
+    cache_events = {}
+    cache_entry["events"] = cache_events
+  if not isinstance(calendars_state, dict):
+    calendars_state = {}
+    cache_entry["calendars"] = calendars_state
 
-  raw_items, next_sync = _fetch_google_events_raw(service, range_start,
-                                                  range_end)
-  events_by_id: Dict[str, Dict[str, Any]] = {}
-  _apply_gcal_items_to_cache(events_by_id, raw_items, range_start, range_end)
-  session_cache[cache_key] = {
-      "events": events_by_id,
-      "sync_token": next_sync,
-      "sync_disabled": False,
-      "updated_at": _now_iso_minute(),
-  }
-  return _sorted_google_cache_items(events_by_id)
+  active_ids = set(calendar_ids)
+  for cache_id in list(cache_events.keys()):
+    if not isinstance(cache_id, str):
+      continue
+    if "::" not in cache_id:
+      continue
+    cal_id = cache_id.split("::", 1)[0]
+    if cal_id not in active_ids:
+      cache_events.pop(cache_id, None)
+
+  for calendar_id in calendar_ids:
+    cal_state = calendars_state.get(calendar_id)
+    sync_token = None
+    sync_disabled = False
+    if isinstance(cal_state, dict):
+      sync_token = cal_state.get("sync_token")
+      sync_disabled = bool(cal_state.get("sync_disabled"))
+    if sync_token and not sync_disabled:
+      try:
+        raw_items, next_sync = _fetch_google_events_raw(service,
+                                                        range_start,
+                                                        range_end,
+                                                        calendar_id,
+                                                        sync_token=sync_token)
+        _apply_gcal_items_to_cache(cache_events, raw_items, range_start,
+                                   range_end, calendar_id)
+        calendars_state[calendar_id] = {
+            "sync_token": next_sync or sync_token,
+            "sync_disabled": False,
+        }
+        cache_entry["updated_at"] = _now_iso_minute()
+        continue
+      except SyncTokenInvalid as exc:
+        if getattr(exc, "kind", "") == "unsupported":
+          calendars_state[calendar_id] = {
+              "sync_token": None,
+              "sync_disabled": True,
+          }
+        else:
+          calendars_state[calendar_id] = {
+              "sync_token": None,
+              "sync_disabled": False,
+          }
+
+    raw_items, next_sync = _fetch_google_events_raw(service, range_start,
+                                                    range_end, calendar_id)
+    _reset_gcal_cache_range(cache_events, range_start, range_end, calendar_id)
+    _apply_gcal_items_to_cache(cache_events, raw_items, range_start, range_end,
+                               calendar_id)
+    calendars_state[calendar_id] = {
+        "sync_token": next_sync,
+        "sync_disabled": False,
+    }
+    cache_entry["updated_at"] = _now_iso_minute()
+
+  return _sorted_google_cache_items(cache_events)
+
+
+def refresh_google_cache_for_calendar(session_id: str,
+                                      calendar_id: str) -> None:
+  if not session_id or not calendar_id:
+    return
+  session_cache = _get_google_cache(session_id)
+  if not session_cache:
+    return
+  try:
+    service = get_gcal_service(session_id)
+  except Exception:
+    return
+
+  for cache_key in list(session_cache.keys()):
+    if not isinstance(cache_key, str) or ":" not in cache_key:
+      continue
+    try:
+      start_str, end_str = cache_key.split(":", 1)
+      range_start = date.fromisoformat(start_str)
+      range_end = date.fromisoformat(end_str)
+    except Exception:
+      continue
+
+    cache_entry = _ensure_google_cache_entry(session_cache, cache_key)
+    cache_events = cache_entry.get("events", {})
+    calendars_state = cache_entry.get("calendars", {})
+    if not isinstance(cache_events, dict):
+      cache_events = {}
+      cache_entry["events"] = cache_events
+    if not isinstance(calendars_state, dict):
+      calendars_state = {}
+      cache_entry["calendars"] = calendars_state
+
+    cal_state = calendars_state.get(calendar_id)
+    sync_token = None
+    sync_disabled = False
+    if isinstance(cal_state, dict):
+      sync_token = cal_state.get("sync_token")
+      sync_disabled = bool(cal_state.get("sync_disabled"))
+
+    if sync_token and not sync_disabled:
+      try:
+        raw_items, next_sync = _fetch_google_events_raw(service,
+                                                        range_start,
+                                                        range_end,
+                                                        calendar_id,
+                                                        sync_token=sync_token)
+        _apply_gcal_items_to_cache(cache_events, raw_items, range_start,
+                                   range_end, calendar_id)
+        calendars_state[calendar_id] = {
+            "sync_token": next_sync or sync_token,
+            "sync_disabled": False,
+        }
+        cache_entry["updated_at"] = _now_iso_minute()
+        continue
+      except SyncTokenInvalid as exc:
+        calendars_state[calendar_id] = {
+            "sync_token": None,
+            "sync_disabled": getattr(exc, "kind", "") == "unsupported",
+        }
+
+    try:
+      raw_items, next_sync = _fetch_google_events_raw(service, range_start,
+                                                      range_end, calendar_id)
+    except Exception:
+      continue
+    _reset_gcal_cache_range(cache_events, range_start, range_end, calendar_id)
+    _apply_gcal_items_to_cache(cache_events, raw_items, range_start, range_end,
+                               calendar_id)
+    calendars_state[calendar_id] = {
+        "sync_token": next_sync,
+        "sync_disabled": False,
+    }
+    cache_entry["updated_at"] = _now_iso_minute()
 
 
 def fetch_recent_google_events(session_id: str,
@@ -3386,52 +3931,62 @@ def fetch_recent_google_events(session_id: str,
     raise HTTPException(status_code=502,
                         detail=f"Google Calendar 인증에 실패했습니다: {exc}") from exc
 
+  try:
+    calendars = list_google_calendars(session_id)
+  except Exception as exc:
+    raise HTTPException(status_code=502,
+                        detail=f"Google Calendar 목록 조회 실패: {exc}") from exc
+
   now = datetime.now(SEOUL)
   time_min = now - timedelta(days=days)
 
   events_data: List[Dict[str, Any]] = []
-  page_token: Optional[str] = None
+  updated_min = time_min.astimezone(
+      timezone.utc).isoformat().replace("+00:00", "Z")
+  for cal in calendars:
+    calendar_id = cal.get("id")
+    if not isinstance(calendar_id, str) or not calendar_id:
+      continue
+    page_token: Optional[str] = None
+    while True:
+      request = service.events().list(calendarId=calendar_id,
+                                      updatedMin=updated_min,
+                                      singleEvents=True,
+                                      orderBy="updated",
+                                      maxResults=100,
+                                      pageToken=page_token)
+      response = request.execute()
+      items = response.get("items", [])
 
-  while True:
-    request = service.events().list(calendarId=GOOGLE_CALENDAR_ID,
-                                    updatedMin=time_min.astimezone(
-                                        timezone.utc).isoformat().replace(
-                                            "+00:00", "Z"),
-                                    singleEvents=True,
-                                    orderBy="updated",
-                                    maxResults=100,
-                                    pageToken=page_token)
-    response = request.execute()
-    items = response.get("items", [])
+      for raw in items:
+        if not isinstance(raw, dict):
+          continue
 
-    for raw in items:
-      if not isinstance(raw, dict):
-        continue
+        start_raw = raw.get("start") or {}
+        start_iso, all_day_flag = _convert_gcal_time(start_raw, False, None)
+        if not start_iso:
+          continue
+        end_raw = raw.get("end") or {}
+        end_iso, _ = _convert_gcal_time(end_raw, True, start_iso)
 
-      start_raw = raw.get("start") or {}
-      start_iso, all_day_flag = _convert_gcal_time(start_raw, False, None)
-      if not start_iso:
-        continue
-      end_raw = raw.get("end") or {}
-      end_iso, _ = _convert_gcal_time(end_raw, True, start_iso)
+        events_data.append({
+            "id": raw.get("id"),
+            "calendar_id": calendar_id,
+            "title": raw.get("summary") or "(제목 없음)",
+            "start": start_iso,
+            "end": end_iso,
+            "location": raw.get("location"),
+            "all_day": all_day_flag,
+            "status": raw.get("status"),
+            "html_link": raw.get("htmlLink"),
+            "organizer": (raw.get("organizer") or {}).get("email"),
+            "created": raw.get("created"),
+            "updated": raw.get("updated"),
+        })
 
-      events_data.append({
-          "id": raw.get("id"),
-          "title": raw.get("summary") or "(제목 없음)",
-          "start": start_iso,
-          "end": end_iso,
-          "location": raw.get("location"),
-          "all_day": all_day_flag,
-          "status": raw.get("status"),
-          "html_link": raw.get("htmlLink"),
-          "organizer": (raw.get("organizer") or {}).get("email"),
-          "created": raw.get("created"),
-          "updated": raw.get("updated"),
-      })
-
-    page_token = response.get("nextPageToken")
-    if not page_token:
-      break
+      page_token = response.get("nextPageToken")
+      if not page_token:
+        break
 
   events_data.sort(key=lambda ev: ev.get("updated") or ev.get("created") or "",
                    reverse=True)
@@ -3966,7 +4521,8 @@ async def create_delete_ids_from_natural_text(
   if session_id and scope:
     google_items = fetch_google_events_between(scope[0], scope[1], session_id)
     snapshot = [{
-        "id": item.get("id"),
+        "id": f"{item.get('calendar_id')}::{item.get('id')}"
+        if item.get("calendar_id") else item.get("id"),
         "title": item.get("title"),
         "start": item.get("start"),
         "end": item.get("end"),
@@ -4124,7 +4680,8 @@ async def delete_preview_groups(text: str,
     combined_events = fetch_google_events_between(scope[0], scope[1], session_id)
     targets = [
         e for e in combined_events
-        if str(e.get("id")) in id_set
+        if (f"{e.get('calendar_id')}::{e.get('id')}"
+            if e.get("calendar_id") else str(e.get("id"))) in id_set
     ]
 
     groups_map: Dict[str, Dict[str, Any]] = {}
@@ -4223,6 +4780,7 @@ async def delete_preview_groups(text: str,
 # -------------------------
 @app.get("/auth/google/login")
 def google_login(request: Request):
+  _log_debug("[GCAL] login start")
   if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and GOOGLE_REDIRECT_URI):
     raise HTTPException(
         status_code=500,
@@ -4244,7 +4802,7 @@ def google_login(request: Request):
       "client_id": GOOGLE_CLIENT_ID,
       "redirect_uri": GOOGLE_REDIRECT_URI,
       "response_type": "code",
-      "scope": "https://www.googleapis.com/auth/calendar.events",
+      "scope": " ".join(GCAL_SCOPES),
       "access_type": "offline",
       "state": state_value,
   }
@@ -4253,6 +4811,7 @@ def google_login(request: Request):
   url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(
       params)
   resp = RedirectResponse(url)
+  _log_debug(f"[GCAL] login redirect url={url}")
   _set_cookie(resp,
               SESSION_COOKIE_NAME,
               session_id,
@@ -4270,8 +4829,10 @@ def google_callback(request: Request):
   code = request.query_params.get("code")
   error = request.query_params.get("error")
   state = request.query_params.get("state")
+  _log_debug(f"[GCAL] callback start error={error} state={state}")
   expected_state = request.cookies.get(OAUTH_STATE_COOKIE_NAME)
   if error:
+    _log_debug(f"[GCAL] callback error={error}")
     return JSONResponse({"ok": False, "error": error})
 
   if not code:
@@ -4298,6 +4859,7 @@ def google_callback(request: Request):
 
   resp = requests.post(token_endpoint, data=data)
   if not resp.ok:
+    _log_debug(f"[GCAL] token exchange failed: {resp.status_code} {resp.text}")
     raise HTTPException(status_code=500,
                         detail=f"토큰 교환 실패: {resp.status_code} {resp.text}")
 
@@ -4315,6 +4877,7 @@ def google_callback(request: Request):
     refresh_token = existing.get("refresh_token")
 
   if not access_token or not refresh_token:
+    _log_debug("[GCAL] token exchange missing access/refresh token")
     raise HTTPException(
         status_code=500,
         detail="access_token/refresh_token missing. Retry with /auth/google/login?force=1",
@@ -4333,9 +4896,13 @@ def google_callback(request: Request):
   }
 
   save_gcal_token_for_session(session_id, token_data)
+  _log_debug("[GCAL] token exchange success")
+  if _gcal_watch_enabled():
+    ensure_gcal_watches(session_id)
 
   # ✅ 성공 시 달력으로 이동
   resp = RedirectResponse(_frontend_url("/calendar"))
+  resp.delete_cookie(ADMIN_COOKIE_NAME, path="/")
   _set_cookie(resp,
               SESSION_COOKIE_NAME,
               session_id,
@@ -4353,6 +4920,78 @@ def google_status(request: Request):
       "has_token": token_data is not None,
       "admin": is_admin(request),
   }
+
+
+@app.post("/auth/google/webhook")
+def google_webhook(request: Request):
+  if not _gcal_watch_enabled():
+    return Response(status_code=404)
+
+  channel_id = request.headers.get("X-Goog-Channel-ID") or request.headers.get(
+      "X-Goog-Channel-Id")
+  resource_id = request.headers.get("X-Goog-Resource-ID") or request.headers.get(
+      "X-Goog-Resource-Id")
+  resource_state = request.headers.get("X-Goog-Resource-State", "")
+  channel_token = request.headers.get("X-Goog-Channel-Token")
+
+  if GOOGLE_WEBHOOK_TOKEN and channel_token != GOOGLE_WEBHOOK_TOKEN:
+    return Response(status_code=403)
+  if not channel_id:
+    return Response(status_code=400)
+
+  state = _load_gcal_watch_state()
+  channel_info = state.get("channels", {}).get(channel_id)
+  if not isinstance(channel_info, dict):
+    return Response(status_code=404)
+  if resource_id and channel_info.get("resource_id") not in (None, resource_id):
+    return Response(status_code=403)
+
+  session_id = channel_info.get("session_id")
+  calendar_id = channel_info.get("calendar_id")
+  if not session_id or not calendar_id:
+    return Response(status_code=404)
+
+  if isinstance(resource_state, str) and resource_state.lower() == "not_exists":
+    session_entry = _get_watch_session_entry(state, session_id)
+    calendars_state = session_entry.get("calendars", {})
+    entry = calendars_state.get(calendar_id)
+    if isinstance(entry, dict):
+      _remove_watch_entry(state, session_id, calendar_id, entry)
+      _save_gcal_watch_state(state)
+    return JSONResponse({"ok": True})
+
+  if isinstance(resource_state, str) and resource_state.lower() == "sync":
+    return JSONResponse({"ok": True})
+
+  refresh_google_cache_for_calendar(session_id, calendar_id)
+  _emit_google_sse(session_id, "google_sync", {"calendar_id": calendar_id})
+  return JSONResponse({"ok": True})
+
+
+@app.get("/api/google/stream")
+async def google_stream(request: Request):
+  session_id = get_google_session_id(request)
+  if not session_id:
+    raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
+
+  key, queue = _register_google_sse(session_id)
+
+  async def event_generator():
+    try:
+      yield _format_sse_event("ready", {})
+      while True:
+        if await request.is_disconnected():
+          break
+        try:
+          payload = await asyncio.wait_for(queue.get(), timeout=20)
+          event_type = payload.get("type") if isinstance(payload, dict) else "message"
+          yield _format_sse_event(event_type or "message", payload or {})
+        except asyncio.TimeoutError:
+          yield _format_sse_event("ping", {})
+    finally:
+      _unregister_google_sse(key, queue)
+
+  return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 # -------------------------
@@ -4378,6 +5017,8 @@ def exit_admin():
 @app.get("/logout")
 def logout(request: Request):
   session_id = _get_session_id(request)
+  if session_id:
+    _clear_watches_for_session(session_id)
   clear_gcal_token_for_session(session_id)
   _clear_google_cache(session_id)
   resp = RedirectResponse("/")
@@ -4437,6 +5078,7 @@ def _format_recent_google_event(item: Dict[str, Any]) -> Dict[str, Any]:
   created_raw = item.get("created") or item.get("updated")
   return {
       "id": item.get("id"),
+      "calendar_id": item.get("calendar_id"),
       "title": item.get("title"),
       "start": item.get("start"),
       "end": item.get("end"),
@@ -4491,15 +5133,23 @@ def google_events(request: Request,
 
 
 @app.delete("/api/google/events/{event_id}")
-def google_delete_event(request: Request, event_id: str):
+def google_delete_event(request: Request,
+                        event_id: str,
+                        calendar_id: Optional[str] = Query(None,
+                                                           alias="calendar_id")):
   if not event_id:
     raise HTTPException(status_code=400, detail="event_id가 없습니다.")
   session_id = get_google_session_id(request)
   if not session_id:
     raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
   try:
-    gcal_delete_event(event_id, session_id=session_id)
+    gcal_delete_event(event_id,
+                      session_id=session_id,
+                      calendar_id=calendar_id)
     _clear_google_cache(session_id)
+    _, parsed_calendar = _split_gcal_event_key(event_id)
+    _emit_google_sse(session_id, "google_sync",
+                     {"calendar_id": calendar_id or parsed_calendar})
     return {"ok": True}
   except HTTPException:
     raise
@@ -4509,7 +5159,11 @@ def google_delete_event(request: Request, event_id: str):
 
 
 @app.patch("/api/google/events/{event_id}")
-def google_update_event_api(request: Request, event_id: str, payload: EventUpdate):
+def google_update_event_api(request: Request,
+                            event_id: str,
+                            payload: EventUpdate,
+                            calendar_id: Optional[str] = Query(
+                                None, alias="calendar_id")):
   if not event_id:
     raise HTTPException(status_code=400, detail="event_id가 없습니다.")
   if not is_gcal_configured():
@@ -4600,8 +5254,12 @@ def google_update_event_api(request: Request, event_id: str, payload: EventUpdat
                       transparency=transparency_value,
                       meeting_url=meeting_url_value,
                       timezone_value=timezone_value,
-                      color_id=color_value)
+                      color_id=color_value,
+                      calendar_id=calendar_id)
     _clear_google_cache(session_id)
+    _, parsed_calendar = _split_gcal_event_key(event_id)
+    _emit_google_sse(session_id, "google_sync",
+                     {"calendar_id": calendar_id or parsed_calendar})
   except Exception as exc:
     raise HTTPException(status_code=502,
                         detail=f"Google event 업데이트 실패: {exc}") from exc
@@ -4631,6 +5289,7 @@ def create_event(request: Request, event_in: EventCreate):
                                                color_id=event_in.color_id)
     if session_id and google_event_id:
       _clear_google_cache(session_id)
+      _emit_google_sse(session_id, "google_sync", {})
   except Exception:
     _log_debug("[GCAL] /api/events create: 실패 (무시)")
 
@@ -4808,6 +5467,102 @@ def update_event(request: Request, event_id: int, payload: EventUpdate):
   target.all_day = bool(new_all_day)
   _save_events_to_disk()
   return target
+
+
+@app.patch("/api/recurring-events/{event_id}", response_model=Event)
+def update_recurring_event(request: Request, event_id: int, payload: RecurringEventUpdate):
+  if is_google_mode_active(request):
+    raise HTTPException(status_code=400, detail="Google 모드에서는 반복 일정을 수정할 수 없습니다.")
+
+  recurrence_id = _decode_occurrence_id(event_id) or event_id
+  target = _find_recurring_event(recurrence_id)
+  if target is None:
+    raise HTTPException(status_code=404, detail="반복 일정을 찾을 수 없습니다.")
+
+  title_value = payload.title.strip()
+  if not title_value:
+    raise HTTPException(status_code=400, detail="제목을 입력해 주세요.")
+
+  start_date_value = payload.start_date.strip()
+  if not ISO_DATE_RE.match(start_date_value):
+    raise HTTPException(status_code=400, detail="시작 날짜 형식이 잘못되었습니다.")
+
+  recurrence_item = {"recurrence": payload.recurrence.model_dump()}
+  recurrence_spec = _resolve_recurrence(recurrence_item)
+  if not recurrence_spec:
+    raise HTTPException(status_code=400, detail="반복 규칙을 확인해 주세요.")
+
+  location_value = _clean_optional_str(payload.location)
+  description_value = _clean_optional_str(payload.description)
+  meeting_url_value = _clean_optional_str(payload.meeting_url)
+  timezone_value = payload.timezone or "Asia/Seoul"
+  color_value = _normalize_color_id(payload.color_id)
+
+  attendees_value: Optional[List[str]] = None
+  if payload.attendees is not None:
+    cleaned: List[str] = []
+    for item in payload.attendees:
+      if isinstance(item, str):
+        trimmed = item.strip()
+        if trimmed:
+          cleaned.append(trimmed)
+    attendees_value = cleaned
+
+  reminders_value: Optional[List[int]] = None
+  if payload.reminders is not None:
+    cleaned_reminders: List[int] = []
+    for item in payload.reminders:
+      try:
+        minutes = int(item)
+      except Exception:
+        continue
+      if minutes >= 0:
+        cleaned_reminders.append(minutes)
+    reminders_value = cleaned_reminders
+
+  target["title"] = title_value
+  target["start_date"] = start_date_value
+  target["time"] = payload.time
+  target["duration_minutes"] = payload.duration_minutes
+  target["location"] = location_value
+  target["description"] = description_value
+  target["attendees"] = attendees_value
+  target["reminders"] = reminders_value
+  target["visibility"] = payload.visibility
+  target["transparency"] = payload.transparency
+  target["meeting_url"] = meeting_url_value
+  target["timezone"] = timezone_value
+  target["color_id"] = color_value
+  target["recurrence"] = recurrence_spec
+
+  _save_events_to_disk()
+  return _recurring_definition_to_event(target)
+
+
+@app.post("/api/recurring-events/{event_id}/exceptions")
+def add_recurring_exception(request: Request,
+                            event_id: int,
+                            payload: RecurringExceptionPayload):
+  if is_google_mode_active(request):
+    raise HTTPException(status_code=400, detail="Google 모드에서는 반복 일정을 수정할 수 없습니다.")
+
+  recurrence_id = _decode_occurrence_id(event_id) or event_id
+  target = _find_recurring_event(recurrence_id)
+  if target is None:
+    raise HTTPException(status_code=404, detail="반복 일정을 찾을 수 없습니다.")
+
+  exception_date = _normalize_exception_date(payload.date)
+  if not exception_date:
+    raise HTTPException(status_code=400, detail="제외 날짜 형식이 잘못되었습니다.")
+
+  exceptions = target.get("exceptions")
+  if not isinstance(exceptions, list):
+    exceptions = []
+  if exception_date not in exceptions:
+    exceptions.append(exception_date)
+  target["exceptions"] = exceptions
+  _save_events_to_disk()
+  return {"ok": True}
 
 
 @app.post("/api/nlp-events", response_model=List[Event])
@@ -5012,6 +5767,7 @@ async def delete_events_from_natural_text(body: NaturalTextWithScope,
           raise HTTPException(status_code=502,
                               detail=f"Google event 삭제 실패: {exc}") from exc
       _clear_google_cache(gcal_session_id)
+      _emit_google_sse(gcal_session_id, "google_sync", {})
       return DeleteResult(ok=True, deleted_ids=deleted, count=len(deleted))
 
     deleted = delete_events_by_ids([int(x) for x in ids if isinstance(x, int)])

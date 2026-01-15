@@ -5,3 +5,4 @@ gcal_tokens/
 .vscode/
 dev.log
 logs/
+events_data.json

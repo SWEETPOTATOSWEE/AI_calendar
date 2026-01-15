@@ -14,9 +14,13 @@ export type CalendarEvent = {
   timezone?: string | null;
   meeting_url?: string | null;
   color_id?: string | null;
+  calendar_id?: string | null;
   recur?: string | null;
   recurrence?: EventRecurrence | null;
   all_day?: boolean;
+  start_date?: string | null;
+  time?: string | null;
+  duration_minutes?: number | null;
   source: CalendarEventSource;
   google_event_id?: string | null;
 };

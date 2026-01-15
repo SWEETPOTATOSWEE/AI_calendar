@@ -22,19 +22,23 @@ export const useUndoStack = (onAfterUndo?: () => void) => {
       .map((event) => event.id as number);
 
     const googleIds = batch
-      .flatMap((event) => {
-        if (event.source === "google") return [String(event.id)];
-        if (event.google_event_id) return [String(event.google_event_id)];
-        return [];
-      })
-      .filter((value, index, array) => array.indexOf(value) === index);
+      .filter((event) => event.source === "google")
+      .map((event) => ({
+        eventId: event.google_event_id ?? String(event.id),
+        calendarId: event.calendar_id ?? null,
+      }))
+      .filter((item) => Boolean(item.eventId));
 
     if (localIds.length) {
       await deleteEventsByIds(localIds);
     }
 
-    for (const id of googleIds) {
-      await deleteGoogleEventById(id);
+    const seen = new Set<string>();
+    for (const item of googleIds) {
+      const key = `${item.calendarId ?? ""}::${item.eventId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      await deleteGoogleEventById(String(item.eventId), item.calendarId);
     }
 
     if (onAfterUndo) onAfterUndo();
