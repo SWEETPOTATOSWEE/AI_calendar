@@ -12,7 +12,16 @@ const buildUrl = (base: string, path: string) => {
   return `${base}${path.startsWith("/") ? "" : "/"}${path}`;
 };
 
-const apiUrl = (path: string) => buildUrl(API_BASE, path);
+const apiUrl = (path: string) => {
+  const url = buildUrl(API_BASE, path);
+  if (typeof window !== "undefined") {
+    const sp = new URLSearchParams(window.location.search);
+    if (sp.get("mode") === "google") {
+      return url + (url.includes("?") ? "&" : "?") + "mode=google";
+    }
+  }
+  return url;
+};
 const backendUrl = (path: string) => buildUrl(BACKEND_BASE, path);
 
 const buildGoogleEventKey = (calendarId?: string | null, eventId?: string | number | null) => {
@@ -173,6 +182,61 @@ export const previewNlp = async (
     method: "POST",
     body: JSON.stringify({ text, images, reasoning_effort, model, request_id, context_confirmed }),
   });
+};
+
+export const previewNlpStream = async (
+  text: string,
+  images?: string[],
+  reasoning_effort?: string,
+  model?: string,
+  request_id?: string,
+  context_confirmed?: boolean,
+  onEvent?: (event: any) => void
+) => {
+  const url = apiUrl("/nlp-preview-stream");
+  const response = await fetch(url, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      text,
+      images,
+      reasoning_effort,
+      model,
+      request_id,
+      context_confirmed,
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP error! status: ${response.status}`);
+  }
+
+  if (!response.body) throw new Error("No response body");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      if (line.startsWith("data: ")) {
+        try {
+          const data = JSON.parse(line.slice(6));
+          onEvent?.(data);
+        } catch (e) {
+          console.error("Error parsing SSE data", e);
+        }
+      }
+    }
+  }
 };
 
 export const classifyNlp = async (text: string, has_images?: boolean, request_id?: string) => {

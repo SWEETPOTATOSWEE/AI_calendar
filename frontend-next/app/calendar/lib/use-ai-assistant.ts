@@ -9,9 +9,43 @@ import {
   interruptNlp,
   previewNlp,
   previewNlpDelete,
+  previewNlpStream,
   resetNlpContext,
 } from "./api";
 import type { CalendarEvent, EventRecurrence } from "./types";
+
+// ... (existing types)
+
+const extractContentFromPartialJson = (json: string): string | undefined => {
+  const contentStartMatch = json.match(/"content"\s*:\s*"/);
+  if (!contentStartMatch) return undefined;
+
+  const startIndex = (contentStartMatch.index || 0) + contentStartMatch[0].length;
+  let contentValue = "";
+  let escaped = false;
+
+  for (let i = startIndex; i < json.length; i++) {
+    const char = json[i];
+    if (escaped) {
+      if (char === "n") contentValue += "\n";
+      else if (char === "r") contentValue += "\r";
+      else if (char === "t") contentValue += "\t";
+      else if (char === "\"") contentValue += "\"";
+      else if (char === "\\") contentValue += "\\";
+      else contentValue += char;
+      escaped = false;
+    } else if (char === "\\") {
+      escaped = true;
+    } else if (char === "\"") {
+      break;
+    } else {
+      contentValue += char;
+    }
+  }
+  return contentValue;
+};
+
+// ... (rest of the code)
 
 type AiMode = "add" | "delete";
 type AiModel = "nano" | "mini";
@@ -418,47 +452,85 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
       }
 
       if (requestMode === "add") {
-        const response = await previewNlp(
+        let fullJsonRaw = "";
+        let currentAssistantText = "";
+        let messageAppended = false;
+        let permissionRequestedLocally = false;
+
+        await previewNlpStream(
           payloadText,
           attachmentsToUse.map((item) => item.dataUrl),
           reasoningEffort,
           model,
           requestId,
-          contextConfirmed
+          contextConfirmed,
+          (event) => {
+            if (requestIdRef.current !== requestId) return;
+
+            if (event.type === "status") {
+              if (event.context_used) {
+                setProgressByMode((prev) => ({ ...prev, [requestMode]: "context" }));
+              }
+            } else if (event.type === "permission_required") {
+              permissionRequestedLocally = true;
+              setPermissionRequiredByMode((prev) => ({ ...prev, [requestMode]: true }));
+            } else if (event.type === "reset_buffer") {
+              fullJsonRaw = "";
+            } else if (event.type === "chunk" || event.type === "full") {
+              setProgressByMode((prev) => ({ ...prev, [requestMode]: null }));
+              if (event.type === "chunk") {
+                fullJsonRaw += event.delta;
+              } else {
+                fullJsonRaw = JSON.stringify(event.data);
+              }
+
+              const content = extractContentFromPartialJson(fullJsonRaw);
+              if (content !== undefined && content.trim() !== "" && content !== currentAssistantText) {
+                currentAssistantText = content;
+                setConversationByMode((prev) => {
+                  const current = prev[requestMode] ?? [];
+                  const lastMsg = current[current.length - 1];
+                  if (lastMsg && lastMsg.role === "assistant" && messageAppended) {
+                    const next = [...current];
+                    next[next.length - 1] = { ...lastMsg, text: content };
+                    return { ...prev, [requestMode]: next };
+                  } else {
+                    messageAppended = true;
+                    return {
+                      ...prev,
+                      [requestMode]: [...current, { role: "assistant", text: content, includeInPrompt: true }],
+                    };
+                  }
+                });
+              }
+            } else if (event.type === "error") {
+              throw new Error(event.detail);
+            }
+          }
         );
+
         if (requestIdRef.current !== requestId) return;
-        const data = response as AddPreviewResponse;
-        if (data.permission_required) {
+
+        let finalData: AddPreviewResponse = {};
+        try {
+          finalData = JSON.parse(fullJsonRaw);
+        } catch (e) {
+          console.warn("Complete JSON parse failed", e);
+        }
+
+        if (finalData.permission_required || permissionRequestedLocally) {
           setPermissionRequiredByMode((prev) => ({ ...prev, [requestMode]: true }));
           return;
         }
         setPermissionRequiredByMode((prev) => ({ ...prev, [requestMode]: false }));
 
-        if (data.context_used) {
-          setProgressByMode((prev) => ({ ...prev, [requestMode]: "context" }));
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-          if (requestIdRef.current !== requestId) return;
-          setProgressByMode((prev) => ({ ...prev, [requestMode]: "thinking" }));
-          await new Promise((resolve) => setTimeout(resolve, 350));
-          if (requestIdRef.current !== requestId) return;
-        }
-        setAddPreview(data);
-        const items = data.items || [];
+        setAddPreview(finalData);
+        const items = finalData.items || [];
         const selection: Record<number, boolean> = {};
         items.forEach((_, idx) => {
           selection[idx] = true;
         });
         setSelectedAddItems(selection);
-        if (data.need_more_information) {
-          appendConversationForMode(
-            requestMode,
-            "assistant",
-            data.content || "추가로 확인할 정보가 필요합니다.",
-            {
-            includeInPrompt: true,
-          }
-          );
-        }
       } else {
         const range = resolveDeleteRange();
         if (!range.start || !range.end) {

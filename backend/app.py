@@ -1055,6 +1055,22 @@ def is_admin(request: Request) -> bool:
 def is_google_mode_active(request: Request, has_token: Optional[bool] = None) -> bool:
   if is_admin(request) or not ENABLE_GCAL:
     return False
+
+  # URL 쿼리 파라미터 또는 쿠키에서 명시적인 모드 확인을 우선함
+  mode_param = request.query_params.get("mode")
+  mode_cookie = request.cookies.get("calendar_mode")
+  
+  # 명시적으로 google 모드가 아니면 False (로컬 모드 유지)
+  if mode_param == "local" or mode_cookie == "local":
+    return False
+    
+  # 명시적으로 google 모드거나, 토큰이 있는 경우 google 모드로 간주 (하위 호환)
+  if mode_param == "google" or mode_cookie == "google":
+    token_present = load_gcal_token_for_request(
+        request) is not None if has_token is None else has_token
+    return bool(token_present)
+
+  # 기본적으로 토큰이 있으면 google 모드 (하위 호환)
   token_present = load_gcal_token_for_request(
       request) is not None if has_token is None else has_token
   return bool(token_present)
@@ -1153,7 +1169,7 @@ EVENTS_SYSTEM_PROMPT_TEMPLATE = """너는 한국어 일정 문장을 구조화�
 10. 사용자의 요청이 없다면 과거 이벤트는 생성하지 않는다.
 11. recurrence가 있으면 우선 사용한다. end_date/weekday는 이전 버전 호환용으로만 사용(필수 아님).
 12. need_more_information=false이면 content는 빈 문자열로 둔다.
-13. 마크다운은 need_more_information=true인 경우 content에서만 제한적으로 사용한다(제목, **굵게**, *기울임*, 리스트, 줄바꿈, 구분선). 그 외 필드에는 마크다운을 쓰지 않는다.
+13. 마크다운은 need_more_information=true인 경우 content에서만 제한적으로 사용한다(지원 형식: 제목(#), **굵게**, *기울임*, ~~취소선~~, `인라인 코드`, ```코드 블록```, 리스트(-, 1.), 인용구(>), 구분선(---), 줄바꿈). 그 외 필드에는 마크다운을 쓰지 않는다.
 14. needs_context와 need_more_information은 동시에 true로 두지 않는다.
 15. 질문은 최대 3개까지만 작성한다.
 
@@ -1248,7 +1264,7 @@ EVENTS_SYSTEM_PROMPT_WITH_CONTEXT_TEMPLATE = """너는 한국어 일정 문장�
 15. 가려진 구간이나 알아볼 수 없는 내용은 제외
 16. 꼭 필요한 정보만 질문한다. 문맥이나 context.events로 알 수 있으면 묻지 않는다.
 17. need_more_information=false이면 content는 빈 문자열로 둔다.
-18. 마크다운은 need_more_information=true인 경우 content에서만 제한적으로 사용한다(제목, **굵게**, *기울임*, 리스트, 줄바꿈, 구분선). 그 외 필드에는 마크다운을 쓰지 않는다.
+18. 마크다운은 need_more_information=true인 경우 content에서만 제한적으로 사용한다(지원 형식: 제목(#), **굵게**, *기울임*, ~~취소선~~, `인라인 코드`, ```코드 블록```, 리스트(-, 1.), 인용구(>), 구분선(---), 줄바꿈). 그 외 필드에는 마크다운을 쓰지 않는다.
 19. 질문은 최대 3개까지만 작성한다.
 
 """
@@ -1335,7 +1351,7 @@ EVENTS_MULTIMODAL_PROMPT_TEMPLATE = """너는 한국어 일정 정보를 텍스�
 12. 이미지 또는 텍스트에 정보가 없으면 null 처리
 13. 가려진 구간이나 알아볼 수 없는 내용은 제외
 14. need_more_information=false이면 content는 빈 문자열로 둔다.
-15. 마크다운은 need_more_information=true인 경우 content에서만 제한적으로 사용한다(제목, **굵게**, *기울임*, 리스트, 줄바꿈, 구분선). 그 외 필드에는 마크다운을 쓰지 않는다.
+15. 마크다운은 need_more_information=true인 경우 content에서만 제한적으로 사용한다(지원 형식: 제목(#), **굵게**, *기울임*, ~~취소선~~, `인라인 코드`, ```코드 블록```, 리스트(-, 1.), 인용구(>), 구분선(---), 줄바꿈). 그 외 필드에는 마크다운을 쓰지 않는다.
 16. needs_context와 need_more_information은 동시에 true로 두지 않는다.
 17. 질문은 최대 3개까지만 작성한다.
 
@@ -1435,7 +1451,7 @@ EVENTS_MULTIMODAL_PROMPT_WITH_CONTEXT_TEMPLATE = """너는 한국어 일정 정�
 15. 가려진 구간이나 알아볼 수 없는 내용은 제외
 16. 꼭 필요한 정보만 질문한다. 문맥이나 context.events로 알 수 있으면 묻지 않는다.
 17. need_more_information=false이면 content는 빈 문자열로 둔다.
-18. 마크다운은 need_more_information=true인 경우 content에서만 제한적으로 사용한다(제목, **굵게**, *기울임*, - 리스트, 줄바꿈, 구분선). 그 외 필드에는 마크다운을 쓰지 않는다.
+18. 마크다운은 need_more_information=true인 경우 content에서만 제한적으로 사용한다(지원 형식: 제목(#), **굵게**, *기울임*, ~~취소선~~, `인라인 코드`, ```코드 블록```, 리스트(-, 1.), 인용구(>), 구분선(---), 줄바꿈). 그 외 필드에는 마크다운을 쓰지 않는다.
 19. 질문은 최대 3개까지만 작성한다.
 
 """
@@ -1648,7 +1664,8 @@ def _extract_context_request(
 
 
 def _build_events_context(scopes: List[Tuple[date, date]],
-                          session_id: Optional[str] = None) -> Dict[str, Any]:
+                          session_id: Optional[str] = None,
+                          is_google: bool = False) -> Dict[str, Any]:
   today = datetime.now(SEOUL).date()
   if not scopes:
     start_date = today - timedelta(days=DEFAULT_CONTEXT_DAYS)
@@ -1657,26 +1674,27 @@ def _build_events_context(scopes: List[Tuple[date, date]],
 
   snapshot: List[Dict[str, Any]] = []
   seen_ids: set[str] = set()
-  if session_id:
-    for scope in scopes:
-      google_items = fetch_google_events_between(scope[0], scope[1], session_id)
-      for item in google_items:
-        raw_id = item.get("id")
-        if not raw_id:
-          continue
-        id_key = str(raw_id)
-        if id_key in seen_ids:
-          continue
-        seen_ids.add(id_key)
-        snapshot.append({
-            "id": raw_id,
-            "title": item.get("title"),
-            "start": item.get("start"),
-            "end": item.get("end"),
-            "location": item.get("location"),
-            "recur": None,
-            "all_day": item.get("all_day"),
-        })
+  if is_google:
+    if session_id:
+      for scope in scopes:
+        google_items = fetch_google_events_between(scope[0], scope[1], session_id)
+        for item in google_items:
+          raw_id = item.get("id")
+          if not raw_id:
+            continue
+          id_key = str(raw_id)
+          if id_key in seen_ids:
+            continue
+          seen_ids.add(id_key)
+          snapshot.append({
+              "id": raw_id,
+              "title": item.get("title"),
+              "start": item.get("start"),
+              "end": item.get("end"),
+              "location": item.get("location"),
+              "recur": None,
+              "all_day": item.get("all_day"),
+          })
   else:
     for scope in scopes:
       for ev in events:
@@ -2132,7 +2150,8 @@ async def _invoke_event_parser(kind: str,
                                model_name: Optional[str] = None,
                                context_cache_key: Optional[str] = None,
                                context_session_id: Optional[str] = None,
-                               context_confirmed: bool = False
+                               context_confirmed: bool = False,
+                               is_google: bool = False
                                ) -> Dict[str, Any]:
   payload = _build_events_user_payload(text, bool(images))
   cached_context = _get_context_cache(context_cache_key)
@@ -2184,7 +2203,7 @@ async def _invoke_event_parser(kind: str,
         "context_used": False,
     }
 
-  context = _build_events_context(scopes, session_id=context_session_id)
+  context = _build_events_context(scopes, session_id=context_session_id, is_google=is_google)
   _set_context_cache(context_cache_key, context)
   payload_with_context = _build_events_user_payload(text, bool(images), context)
 
@@ -2206,6 +2225,149 @@ async def _invoke_event_parser(kind: str,
   if isinstance(data, dict):
     data["context_used"] = True
   return data
+
+
+async def _invoke_event_parser_stream(kind: str,
+                                      text: str,
+                                      images: List[str],
+                                      reasoning_effort: Optional[str] = None,
+                                      model_name: Optional[str] = None,
+                                      context_cache_key: Optional[str] = None,
+                                      context_session_id: Optional[str] = None,
+                                      context_confirmed: bool = False,
+                                      is_google: bool = False):
+  payload = _build_events_user_payload(text, bool(images))
+  cached_context = _get_context_cache(context_cache_key)
+
+  if cached_context and _should_use_cached_context(text):
+    payload_with_context = _build_events_user_payload(text, bool(images),
+                                                      cached_context)
+    yield {"type": "status", "context_used": True}
+    
+    started = time.perf_counter()
+    sys_prompt = build_events_system_prompt_with_context()
+    user_txt = payload_with_context
+    model = _sanitize_model(model_name) or DEFAULT_TEXT_MODEL
+    
+    if images:
+      sys_prompt = build_events_multimodal_prompt_with_context()
+      stream = await _chat_multimodal_json_stream(
+          kind,
+          sys_prompt,
+          payload_with_context,
+          images,
+          reasoning_effort=reasoning_effort,
+          model_name=model_name)
+      model = _sanitize_model(model_name) or DEFAULT_MULTIMODAL_MODEL
+    else:
+      stream = await _chat_json_stream(
+          kind,
+          sys_prompt,
+          payload_with_context,
+          reasoning_effort=reasoning_effort,
+          model_name=model_name)
+    
+    full_content = ""
+    async for chunk in stream:
+      delta = chunk.choices[0].delta.content
+      if delta:
+        full_content += delta
+        yield {"type": "chunk", "delta": delta}
+    
+    latency_ms = (time.perf_counter() - started) * 1000.0
+    _debug_print(kind, user_txt, sys_prompt, full_content, latency_ms, model_name=model)
+    return
+
+  # 1st Pass: Check context
+  started = time.perf_counter()
+  sys_prompt = build_events_system_prompt()
+  user_txt = payload
+  model = _sanitize_model(model_name) or DEFAULT_TEXT_MODEL
+
+  if images:
+    sys_prompt = build_events_multimodal_prompt()
+    stream = await _chat_multimodal_json_stream(
+        kind,
+        sys_prompt,
+        payload,
+        images,
+        reasoning_effort=reasoning_effort,
+        model_name=model_name)
+    model = _sanitize_model(model_name) or DEFAULT_MULTIMODAL_MODEL
+  else:
+    stream = await _chat_json_stream(
+        kind,
+        sys_prompt,
+        payload,
+        reasoning_effort=reasoning_effort,
+        model_name=model_name)
+
+  full_content = ""
+  yield {"type": "status", "context_used": False}
+  async for chunk in stream:
+    delta = chunk.choices[0].delta.content
+    if delta:
+      full_content += delta
+      yield {"type": "chunk", "delta": delta}
+
+  latency_ms = (time.perf_counter() - started) * 1000.0
+  _debug_print(kind, user_txt, sys_prompt, full_content, latency_ms, model_name=model)
+
+  data = _safe_json_loads(full_content)
+  needs_context, scopes = _extract_context_request(data)
+
+  if not needs_context:
+    return
+
+  if not context_confirmed:
+    yield {
+        "type": "permission_required",
+        "permission_required": True,
+        "needs_context": True,
+        "context_used": False,
+    }
+    return
+
+  # 2nd Pass: With Context
+  context = _build_events_context(scopes, session_id=context_session_id, is_google=is_google)
+  _set_context_cache(context_cache_key, context)
+  payload_with_context = _build_events_user_payload(text, bool(images), context)
+
+  yield {"type": "status", "context_used": True}
+  yield {"type": "reset_buffer"}
+
+  started = time.perf_counter()
+  sys_prompt = build_events_system_prompt_with_context()
+  user_txt = payload_with_context
+  model = _sanitize_model(model_name) or DEFAULT_TEXT_MODEL
+
+  if images:
+    sys_prompt = build_events_multimodal_prompt_with_context()
+    stream = await _chat_multimodal_json_stream(
+        kind,
+        sys_prompt,
+        payload_with_context,
+        images,
+        reasoning_effort=reasoning_effort,
+        model_name=model_name)
+    model = _sanitize_model(model_name) or DEFAULT_MULTIMODAL_MODEL
+  else:
+    stream = await _chat_json_stream(
+        kind,
+        sys_prompt,
+        payload_with_context,
+        reasoning_effort=reasoning_effort,
+        model_name=model_name)
+
+  full_content = ""
+  async for chunk in stream:
+    delta = chunk.choices[0].delta.content
+    if delta:
+      full_content += delta
+      yield {"type": "chunk", "delta": delta}
+  
+  latency_ms = (time.perf_counter() - started) * 1000.0
+  _debug_print(kind, user_txt, sys_prompt, full_content, latency_ms, model_name=model)
 
 
 def build_delete_system_prompt() -> str:
@@ -2232,7 +2394,7 @@ def _debug_print(
     usage: Optional[Dict[str, Any]] = None,
     model_name: str = "",
 ) -> None:
-  if not LLM_DEBUG or kind == "preview":
+  if not LLM_DEBUG:
     return
 
   head = system_prompt[:220].replace("\n", "\\n")
@@ -2412,6 +2574,39 @@ async def _chat_json(kind: str,
     raise
 
 
+async def _chat_json_stream(kind: str,
+                            system_prompt: str,
+                            user_text: str,
+                            reasoning_effort: Optional[str] = None,
+                            model_name: Optional[str] = None):
+  c = get_async_client()
+  input_text = _current_reference_line() + user_text
+  effort_value = _pick_reasoning_effort(reasoning_effort,
+                                        DEFAULT_TEXT_REASONING_EFFORT)
+  model = _sanitize_model(model_name) or DEFAULT_TEXT_MODEL
+  try:
+    return await c.chat.completions.create(
+        model=model,
+        messages=[
+            {
+                "role": "system",
+                "content": system_prompt
+            },
+            {
+                "role": "user",
+                "content": input_text
+            },
+        ],
+        max_completion_tokens=10000,
+        reasoning_effort=effort_value,
+        stream=True,
+        response_format={"type": "json_object"},
+    )
+  except Exception as e:
+    _log_debug(f"[LLM DEBUG] stream exception: {repr(e)}")
+    raise
+
+
 async def _chat_multimodal_json(kind: str,
                                 system_prompt: str,
                                 user_text: str,
@@ -2486,6 +2681,53 @@ async def _chat_multimodal_json(kind: str,
 
   except Exception as e:
     _log_debug(f"[LLM DEBUG] exception: {repr(e)}")
+    raise
+
+
+async def _chat_multimodal_json_stream(kind: str,
+                                       system_prompt: str,
+                                       user_text: str,
+                                       images: List[str],
+                                       reasoning_effort: Optional[str] = None,
+                                       model_name: Optional[str] = None):
+  c = get_async_client()
+  user_parts: List[Dict[str, Any]] = [{
+      "type": "text",
+      "text": _current_reference_line() + user_text
+  }]
+  for img in images:
+    user_parts.append({
+        "type": "image_url",
+        "image_url": {
+            "url": img
+        }
+    })
+  effort_value = _pick_reasoning_effort(reasoning_effort,
+                                        DEFAULT_MULTIMODAL_REASONING_EFFORT)
+  model = _sanitize_model(model_name) or DEFAULT_MULTIMODAL_MODEL
+  try:
+    return await c.chat.completions.create(
+        model=model,
+        messages=[
+            {
+                "role": "system",
+                "content": [{
+                    "type": "text",
+                    "text": system_prompt
+                }]
+            },
+            {
+                "role": "user",
+                "content": user_parts
+            },
+        ],
+        max_completion_tokens=10000,
+        reasoning_effort=effort_value,
+        stream=True,
+        response_format={"type": "json_object"},
+    )
+  except Exception as e:
+    _log_debug(f"[LLM DEBUG] multimodal stream exception: {repr(e)}")
     raise
 
 
@@ -4063,7 +4305,8 @@ async def create_events_from_natural_text_core(
     model_name: Optional[str] = None,
     context_cache_key: Optional[str] = None,
     context_session_id: Optional[str] = None,
-    session_id: Optional[str] = None) -> List[Event]:
+    session_id: Optional[str] = None,
+    is_google: bool = False) -> List[Event]:
   images = images or []
   t = normalize_text(text)
   if not t and not images:
@@ -4080,7 +4323,8 @@ async def create_events_from_natural_text_core(
                                     reasoning_effort,
                                     model_name=model_name,
                                     context_cache_key=context_cache_key,
-                                    context_session_id=context_session_id)
+                                    context_session_id=context_session_id,
+                                    is_google=is_google)
   if _parse_bool(data.get("need_more_information")):
     content = (data.get("content") or "").strip()
     raise HTTPException(
@@ -4216,7 +4460,8 @@ async def preview_events_from_natural_text_core(
     model_name: Optional[str] = None,
     context_cache_key: Optional[str] = None,
     context_session_id: Optional[str] = None,
-    context_confirmed: bool = False) -> Dict[str, Any]:
+    context_confirmed: bool = False,
+    is_google: bool = False) -> Dict[str, Any]:
   images = images or []
   t = normalize_text(text)
   if not t and not images:
@@ -4234,7 +4479,8 @@ async def preview_events_from_natural_text_core(
                                     model_name=model_name,
                                     context_cache_key=context_cache_key,
                                     context_session_id=context_session_id,
-                                    context_confirmed=context_confirmed)
+                                    context_confirmed=context_confirmed,
+                                    is_google=is_google)
   if data.get("permission_required"):
     return data
 
@@ -4579,7 +4825,8 @@ async def create_delete_ids_from_natural_text(
     reasoning_effort: Optional[str] = None,
     model_name: Optional[str] = None,
     session_id: Optional[str] = None,
-    context_confirmed: bool = False
+    context_confirmed: bool = False,
+    is_google: bool = False
 ) -> Union[List[Union[int, str]], Dict[str, Any]]:
   if async_client is None:
     return []
@@ -4592,17 +4839,20 @@ async def create_delete_ids_from_natural_text(
         "context_used": False,
     }
 
-  if session_id and scope:
-    google_items = fetch_google_events_between(scope[0], scope[1], session_id)
-    snapshot = [{
-        "id": f"{item.get('calendar_id')}::{item.get('id')}"
-        if item.get("calendar_id") else item.get("id"),
-        "title": item.get("title"),
-        "start": item.get("start"),
-        "end": item.get("end"),
-        "location": item.get("location"),
-        "recur": None,
-    } for item in google_items][:50]
+  if is_google:
+    if session_id and scope:
+      google_items = fetch_google_events_between(scope[0], scope[1], session_id)
+      snapshot = [{
+          "id": f"{item.get('calendar_id')}::{item.get('id')}"
+          if item.get("calendar_id") else item.get("id"),
+          "title": item.get("title"),
+          "start": item.get("start"),
+          "end": item.get("end"),
+          "location": item.get("location"),
+          "recur": None,
+      } for item in google_items][:50]
+    else:
+      snapshot = []
   else:
     snapshot = [{
         "id": e.id,
@@ -4613,7 +4863,6 @@ async def create_delete_ids_from_natural_text(
         "recur": e.recur
     } for e in events if _event_within_scope(e, scope)][:50]
 
-  if not session_id:
     if len(snapshot) < 50:
       rec_occurrences = _collect_local_recurring_occurrences(scope=scope)
       for occ in rec_occurrences:
@@ -4736,7 +4985,8 @@ async def delete_preview_groups(text: str,
                                 reasoning_effort: Optional[str] = None,
                                 model_name: Optional[str] = None,
                                 session_id: Optional[str] = None,
-                                context_confirmed: bool = False
+                                context_confirmed: bool = False,
+                                is_google: bool = False
                                 ) -> Dict[str, Any]:
   text = normalize_text(text)
   if not text:
@@ -4747,7 +4997,8 @@ async def delete_preview_groups(text: str,
                                                   reasoning_effort=reasoning_effort,
                                                   model_name=model_name,
                                                   session_id=session_id,
-                                                  context_confirmed=context_confirmed)
+                                                  context_confirmed=context_confirmed,
+                                                  is_google=is_google)
   if isinstance(ids_or_perm, dict) and ids_or_perm.get("permission_required"):
     return ids_or_perm
 
@@ -4755,8 +5006,9 @@ async def delete_preview_groups(text: str,
   if not ids:
     return {"groups": []}
 
-  if session_id and scope:
-    id_set = {str(x) for x in ids}
+  if is_google:
+    if session_id and scope:
+      id_set = {str(x) for x in ids}
     combined_events = fetch_google_events_between(scope[0], scope[1], session_id)
     targets = [
         e for e in combined_events
@@ -4793,6 +5045,8 @@ async def delete_preview_groups(text: str,
           "recur": None,
           "all_day": e.get("all_day"),
       })
+    else:
+      groups_map = {}
   else:
     id_set = set(ids)
     combined_events = list(events)
@@ -5668,7 +5922,8 @@ async def create_events_from_natural_text(body: NaturalText,
                                              model_name=model_name,
                                              context_cache_key=cache_key,
                                              context_session_id=gcal_session_id if use_google_context else None,
-                                             session_id=gcal_session_id),
+                                             session_id=gcal_session_id,
+                                             is_google=use_google_context),
     )
   except HTTPException:
     raise
@@ -5700,7 +5955,8 @@ async def create_event_from_natural_text_compat(body: NaturalText,
                                              model_name=model_name,
                                              context_cache_key=cache_key,
                                              context_session_id=gcal_session_id if use_google_context else None,
-                                             session_id=gcal_session_id),
+                                             session_id=gcal_session_id,
+                                             is_google=use_google_context),
     )
     return created[0]
   except HTTPException:
@@ -5750,7 +6006,8 @@ async def nlp_preview(body: NaturalText, request: Request, response: Response):
                                               model_name=model_name,
                                               context_cache_key=cache_key,
                                               context_session_id=gcal_session_id if use_google_context else None,
-                                              context_confirmed=bool(body.context_confirmed)),
+                                              context_confirmed=bool(body.context_confirmed),
+                                              is_google=use_google_context),
     )
     if isinstance(data, dict):
       data["request_id"] = request_id
@@ -5759,6 +6016,40 @@ async def nlp_preview(body: NaturalText, request: Request, response: Response):
     raise
   except Exception as e:
     raise HTTPException(status_code=502, detail=f"Preview NLP error: {str(e)}")
+
+
+@app.post("/api/nlp-preview-stream")
+async def nlp_preview_stream(body: NaturalText, request: Request, response: Response):
+  try:
+    session_id = _ensure_session_id(request, response)
+    request_id = _resolve_request_id(body.request_id)
+    images = _validate_image_payload(body.images)
+    effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
+    model_name = _resolve_request_model(request, body.model)
+    use_google_context = is_google_mode_active(request)
+    cache_key = _context_cache_key_for_session_mode(session_id,
+                                                    use_google_context)
+    gcal_session_id = get_google_session_id(request)
+
+    async def event_generator():
+      try:
+        async for chunk in _invoke_event_parser_stream(
+            "preview",
+            body.text,
+            images,
+            effort,
+            model_name=model_name,
+            context_cache_key=cache_key,
+            context_session_id=gcal_session_id if use_google_context else None,
+            context_confirmed=bool(body.context_confirmed),
+            is_google=use_google_context):
+          yield f"data: {json.dumps(chunk)}\n\n"
+      except Exception as e:
+        yield f"data: {json.dumps({'type': 'error', 'detail': str(e)})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+  except Exception as e:
+    raise HTTPException(status_code=502, detail=f"Stream Preview error: {str(e)}")
 
 
 @app.post("/api/nlp-apply-add", response_model=List[Event])
@@ -5795,7 +6086,8 @@ async def nlp_delete_preview(body: NaturalTextWithScope,
                               reasoning_effort=effort,
                               model_name=model_name,
                               session_id=gcal_session_id if use_google_context else None,
-                              context_confirmed=bool(body.context_confirmed)),
+                              context_confirmed=bool(body.context_confirmed),
+                              is_google=use_google_context),
     )
     if isinstance(data, dict):
       data["request_id"] = request_id
@@ -5852,7 +6144,8 @@ async def delete_events_from_natural_text(body: NaturalTextWithScope,
                                             reasoning_effort=effort,
                                             model_name=model_name,
                                             session_id=gcal_session_id if use_google_context else None,
-                                            context_confirmed=bool(body.context_confirmed)),
+                                            context_confirmed=bool(body.context_confirmed),
+                                            is_google=use_google_context),
     )
     if isinstance(ids_or_perm, dict) and ids_or_perm.get("permission_required"):
       return ids_or_perm

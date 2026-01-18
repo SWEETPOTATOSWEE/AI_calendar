@@ -587,7 +587,16 @@ export default function AiAssistantModal({
                               </div>
                             ) : (
                               <div className="w-full py-3 text-sm text-slate-700">
-                                <div className="space-y-2">{renderMarkdown(msg.text, `${msg.role}-${index}`)}</div>
+                                <div className="space-y-2">
+                                  {renderMarkdown(msg.text, `${msg.role}-${index}`)}
+                                  {index === assistant.conversation.length - 1 && assistant.loading && msg.text.trim() === "" && (
+                                    <div className="flex items-center gap-1">
+                                      <div className="size-1.5 animate-bounce rounded-full bg-slate-400 [animation-delay:-0.3s]" />
+                                      <div className="size-1.5 animate-bounce rounded-full bg-slate-400 [animation-delay:-0.15s]" />
+                                      <div className="size-1.5 animate-bounce rounded-full bg-slate-400" />
+                                    </div>
+                                  )}
+                                </div>
                               </div>
                             )}
                           </div>
@@ -819,22 +828,13 @@ export default function AiAssistantModal({
                     </div>
                   )}
                   {assistant.progressLabel && (
-                    <div className="flex items-center gap-2 text-[13px] font-medium text-gray-500">
-                      <span className="inline-flex size-6 items-center justify-center rounded-full bg-blue-100 text-primary">
-                        <Sparkles className="size-3.5" />
-                      </span>
-                      {isThinking ? (
-                        <span className="ai-thinking-text">
-                          생각중
-                          <span className="ai-thinking-dots">
-                            <span className="dot dot-1">.</span>
-                            <span className="dot dot-2">.</span>
-                            <span className="dot dot-3">.</span>
-                          </span>
-                        </span>
-                      ) : (
-                        assistant.progressLabel
-                      )}
+                    <div className="flex items-center py-1">
+                      <div 
+                        className="m4s" 
+                        data-text={assistant.progressLabel}
+                      >
+                        {assistant.progressLabel}
+                      </div>
                     </div>
                   )}
                 </>
@@ -1054,18 +1054,30 @@ export default function AiAssistantModal({
           .scrollbar-hidden::-webkit-scrollbar {
             display: none;
           }
-          .ai-thinking-dots {
-            display: inline-flex;
-            align-items: baseline;
-          }
-          .ai-thinking-dots .dot {
+          .m4s {
+            font-weight: 500;
+            font-size: 14px;
+            line-height: 1.1;
             display: inline-block;
+            background: linear-gradient(
+              90deg, 
+              rgba(0,0,0,0.55) 0%, 
+              rgba(0,0,0,0.55) 40%, 
+              rgba(0,0,0,0.9) 50%, 
+              rgba(0,0,0,0.55) 60%, 
+              rgba(0,0,0,0.55) 100%
+            );
+            background-size: 200% auto;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: m4s-shimmer 2.5s linear infinite;
           }
-          .ai-thinking-dots .dot-2 {
-            animation: ai-thinking-dot-2 1.2s steps(1, end) infinite;
+          @keyframes m4s-shimmer {
+            from { background-position: 200% center; }
+            to { background-position: 0% center; }
           }
-          .ai-thinking-dots .dot-3 {
-            animation: ai-thinking-dot-3 1.2s steps(1, end) infinite;
+          @media (prefers-reduced-motion: reduce) {
+            .m4s { animation: none; }
           }
         `}</style>
         </div>
