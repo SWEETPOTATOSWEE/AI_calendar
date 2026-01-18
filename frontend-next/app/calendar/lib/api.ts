@@ -2,6 +2,7 @@ import type { AuthStatus, CalendarEvent, EventPayload, RecurringEventPayload } f
 
 type NlpPreviewResponse = Record<string, unknown>;
 type NlpDeletePreviewResponse = Record<string, unknown>;
+type NlpClassifyResponse = { type?: string };
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "/api").replace(/\/$/, "");
 const BACKEND_BASE = (process.env.NEXT_PUBLIC_BACKEND_BASE || "").replace(/\/$/, "");
@@ -164,12 +165,21 @@ export const previewNlp = async (
   images?: string[],
   reasoning_effort?: string,
   model?: string,
-  request_id?: string
+  request_id?: string,
+  context_confirmed?: boolean
 ) => {
   const url = apiUrl("/nlp-preview");
   return fetchJson<NlpPreviewResponse>(url, {
     method: "POST",
-    body: JSON.stringify({ text, images, reasoning_effort, model, request_id }),
+    body: JSON.stringify({ text, images, reasoning_effort, model, request_id, context_confirmed }),
+  });
+};
+
+export const classifyNlp = async (text: string, has_images?: boolean, request_id?: string) => {
+  const url = apiUrl("/nlp-classify");
+  return fetchJson<NlpClassifyResponse>(url, {
+    method: "POST",
+    body: JSON.stringify({ text, has_images, request_id }),
   });
 };
 
@@ -188,12 +198,21 @@ export const previewNlpDelete = async (
   end_date: string,
   reasoning_effort?: string,
   model?: string,
-  request_id?: string
+  request_id?: string,
+  context_confirmed?: boolean
 ) => {
   const url = apiUrl("/nlp-delete-preview");
   return fetchJson<NlpDeletePreviewResponse>(url, {
     method: "POST",
-    body: JSON.stringify({ text, start_date, end_date, reasoning_effort, model, request_id }),
+    body: JSON.stringify({
+      text,
+      start_date,
+      end_date,
+      reasoning_effort,
+      model,
+      request_id,
+      context_confirmed,
+    }),
   });
 };
 

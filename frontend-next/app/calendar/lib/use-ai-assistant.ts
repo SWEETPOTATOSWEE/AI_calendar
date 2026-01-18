@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   applyNlpAdd,
+  classifyNlp,
   deleteEventsByIds,
   deleteGoogleEventById,
   interruptNlp,
@@ -14,6 +15,7 @@ import type { CalendarEvent, EventRecurrence } from "./types";
 
 type AiMode = "add" | "delete";
 type AiModel = "nano" | "mini";
+type NlpClassification = "add" | "delete" | "complex" | "garbage";
 
 export type AddPreviewItem = {
   type: "single" | "recurring";
@@ -47,6 +49,7 @@ type AddPreviewResponse = {
   content?: string;
   items?: AddPreviewItem[];
   context_used?: boolean;
+  permission_required?: boolean;
 };
 
 type DeletePreviewGroup = {
@@ -61,6 +64,7 @@ type DeletePreviewGroup = {
 
 type DeletePreviewResponse = {
   groups?: DeletePreviewGroup[];
+  permission_required?: boolean;
 };
 
 type Attachment = {
@@ -79,6 +83,19 @@ type ConversationMessage = {
   text: string;
   attachments?: Attachment[];
   includeInPrompt?: boolean;
+};
+
+const normalizeClassification = (value: unknown): NlpClassification => {
+  if (value === "add" || value === "delete" || value === "complex" || value === "garbage") {
+    return value;
+  }
+  if (typeof value === "string") {
+    const lowered = value.trim().toLowerCase();
+    if (lowered === "add" || lowered === "delete" || lowered === "complex" || lowered === "garbage") {
+      return lowered as NlpClassification;
+    }
+  }
+  return "garbage";
 };
 
 const pad2 = (value: number) => String(value).padStart(2, "0");
@@ -151,9 +168,14 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
     add: null,
     delete: null,
   });
+  const [permissionRequiredByMode, setPermissionRequiredByMode] = useState<Record<AiMode, boolean>>({
+    add: false,
+    delete: false,
+  });
   const loading = loadingByMode[mode] ?? false;
   const error = errorByMode[mode] ?? null;
   const progress = progressByMode[mode] ?? null;
+  const permissionRequired = permissionRequiredByMode[mode] ?? false;
   const [addPreview, setAddPreview] = useState<AddPreviewResponse | null>(null);
   const [deletePreview, setDeletePreview] = useState<DeletePreviewResponse | null>(null);
   const [selectedAddItems, setSelectedAddItems] = useState<Record<number, boolean>>({});
@@ -161,6 +183,10 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
   const requestIdRef = useRef<string | null>(null);
   const pendingUserTextRef = useRef<string | null>(null);
   const pendingModeRef = useRef<AiMode | null>(null);
+  const lastRequestParamsRef = useRef<{
+    payloadText: string;
+    attachmentSnapshot: { id: string; name: string; dataUrl: string }[];
+  } | null>(null);
 
   const makeRequestId = () =>
     `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -261,20 +287,21 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
     }));
   }, [mode]);
 
-  const preview = useCallback(async () => {
+  const preview = useCallback(async (contextConfirmed?: boolean) => {
     const trimmedText = text.trim();
-    if (!trimmedText && attachments.length === 0) {
+    if (!trimmedText && attachments.length === 0 && !contextConfirmed) {
       setErrorByMode((prev) => ({ ...prev, [mode]: "문장을 입력해주세요." }));
       return;
     }
     const requestId = makeRequestId();
-    const requestMode = mode;
-    const baseConversation = conversation;
+    let requestMode: AiMode = mode;
     requestIdRef.current = requestId;
     pendingModeRef.current = requestMode;
     setLoadingByMode((prev) => ({ ...prev, [requestMode]: true }));
     setProgressByMode((prev) => ({ ...prev, [requestMode]: "thinking" }));
     setErrorByMode((prev) => ({ ...prev, [requestMode]: null }));
+    setPermissionRequiredByMode((prev) => ({ ...prev, [requestMode]: false }));
+
     if (requestMode === "add") {
       setAddPreview(null);
     } else {
@@ -282,34 +309,131 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
     }
     const attachmentSnapshot = attachments.map((item) => ({ ...item }));
     const userMessage = trimmedText || (attachmentSnapshot.length > 0 ? "이미지 첨부" : "");
-    let nextConversation = baseConversation;
-    if (userMessage) {
-      nextConversation = trimConversation([
-        ...baseConversation,
-        {
-          role: "user",
+    const pendingMessage = !contextConfirmed && userMessage
+      ? {
+          role: "user" as const,
           text: userMessage,
           includeInPrompt: true,
           attachments: attachmentSnapshot.length > 0 ? attachmentSnapshot : undefined,
-        },
-      ]);
+        }
+      : null;
+    let nextConversation = conversation;
+    if (pendingMessage) {
+      nextConversation = trimConversation([...conversation, pendingMessage]);
       setConversationByMode((prev) => ({ ...prev, [requestMode]: nextConversation }));
       pendingUserTextRef.current = userMessage;
     }
-    setTextByMode((prev) => ({ ...prev, [requestMode]: "" }));
-    setAttachmentsByMode((prev) => ({ ...prev, [requestMode]: [] }));
-    const payloadText = buildConversationText(nextConversation) || trimmedText;
+
+    if (!contextConfirmed) {
+      setTextByMode((prev) => ({ ...prev, [requestMode]: "" }));
+      setAttachmentsByMode((prev) => ({ ...prev, [requestMode]: [] }));
+    }
+
+    const payloadText = contextConfirmed && lastRequestParamsRef.current
+      ? lastRequestParamsRef.current.payloadText
+      : (buildConversationText(nextConversation) || trimmedText);
+
+    const attachmentsToUse = contextConfirmed && lastRequestParamsRef.current
+      ? lastRequestParamsRef.current.attachmentSnapshot
+      : attachmentSnapshot;
+
+    lastRequestParamsRef.current = { payloadText, attachmentSnapshot: attachmentsToUse };
+
+    const resolveDeleteRange = () => {
+      if (startDate && endDate) return { start: startDate, end: endDate };
+      const today = new Date();
+      const fallbackStart = toLocalISODate(today);
+      const fallbackEnd = toLocalISODate(addMonths(today, 3));
+      setStartDate(fallbackStart);
+      setEndDate(fallbackEnd);
+      return { start: fallbackStart, end: fallbackEnd };
+    };
     try {
+      let classification: NlpClassification = "add";
+      if (!contextConfirmed) {
+        const classifyResponse = await classifyNlp(payloadText, attachmentsToUse.length > 0, requestId);
+        if (requestIdRef.current !== requestId) return;
+        classification = normalizeClassification(classifyResponse?.type);
+        const excludePendingMessage = () => {
+          if (!userMessage) return;
+          setConversationByMode((prev) => {
+            const current = prev[requestMode] ?? [];
+            const next = [...current];
+            for (let i = next.length - 1; i >= 0; i -= 1) {
+              const msg = next[i];
+              if (msg.role === "user" && msg.text === userMessage) {
+                next[i] = { ...msg, includeInPrompt: false };
+                break;
+              }
+            }
+            return { ...prev, [requestMode]: trimConversation(next) };
+          });
+        };
+
+        if (classification === "complex") {
+          setAddPreview(null);
+          setDeletePreview(null);
+          setSelectedAddItems({});
+          setSelectedDeleteGroups({});
+          excludePendingMessage();
+          setErrorByMode((prev) => ({ ...prev, [requestMode]: "일정 추가와 일정 삭제는 동시에 할 수 없습니다." }));
+          return;
+        }
+        if (classification === "garbage") {
+          setAddPreview(null);
+          setDeletePreview(null);
+          setSelectedAddItems({});
+          setSelectedDeleteGroups({});
+          excludePendingMessage();
+          setErrorByMode((prev) => ({ ...prev, [requestMode]: "일정 추가, 삭제와 관련된 것만 작성해주세요." }));
+          return;
+        }
+        requestMode = classification === "delete" ? "delete" : "add";
+        if (requestMode !== mode) {
+          setMode(requestMode);
+          pendingModeRef.current = requestMode;
+          if (pendingMessage) {
+            setConversationByMode((prev) => {
+              const fromList = prev[mode] ?? [];
+              const toList = prev[requestMode] ?? [];
+              const nextFrom = [...fromList];
+              for (let i = nextFrom.length - 1; i >= 0; i -= 1) {
+                const msg = nextFrom[i];
+                if (msg.role === "user" && msg.text === userMessage) {
+                  nextFrom.splice(i, 1);
+                  break;
+                }
+              }
+              return {
+                ...prev,
+                [mode]: nextFrom,
+                [requestMode]: trimConversation([...toList, pendingMessage]),
+              };
+            });
+          }
+          setLoadingByMode((prev) => ({ ...prev, [mode]: false, [requestMode]: true }));
+          setProgressByMode((prev) => ({ ...prev, [mode]: null, [requestMode]: "thinking" }));
+          setErrorByMode((prev) => ({ ...prev, [requestMode]: null }));
+        }
+      }
+
       if (requestMode === "add") {
         const response = await previewNlp(
           payloadText,
-          attachmentSnapshot.map((item) => item.dataUrl),
+          attachmentsToUse.map((item) => item.dataUrl),
           reasoningEffort,
           model,
-          requestId
+          requestId,
+          contextConfirmed
         );
         if (requestIdRef.current !== requestId) return;
         const data = response as AddPreviewResponse;
+        if (data.permission_required) {
+          setPermissionRequiredByMode((prev) => ({ ...prev, [requestMode]: true }));
+          return;
+        }
+        setPermissionRequiredByMode((prev) => ({ ...prev, [requestMode]: false }));
+
         if (data.context_used) {
           setProgressByMode((prev) => ({ ...prev, [requestMode]: "context" }));
           await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -336,7 +460,8 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
           );
         }
       } else {
-        if (!startDate || !endDate) {
+        const range = resolveDeleteRange();
+        if (!range.start || !range.end) {
           setErrorByMode((prev) => ({ ...prev, [requestMode]: "삭제 범위를 선택해주세요." }));
           setLoadingByMode((prev) => ({ ...prev, [requestMode]: false }));
           setProgressByMode((prev) => ({ ...prev, [requestMode]: null }));
@@ -344,14 +469,21 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
         }
         const response = await previewNlpDelete(
           payloadText,
-          startDate,
-          endDate,
+          range.start,
+          range.end,
           reasoningEffort,
           model,
-          requestId
+          requestId,
+          contextConfirmed
         );
         if (requestIdRef.current !== requestId) return;
         const data = response as DeletePreviewResponse;
+        if (data.permission_required) {
+          setPermissionRequiredByMode((prev) => ({ ...prev, [requestMode]: true }));
+          return;
+        }
+        setPermissionRequiredByMode((prev) => ({ ...prev, [requestMode]: false }));
+
         setDeletePreview(data);
         const groups = data.groups || [];
         const selection: Record<string, boolean> = {};
@@ -372,6 +504,10 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
       }
     } catch (err) {
       if (requestIdRef.current !== requestId) return;
+      setAddPreview(null);
+      setDeletePreview(null);
+      setSelectedAddItems({});
+      setSelectedDeleteGroups({});
       const message = err instanceof Error ? err.message : "AI 요청에 실패했습니다.";
       setErrorByMode((prev) => ({ ...prev, [requestMode]: message }));
     } finally {
@@ -382,7 +518,9 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
         setLoadingByMode((prev) => ({ ...prev, [requestMode]: false }));
         setProgressByMode((prev) => ({ ...prev, [requestMode]: null }));
       }
-      setTextByMode((prev) => ({ ...prev, [requestMode]: "" }));
+      if (!contextConfirmed) {
+        setTextByMode((prev) => ({ ...prev, [requestMode]: "" }));
+      }
     }
   }, [
     mode,
@@ -395,6 +533,15 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
     conversation,
     appendConversationForMode,
   ]);
+
+  const confirmPermission = useCallback(() => {
+    preview(true);
+  }, [preview]);
+
+  const denyPermission = useCallback(() => {
+    setPermissionRequiredByMode((prev) => ({ ...prev, [mode]: false }));
+    setErrorByMode((prev) => ({ ...prev, [mode]: "일정 정보를 읽지 않으면 정확한 결과를 제공하기 어렵습니다." }));
+  }, [mode]);
 
   const updateAddPreviewItem = useCallback((index: number, patch: Partial<AddPreviewItem>) => {
     setAddPreview((prev) => {
@@ -510,6 +657,9 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
     loading,
     progressLabel,
     error,
+    permissionRequired,
+    confirmPermission,
+    denyPermission,
     addPreview: activeAddPreview,
     deletePreview: activeDeletePreview,
     selectedAddItems,

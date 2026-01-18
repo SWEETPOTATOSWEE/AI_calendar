@@ -2018,46 +2018,8 @@ function CalendarPageInner() {
             <div className="flex items-center justify-between px-3 pt-3">
               {ai.open ? (
                 <div className="flex items-center gap-4">
-                  <div
-                    className="relative flex items-center rounded-full bg-gray-100 p-0.5 segmented-toggle"
-                    style={
-                      {
-                        "--seg-count": "2",
-                        "--seg-index": ai.mode === "add" ? "0" : "1",
-                        "--seg-inset": "0.125rem",
-                        "--seg-pad": "0.25rem",
-                      } as CSSProperties
-                    }
-                  >
-                    <span className="segmented-indicator">
-                      <span className="view-indicator-pulse block h-full w-full rounded-full bg-white shadow-sm" />
-                    </span>
-                    <button
-                      type="button"
-                      aria-label="추가 모드"
-                      aria-pressed={ai.mode === "add"}
-                      className={`relative z-10 flex size-8 items-center justify-center rounded-full text-[11px] font-semibold transition-colors ${
-                        ai.mode === "add" ? "text-slate-900" : "text-slate-500 hover:text-slate-900"
-                      }`}
-                      onClick={() => ai.setMode("add")}
-                    >
-                      <Plus className="size-4" />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="삭제 모드"
-                      aria-pressed={ai.mode === "delete"}
-                      className={`relative z-10 flex size-8 items-center justify-center rounded-full text-[11px] font-semibold transition-colors ${
-                        ai.mode === "delete" ? "text-slate-900" : "text-slate-500 hover:text-slate-900"
-                      }`}
-                      onClick={() => ai.setMode("delete")}
-                    >
-                      <Trash2 className="size-4" />
-                    </button>
-                  </div>
-                  <div className="h-6 w-px bg-gray-200 mx-1" />
                   <button
-                    className="size-9 rounded-full flex items-center justify-center bg-gray-100 text-slate-500 hover:text-primary"
+                    className="size-9 rounded-full flex items-center justify-center bg-[#E5E7EB] text-slate-500 hover:text-primary"
                     type="button"
                     onClick={ai.resetConversation}
                     aria-label="대화 초기화"

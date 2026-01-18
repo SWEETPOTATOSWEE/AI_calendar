@@ -62,8 +62,8 @@ const addDays = (date: Date, days: number) => {
   return next;
 };
 const PLACEHOLDER_TEXT = {
-  add: "어떤 일정을 추가할까요?",
-  delete: "어떤 일정을 삭제할까요?",
+  add: "추가/삭제할 일정을 입력하세요.",
+  delete: "추가/삭제할 일정을 입력하세요.",
 } as const;
 const INPUT_ACTIONS = [{ type: "image", label: "이미지 추가" }] as const;
 
@@ -349,7 +349,10 @@ export default function AiAssistantModal({
   const rangeButtonRef = useRef<HTMLButtonElement | null>(null);
   const rangePopoverRef = useRef<HTMLDivElement | null>(null);
   const isThinking = assistant.progressLabel === "생각 중";
-  const hasPanels = Boolean(view.addPreview || view.deletePreview || assistant.progressLabel || view.error);
+  const hasAddPreview = addItems.length > 0;
+  const hasDeletePreview = deleteGroups.length > 0;
+  const hasPreview = hasAddPreview || hasDeletePreview;
+  const hasPanels = Boolean(hasPreview || assistant.progressLabel || view.error);
   const showConversation = conversation.length > 0 || hasPanels;
   const handleStartDateChange = (nextStart: string) => {
     assistant.setStartDate(nextStart);
@@ -497,56 +500,8 @@ export default function AiAssistantModal({
             }`}
           >
             <div className="flex items-center gap-4">
-              <div
-                className="relative flex items-center rounded-full bg-gray-100 p-0.5 segmented-toggle"
-                style={
-                  {
-                    "--seg-count": "2",
-                    "--seg-index": view.mode === "add" ? "0" : "1",
-                    "--seg-inset": "0.125rem",
-                    "--seg-pad": "0.25rem",
-                  } as CSSProperties
-                }
-              >
-                <span className="segmented-indicator">
-                  <span className="view-indicator-pulse block h-full w-full rounded-full bg-white shadow-sm" />
-                </span>
-                <button
-                  type="button"
-                  aria-label="추가 모드"
-                  aria-pressed={view.mode === "add"}
-                  className={`relative z-10 group flex size-8 items-center justify-center rounded-full text-[11px] font-semibold transition-colors ${
-                    view.mode === "add"
-                      ? "text-slate-900"
-                      : "text-slate-500 hover:text-slate-900"
-                  }`}
-                  onClick={() => assistant.setMode("add")}
-                >
-                  <Plus className="size-4" />
-                  <span className={tooltipClass}>
-                    일정 추가 모드
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  aria-label="삭제 모드"
-                  aria-pressed={view.mode === "delete"}
-                  className={`relative z-10 group flex size-8 items-center justify-center rounded-full text-[11px] font-semibold transition-colors ${
-                    view.mode === "delete"
-                      ? "text-slate-900"
-                      : "text-slate-500 hover:text-slate-900"
-                  }`}
-                  onClick={() => assistant.setMode("delete")}
-                >
-                  <Trash2 className="size-4" />
-                  <span className={tooltipClass}>
-                    일정 삭제 모드
-                  </span>
-                </button>
-              </div>
-              <div className="h-6 w-px bg-gray-200 mx-1" />
               <button
-                className="relative group size-9 rounded-full flex items-center justify-center bg-gray-100 text-slate-500 hover:text-primary"
+                className="relative group size-9 rounded-full flex items-center justify-center !bg-[#E5E7EB] text-slate-500 hover:text-primary"
                 type="button"
                 onClick={assistant.resetConversation}
                 aria-label="대화 초기화"
@@ -626,33 +581,62 @@ export default function AiAssistantModal({
                                 ))}
                               </div>
                             )}
-                            <div
-                              className={`max-w-[70%] rounded-2xl px-4 py-3 text-sm shadow-sm ${
-                                msg.role === "user"
-                                  ? "bg-primary text-white"
-                                  : "bg-white border border-gray-100 text-slate-700"
-                              }`}
-                            >
-                              {msg.role === "assistant" ? (
-                                <div className="space-y-2">{renderMarkdown(msg.text, `${msg.role}-${index}`)}</div>
-                              ) : (
+                            {msg.role === "user" ? (
+                              <div className="max-w-[70%] rounded-lg bg-gray-200 px-4 py-3 text-sm text-slate-800">
                                 <p className="whitespace-pre-line">{msg.text}</p>
-                              )}
-                            </div>
+                              </div>
+                            ) : (
+                              <div className="w-full py-3 text-sm text-slate-700">
+                                <div className="space-y-2">{renderMarkdown(msg.text, `${msg.role}-${index}`)}</div>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
                     );
                   })}
-                  {(view.addPreview || view.deletePreview || view.error) && (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
-                        <span className="inline-flex size-6 items-center justify-center rounded-full bg-blue-100 text-primary">
-                          <Sparkles className="size-3.5" />
-                        </span>
-                        <span>AI가 제안한 일정</span>
+                  {assistant.permissionRequired && (
+                    <div className="space-y-4 rounded-xl border border-blue-100 bg-blue-50/50 p-4">
+                      <div className="flex gap-3">
+                        <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-blue-100 text-blue-600">
+                          <Calendar className="size-4" />
+                        </div>
+                        <div className="flex-1 space-y-1">
+                          <p className="text-sm font-semibold text-slate-900">
+                            일정 정보를 읽어야 합니다
+                          </p>
+                          <p className="text-sm text-slate-600 leading-relaxed">
+                            사용자의 일정을 파악하여 정확한 제안을 드리기 위해 캘린더 정보를 읽어야 합니다. 허락하시겠습니까?
+                          </p>
+                        </div>
                       </div>
-                      {view.error && <p className="text-xs text-red-500">{view.error}</p>}
+                      <div className="flex gap-2 justify-end">
+                        <button
+                          onClick={assistant.denyPermission}
+                          className="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-white/50 transition-colors"
+                        >
+                          거절
+                        </button>
+                        <button
+                          onClick={assistant.confirmPermission}
+                          className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-sm"
+                        >
+                          허락
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {(hasPreview || view.error) && (
+                    <div className="space-y-2">
+                      {hasPreview && (
+                        <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
+                          <span className="inline-flex size-6 items-center justify-center rounded-full bg-blue-100 text-primary">
+                            <Sparkles className="size-3.5" />
+                          </span>
+                          <span>AI가 제안한 일정</span>
+                        </div>
+                      )}
+                      {view.error && !hasPreview && <p className="text-xs text-red-500">{view.error}</p>}
                       {view.mode === "add" && addItems.length > 0 && (
                         <div className="space-y-2">
                           <p className="text-xs font-semibold text-slate-500">다음 일정이 감지되었습니다.</p>
@@ -661,7 +645,7 @@ export default function AiAssistantModal({
                             return (
                               <div
                                 key={`add-item-${index}`}
-                                className={`relative flex items-center justify-between gap-4 overflow-hidden rounded-xl border p-3 pl-5 pr-5 transition-colors ${
+                                className={`relative flex items-center justify-between gap-4 overflow-hidden rounded-lg border p-3 pl-5 pr-5 transition-colors ${
                                   isSelected
                                     ? "border-blue-200 bg-blue-50/70"
                                     : "border-gray-100 bg-slate-50/70 text-slate-400"
@@ -773,7 +757,7 @@ export default function AiAssistantModal({
                           {deleteGroups.map((group) => (
                             <label
                               key={group.group_key}
-                              className="flex items-start justify-between gap-3 rounded-xl border border-gray-100 bg-slate-50 p-3"
+                              className="flex items-start justify-between gap-3 rounded-lg border border-gray-100 bg-slate-50 p-3"
                             >
                               <div className="flex-1">
                                 <p className="text-sm font-semibold text-slate-900">{group.title}</p>
@@ -801,7 +785,7 @@ export default function AiAssistantModal({
                           ))}
                         </div>
                       )}
-                      {(view.mode === "add" || view.mode === "delete") && (
+                      {(hasAddPreview || hasDeletePreview) && (
                         <div className="flex justify-end pt-2">
                           <button
                             className={`px-4 py-2 rounded-full text-[14px] font-semibold transition-colors ${

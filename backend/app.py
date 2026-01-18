@@ -252,6 +252,13 @@ class NaturalText(BaseModel):
   request_id: Optional[str] = None
   reasoning_effort: Optional[str] = None
   model: Optional[str] = None
+  context_confirmed: Optional[bool] = None
+
+
+class NlpClassifyRequest(BaseModel):
+  text: str
+  has_images: Optional[bool] = None
+  request_id: Optional[str] = None
 
 
 class NaturalTextWithScope(BaseModel):
@@ -262,6 +269,7 @@ class NaturalTextWithScope(BaseModel):
   request_id: Optional[str] = None
   reasoning_effort: Optional[str] = None
   model: Optional[str] = None
+  context_confirmed: Optional[bool] = None
 
 
 class DeleteResult(BaseModel):
@@ -1055,6 +1063,26 @@ def is_google_mode_active(request: Request, has_token: Optional[bool] = None) ->
 # -------------------------
 # LLM 프롬프트
 # -------------------------
+REQUEST_CLASSIFY_PROMPT = """너는 일정 요청 분류기다. 반드시 JSON 한 개만 반환한다. 설명 금지.
+입력 형식:
+{
+  "request": string,
+  "has_images": boolean
+}
+
+출력 스키마:
+{
+  "type": "add" | "delete" | "complex" | "garbage"
+}
+
+규칙:
+1. add: 일정 추가/생성/등록/예약/미팅 잡기/일정 넣기 등 추가 요청만 포함.
+2. delete: 일정 삭제/취소/제거/빼기/없애기 등 삭제 요청만 포함.
+3. complex: 추가와 삭제가 함께 있거나 둘 다 명확히 요구됨.
+4. garbage: 일정 추가/삭제와 무관, 의미 불명, 또는 수정/조회/이동/변경처럼 추가·삭제가 아닌 요청.
+5. 판단이 모호하면 garbage.
+"""
+
 EVENTS_SYSTEM_PROMPT_TEMPLATE = """너는 한국어 일정 문장을 구조화하는 파서다. 반드시 JSON 한 개만 반환한다. 설명 금지.
 기준 정보:
 - 기준 날짜: {TODAY}
@@ -1437,6 +1465,29 @@ def _build_events_user_payload(text: str,
   if has_images:
     lines.append("첨부 이미지를 참고해서 일정 정보를 추출해줘.")
   return "\n".join(lines)
+
+
+async def classify_nlp_request(text: str,
+                               has_images: bool = False,
+                               model_name: Optional[str] = None) -> str:
+  if async_client is None:
+    raise HTTPException(
+        status_code=500,
+        detail="LLM client is not configured (OPENAI_API_KEY 미설정)")
+
+  payload = {
+      "request": normalize_text(text),
+      "has_images": bool(has_images),
+  }
+  data = await _chat_json("classify",
+                          REQUEST_CLASSIFY_PROMPT,
+                          json.dumps(payload, ensure_ascii=False),
+                          reasoning_effort="low",
+                          model_name=model_name or "gpt-5-nano")
+  value = (data.get("type") or "").strip().lower()
+  if value not in ("add", "delete", "complex", "garbage"):
+    return "garbage"
+  return value
 
 
 def _sanitize_reasoning_effort(value: Optional[str]) -> Optional[str]:
@@ -2080,7 +2131,8 @@ async def _invoke_event_parser(kind: str,
                                reasoning_effort: Optional[str] = None,
                                model_name: Optional[str] = None,
                                context_cache_key: Optional[str] = None,
-                               context_session_id: Optional[str] = None
+                               context_session_id: Optional[str] = None,
+                               context_confirmed: bool = False
                                ) -> Dict[str, Any]:
   payload = _build_events_user_payload(text, bool(images))
   cached_context = _get_context_cache(context_cache_key)
@@ -2123,6 +2175,14 @@ async def _invoke_event_parser(kind: str,
     if isinstance(data, dict):
       data["context_used"] = False
     return data
+
+  # 유저 허락 단계 추가
+  if not context_confirmed:
+    return {
+        "permission_required": True,
+        "needs_context": True,
+        "context_used": False,
+    }
 
   context = _build_events_context(scopes, session_id=context_session_id)
   _set_context_cache(context_cache_key, context)
@@ -4155,7 +4215,8 @@ async def preview_events_from_natural_text_core(
     reasoning_effort: Optional[str] = None,
     model_name: Optional[str] = None,
     context_cache_key: Optional[str] = None,
-    context_session_id: Optional[str] = None) -> Dict[str, Any]:
+    context_session_id: Optional[str] = None,
+    context_confirmed: bool = False) -> Dict[str, Any]:
   images = images or []
   t = normalize_text(text)
   if not t and not images:
@@ -4172,7 +4233,11 @@ async def preview_events_from_natural_text_core(
                                     reasoning_effort,
                                     model_name=model_name,
                                     context_cache_key=context_cache_key,
-                                    context_session_id=context_session_id)
+                                    context_session_id=context_session_id,
+                                    context_confirmed=context_confirmed)
+  if data.get("permission_required"):
+    return data
+
   context_used = _parse_bool(data.get("context_used"))
   if _parse_bool(data.get("need_more_information")):
     content = (data.get("content") or "").strip()
@@ -4514,9 +4579,18 @@ async def create_delete_ids_from_natural_text(
     reasoning_effort: Optional[str] = None,
     model_name: Optional[str] = None,
     session_id: Optional[str] = None,
-) -> List[Union[int, str]]:
+    context_confirmed: bool = False
+) -> Union[List[Union[int, str]], Dict[str, Any]]:
   if async_client is None:
     return []
+
+  # 삭제 시에도 컨텍스트(기존 일정) 로드 전 허락 확인
+  if not context_confirmed:
+    return {
+        "permission_required": True,
+        "needs_context": True,
+        "context_used": False,
+    }
 
   if session_id and scope:
     google_items = fetch_google_events_between(scope[0], scope[1], session_id)
@@ -4661,17 +4735,23 @@ async def delete_preview_groups(text: str,
                                 scope: Optional[Tuple[date, date]] = None,
                                 reasoning_effort: Optional[str] = None,
                                 model_name: Optional[str] = None,
-                                session_id: Optional[str] = None
+                                session_id: Optional[str] = None,
+                                context_confirmed: bool = False
                                 ) -> Dict[str, Any]:
   text = normalize_text(text)
   if not text:
     return {"groups": []}
 
-  ids = await create_delete_ids_from_natural_text(text,
+  ids_or_perm = await create_delete_ids_from_natural_text(text,
                                                   scope=scope,
                                                   reasoning_effort=reasoning_effort,
                                                   model_name=model_name,
-                                                  session_id=session_id)
+                                                  session_id=session_id,
+                                                  context_confirmed=context_confirmed)
+  if isinstance(ids_or_perm, dict) and ids_or_perm.get("permission_required"):
+    return ids_or_perm
+
+  ids = ids_or_perm if isinstance(ids_or_perm, list) else []
   if not ids:
     return {"groups": []}
 
@@ -4999,7 +5079,7 @@ async def google_stream(request: Request):
 # -------------------------
 @app.get("/admin")
 def enter_admin():
-  resp = RedirectResponse("/calendar")
+  resp = RedirectResponse(_frontend_url("/calendar"))
   resp.set_cookie(ADMIN_COOKIE_NAME,
                   ADMIN_COOKIE_VALUE,
                   httponly=True,
@@ -5009,7 +5089,7 @@ def enter_admin():
 
 @app.get("/admin/exit")
 def exit_admin():
-  resp = RedirectResponse("/")
+  resp = RedirectResponse(_frontend_url("/"))
   resp.delete_cookie(ADMIN_COOKIE_NAME)
   return resp
 
@@ -5021,7 +5101,7 @@ def logout(request: Request):
     _clear_watches_for_session(session_id)
   clear_gcal_token_for_session(session_id)
   _clear_google_cache(session_id)
-  resp = RedirectResponse("/")
+  resp = RedirectResponse(_frontend_url("/"))
   resp.delete_cookie(ADMIN_COOKIE_NAME, path="/")
   _delete_cookie(resp, SESSION_COOKIE_NAME)
   _delete_cookie(resp, OAUTH_STATE_COOKIE_NAME)
@@ -5630,6 +5710,25 @@ async def create_event_from_natural_text_compat(body: NaturalText,
                         detail=f"Natural language error: {str(e)}")
 
 
+@app.post("/api/nlp-classify")
+async def nlp_classify(body: NlpClassifyRequest,
+                       request: Request,
+                       response: Response):
+  try:
+    session_id = _ensure_session_id(request, response)
+    request_id = _resolve_request_id(body.request_id)
+    result = await _run_with_interrupt(
+        session_id,
+        request_id,
+        classify_nlp_request(body.text, bool(body.has_images)))
+    return {"type": result}
+  except HTTPException:
+    raise
+  except Exception as e:
+    raise HTTPException(status_code=502,
+                        detail=f"Classify NLP error: {str(e)}")
+
+
 @app.post("/api/nlp-preview")
 async def nlp_preview(body: NaturalText, request: Request, response: Response):
   try:
@@ -5650,7 +5749,8 @@ async def nlp_preview(body: NaturalText, request: Request, response: Response):
                                               effort,
                                               model_name=model_name,
                                               context_cache_key=cache_key,
-                                              context_session_id=gcal_session_id if use_google_context else None),
+                                              context_session_id=gcal_session_id if use_google_context else None,
+                                              context_confirmed=bool(body.context_confirmed)),
     )
     if isinstance(data, dict):
       data["request_id"] = request_id
@@ -5694,7 +5794,8 @@ async def nlp_delete_preview(body: NaturalTextWithScope,
                               scope=scope,
                               reasoning_effort=effort,
                               model_name=model_name,
-                              session_id=gcal_session_id if use_google_context else None),
+                              session_id=gcal_session_id if use_google_context else None,
+                              context_confirmed=bool(body.context_confirmed)),
     )
     if isinstance(data, dict):
       data["request_id"] = request_id
@@ -5743,15 +5844,20 @@ async def delete_events_from_natural_text(body: NaturalTextWithScope,
     model_name = _resolve_request_model(request, body.model)
     use_google_context = is_google_mode_active(request)
     gcal_session_id = get_google_session_id(request)
-    ids = await _run_with_interrupt(
+    ids_or_perm = await _run_with_interrupt(
         session_id,
         request_id,
         create_delete_ids_from_natural_text(body.text,
                                             scope=scope,
                                             reasoning_effort=effort,
                                             model_name=model_name,
-                                            session_id=gcal_session_id if use_google_context else None),
+                                            session_id=gcal_session_id if use_google_context else None,
+                                            context_confirmed=bool(body.context_confirmed)),
     )
+    if isinstance(ids_or_perm, dict) and ids_or_perm.get("permission_required"):
+      return ids_or_perm
+    ids = ids_or_perm if isinstance(ids_or_perm, list) else []
+
     if use_google_context and gcal_session_id:
       deleted: List[Union[int, str]] = []
       for raw_id in ids:
@@ -5803,7 +5909,7 @@ def build_header_actions(request: Request, has_token: bool) -> str:
 def start_page(request: Request):
   # Redirect to calendar only when a login token is present.
   if load_gcal_token_for_request(request) is not None:
-    return RedirectResponse("/calendar")
+    return RedirectResponse(_frontend_url("/calendar"))
 
   # 그 외: 시작 페이지
   return START_HTML
@@ -5814,7 +5920,7 @@ def calendar_page(request: Request):
   # 접근 조건: admin or (gcal 비활성) or (token 있음)
   if not is_admin(request) and ENABLE_GCAL and load_gcal_token_for_request(
       request) is None:
-    return RedirectResponse("/")
+    return RedirectResponse(_frontend_url("/"))
 
   token_present = load_gcal_token_for_request(request) is not None
   admin_mode = is_admin(request)
@@ -5867,14 +5973,14 @@ def calendar_page(request: Request):
 def settings_page(request: Request):
   if not is_admin(request) and ENABLE_GCAL and load_gcal_token_for_request(
       request) is None:
-    return RedirectResponse("/")
+    return RedirectResponse(_frontend_url("/"))
   return HTMLResponse(SETTINGS_HTML)
 
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
   if load_gcal_token_for_request(request) is not None:
-    return RedirectResponse("/calendar")
+    return RedirectResponse(_frontend_url("/calendar"))
   return HTMLResponse(LOGIN_HTML)
 
 

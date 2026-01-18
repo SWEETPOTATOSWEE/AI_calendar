@@ -18,11 +18,13 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 echo "Starting backend on ${BACKEND_HOST}:${BACKEND_PORT}..."
-HOST="${BACKEND_HOST}" PORT="${BACKEND_PORT}" "${ROOT_DIR}/scripts/restart-backend.sh" &
+HOST="${BACKEND_HOST}" PORT="${BACKEND_PORT}" \
+  FRONTEND_BASE_URL="http://localhost:${FRONTEND_PORT}" \
+  "${ROOT_DIR}/scripts/restart-backend.sh" &
 BACKEND_PID=$!
 
 echo "Starting frontend on ${FRONTEND_HOST}:${FRONTEND_PORT}..."
 HOST="${FRONTEND_HOST}" PORT="${FRONTEND_PORT}" \
-  NEXT_PUBLIC_BACKEND_BASE="${BACKEND_PUBLIC_BASE}" \
-  NEXT_PUBLIC_API_BASE="${BACKEND_PUBLIC_BASE}/api" \
+  NEXT_PUBLIC_BACKEND_BASE="" \
+  NEXT_PUBLIC_API_BASE="/api" \
   "${ROOT_DIR}/scripts/restart-frontend.sh"
