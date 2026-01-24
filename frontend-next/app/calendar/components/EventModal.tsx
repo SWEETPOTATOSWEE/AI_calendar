@@ -391,7 +391,7 @@ const CustomSelect = <T extends string | number>({
       <button
         type="button"
         className={`inline-flex items-center justify-start gap-2 rounded-lg border border-transparent bg-transparent text-left focus:outline-none focus:ring-0 ${
-          disabled ? "text-slate-400" : "text-[#111827]"
+          disabled ? "text-text-tertiary" : "text-text-primary"
         } px-3 py-2 text-[15px] font-medium ${buttonClassName ?? ""}`}
         onClick={() => {
           if (open) {
@@ -409,7 +409,7 @@ const CustomSelect = <T extends string | number>({
         aria-haspopup="listbox"
       >
         <span className="truncate text-left">{selected?.label ?? ""}</span>
-        <ChevronsUpDown className={`size-4 text-slate-400 ${iconClassName ?? ""}`} />
+        <ChevronsUpDown className={`size-4 text-text-tertiary ${iconClassName ?? ""}`} />
       </button>
       {open && !disabled && (
         <div
@@ -419,7 +419,7 @@ const CustomSelect = <T extends string | number>({
         >
           <div
             ref={menuRef}
-            className={`min-w-full overflow-hidden popover-surface popover-animate border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-[#111418] ${
+            className={`min-w-full overflow-hidden popover-surface popover-animate border border-border-subtle bg-bg-canvas shadow-lg ${
               closing ? "is-closing" : ""
             } ${menuClassName ?? ""}`}
             role="listbox"
@@ -434,8 +434,8 @@ const CustomSelect = <T extends string | number>({
                 <button
                   key={String(option.value)}
                   type="button"
-                  className={`flex w-full justify-start rounded-md px-3 py-2 text-[15px] text-left transition-colors hover:bg-gray-50 dark:hover:bg-[#1a2632] ${
-                    active ? "font-semibold text-[#2563EB]" : "font-medium text-[#111827]"
+                  className={`flex w-full justify-start rounded-md px-3 py-2 text-[15px] text-left transition-colors hover:bg-bg-subtle ${
+                    active ? "font-semibold text-text-brand" : "font-medium text-text-primary"
                   } ${optionClassName ?? ""}`}
                     onClick={() => {
                       onChange(option.value);
@@ -631,7 +631,7 @@ export const DatePopover = ({
     <div ref={wrapperRef} className="relative flex-none">
       <button
         type="button"
-        className="flex items-center justify-center gap-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#0f141a] px-3 py-1 text-[15px] font-medium text-[#111827] disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
+        className="flex items-center justify-center gap-2 rounded-lg border border-border-subtle bg-bg-canvas px-3 py-1 text-[15px] font-medium text-text-primary disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
         onClick={(event) => {
           if (open) {
             if (disableAnimation) {
@@ -662,7 +662,7 @@ export const DatePopover = ({
         aria-haspopup="dialog"
         aria-expanded={open}
       >
-        <span className={value ? "" : "text-[#9CA3AF]"}>{value || placeholder}</span>
+        <span className={value ? "" : "text-text-tertiary"}>{value || placeholder}</span>
       </button>
       {open &&
         !disabled &&
@@ -670,7 +670,7 @@ export const DatePopover = ({
         createPortal(
           <div
             ref={popoverRef}
-            className={`fixed z-[9999] w-72 overflow-hidden popover-surface border border-gray-100 dark:border-gray-700 bg-white dark:bg-[#111418] p-4 shadow-lg ${
+            className={`fixed z-[9999] w-72 overflow-hidden popover-surface border border-border-subtle bg-bg-canvas p-4 shadow-lg ${
               !disableAnimation && (ready || closing) ? "popover-animate" : ""
             } ${!disableAnimation && closing ? "is-closing" : ""}`}
             style={{
@@ -687,7 +687,7 @@ export const DatePopover = ({
             <div className="flex items-center">
               <button
                 type="button"
-                className="flex h-7 items-center justify-center gap-0.5 pr-1 text-sm font-semibold text-[#111827] hover:text-blue-600 cursor-pointer"
+                className="flex h-7 items-center justify-center gap-0.5 pr-1 text-sm font-semibold text-text-primary hover:text-text-brand cursor-pointer"
                 onClick={() => setScrollMode((prev) => !prev)}
                 aria-label="월/년도 이동"
               >
@@ -698,7 +698,7 @@ export const DatePopover = ({
             <div className="flex items-center gap-1">
               <button
                 type="button"
-                className="flex size-7 items-center justify-center rounded-full border border-gray-200 text-slate-500 hover:border-blue-200 hover:text-blue-600 cursor-pointer"
+                className="flex size-7 items-center justify-center rounded-full border border-border-subtle text-text-secondary hover:border-border-brand hover:text-text-brand cursor-pointer"
                 onClick={() => setViewDate((prev) => addMonths(prev, -1))}
                 aria-label="이전 달"
               >
@@ -706,7 +706,7 @@ export const DatePopover = ({
               </button>
               <button
                 type="button"
-                className="flex size-7 items-center justify-center rounded-full border border-gray-200 text-slate-500 hover:border-blue-200 hover:text-blue-600 cursor-pointer"
+                className="flex size-7 items-center justify-center rounded-full border border-border-subtle text-text-secondary hover:border-border-brand hover:text-text-brand cursor-pointer"
                 onClick={() => setViewDate((prev) => addMonths(prev, 1))}
                 aria-label="다음 달"
               >
@@ -716,7 +716,7 @@ export const DatePopover = ({
           </div>
           {scrollMode && (
             <div className="mt-3 grid grid-cols-2 gap-3">
-              <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-100 bg-gray-50 dark:border-gray-700 dark:bg-[#0f141a] py-2">
+              <div className="max-h-40 overflow-y-auto rounded-lg border border-border-subtle bg-bg-canvas py-2">
                 {yearRange.map((year) => {
                   const active = year === viewDate.getFullYear();
                   return (
@@ -727,7 +727,7 @@ export const DatePopover = ({
                         yearRefs.current[year] = node;
                       }}
                       className={`flex w-full items-center justify-center px-3 py-2 text-sm font-medium transition-colors cursor-pointer ${
-                        active ? "text-blue-600" : "text-slate-600 hover:text-slate-900"
+                        active ? "text-text-brand" : "text-text-secondary hover:text-text-primary"
                       }`}
                       onClick={() => setViewDate(new Date(year, viewDate.getMonth(), 1))}
                     >
@@ -736,7 +736,7 @@ export const DatePopover = ({
                   );
                 })}
               </div>
-              <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-100 bg-gray-50 dark:border-gray-700 dark:bg-[#0f141a] py-2">
+              <div className="max-h-40 overflow-y-auto rounded-lg border border-border-subtle bg-bg-canvas py-2">
                 {Array.from({ length: 12 }, (_, idx) => idx + 1).map((month) => {
                   const active = month === viewDate.getMonth() + 1;
                   return (
@@ -747,7 +747,7 @@ export const DatePopover = ({
                         monthRefs.current[month] = node;
                       }}
                       className={`flex w-full items-center justify-center px-3 py-2 text-sm font-medium transition-colors cursor-pointer ${
-                        active ? "text-blue-600" : "text-slate-600 hover:text-slate-900"
+                        active ? "text-text-brand" : "text-text-secondary hover:text-text-primary"
                       }`}
                       onClick={() => setViewDate(new Date(viewDate.getFullYear(), month - 1, 1))}
                     >
@@ -760,7 +760,7 @@ export const DatePopover = ({
           )}
           {!scrollMode && (
             <>
-              <div className="mt-3 grid grid-cols-7 text-xs text-slate-400">
+              <div className="mt-3 grid grid-cols-7 text-xs text-text-tertiary">
                 {["월", "화", "수", "목", "금", "토", "일"].map((day) => (
                   <span key={day} className="text-center">
                     {day}
@@ -778,12 +778,12 @@ export const DatePopover = ({
                       type="button"
                       className={`flex h-8 w-full items-center justify-center rounded-full transition-colors cursor-pointer ${
                         isSelected
-                          ? "bg-blue-600 text-white"
+                          ? "bg-bg-brand text-white"
                           : isToday
-                            ? "border border-blue-200 text-blue-600"
+                            ? "border border-border-brand text-text-brand"
                             : isCurrentMonth
-                              ? "text-slate-700 hover:bg-slate-100"
-                              : "text-slate-300"
+                              ? "text-text-primary hover:bg-bg-subtle"
+                              : "text-text-tertiary"
                       }`}
                       onClick={() => handleDateSelect(date)}
                     >
@@ -910,7 +910,7 @@ const TimePopover = ({
     <div ref={wrapperRef} className="relative flex-none">
       <button
         type="button"
-        className="flex items-center justify-center gap-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-[#0f141a] px-3 py-1 text-[15px] font-medium text-[#111827] disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
+        className="flex items-center justify-center gap-2 rounded-lg border border-border-subtle bg-bg-canvas px-3 py-1 text-[15px] font-medium text-text-primary disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
         onClick={(event) => {
           if (open) {
             if (disableAnimation) {
@@ -941,7 +941,7 @@ const TimePopover = ({
         aria-haspopup="dialog"
         aria-expanded={open}
       >
-        <span className={value ? "" : "text-[#9CA3AF]"}>
+        <span className={value ? "" : "text-text-tertiary"}>
           {value ? formatTimeLabel(value) : placeholder}
         </span>
       </button>
@@ -951,7 +951,7 @@ const TimePopover = ({
         createPortal(
           <div
             ref={popoverRef}
-            className={`fixed z-[9999] w-40 overflow-hidden popover-surface border border-gray-100 dark:border-gray-700 bg-white dark:bg-[#111418] p-2 shadow-lg ${
+            className={`fixed z-[9999] w-40 overflow-hidden popover-surface border border-border-subtle bg-bg-canvas p-2 shadow-lg ${
               !disableAnimation && (ready || closing) ? "popover-animate" : ""
             } ${!disableAnimation && closing ? "is-closing" : ""}`}
             style={{
@@ -973,7 +973,7 @@ const TimePopover = ({
                   type="button"
                   ref={active ? selectedRef : null}
                   className={`flex w-full items-center justify-center rounded-lg px-3 py-2 text-sm font-medium transition-colors cursor-pointer ${
-                    active ? "bg-blue-600 text-white" : "text-slate-700 hover:bg-slate-100"
+                    active ? "bg-bg-brand text-white" : "text-text-primary hover:bg-bg-subtle"
                   }`}
                   onClick={() => {
                     onChange(option.value);
@@ -1272,39 +1272,39 @@ export default function EventModal({
       <div
         className={
           isDrawer
-            ? "flex h-full flex-col bg-[#F9FAFB]"
-            : "w-full max-w-2xl rounded-2xl bg-[#F9FAFB] border border-gray-100 shadow-xl"
+            ? "flex h-full flex-col bg-bg-surface"
+            : "w-full max-w-2xl rounded-2xl bg-bg-surface border border-border-subtle shadow-xl"
         }
       >
         <div
           className={
             isDrawer
-              ? "flex items-center justify-between px-3 py-3 border-b border-gray-100 dark:border-gray-800"
-              : "flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-800"
+              ? "flex items-center justify-between px-3 py-3 border-b border-border-subtle"
+              : "flex items-center justify-between px-6 py-4 border-b border-border-subtle"
           }
         >
           <div className="flex items-center gap-3">
-            <h3 className="text-[18px] font-semibold text-[#111827]">
+            <h3 className="text-[18px] font-semibold text-text-primary">
               {isEdit ? "일정 수정" : "새 일정"}
             </h3>
             <div
-              className="relative flex items-center rounded-full bg-gray-100 dark:bg-gray-800 p-1 text-xs segmented-toggle"
+              className="relative flex items-center rounded-full bg-bg-subtle p-1 text-xs segmented-toggle"
               style={tabToggleStyle}
             >
               <span className="segmented-indicator">
                 <span
                   key={activeTab}
-                  className="view-indicator-pulse block h-full w-full rounded-full bg-white dark:bg-gray-700 shadow-sm"
+                  className="view-indicator-pulse block h-full w-full rounded-full bg-bg-surface shadow-sm"
                 />
               </span>
               {EVENT_MODAL_TABS.map((tab) => (
                 <button
                   key={tab}
                   type="button"
-                  className={`relative z-10 flex-1 px-3 py-1 text-[14px] transition-colors ${
+                  className={`relative z-10 flex-1 px-3 py-1 text-[14px] transition-all ${
                     activeTab === tab
-                      ? "text-[#2563EB] font-semibold"
-                      : "text-[#6B7280] font-medium hover:text-[#2563EB]"
+                      ? "text-text-brand !font-bold"
+                      : "text-text-secondary font-medium hover:text-text-brand"
                   }`}
                   onClick={() => setActiveTab(tab)}
                 >
@@ -1315,7 +1315,7 @@ export default function EventModal({
           </div>
           {showCloseButton && (
             <button
-              className="text-slate-400 hover:text-slate-900 dark:hover:text-white"
+              className="text-text-tertiary hover:text-text-primary"
               onClick={onClose}
               type="button"
             >
@@ -1332,37 +1332,37 @@ export default function EventModal({
         >
           {activeTab === "basic" && (
             <>
-              <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632]">
+              <div className="rounded-lg border border-border-subtle bg-bg-canvas">
                 <div className="flex min-h-12 items-center px-4">
                   <label className="sr-only">제목</label>
                   <input
-                    className="h-10 w-full -translate-y-[1px] appearance-none border-none bg-transparent py-0 text-[15px] leading-none font-medium text-[#111827] placeholder:text-[15px] placeholder:font-normal placeholder:text-[#9CA3AF] focus:outline-none focus:ring-0"
+                    className="h-10 w-full -translate-y-[1px] appearance-none border-none bg-transparent py-0 text-[15px] leading-none font-medium text-text-primary placeholder:text-[15px] placeholder:font-normal placeholder:text-text-tertiary focus:outline-none focus:ring-0"
                     placeholder="제목"
                     value={form.title}
                     onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
                   />
                 </div>
               </div>
-              <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632]">
-                <div className="flex h-12 items-center justify-between px-4 py-2 text-[14px] font-medium text-[#4B5563]">
+              <div className="rounded-lg border border-border-subtle bg-bg-canvas">
+                <div className="flex h-12 items-center justify-between px-4 py-2 text-[14px] font-medium text-text-secondary">
                   <span>하루종일</span>
                   <div className="ml-auto flex justify-end">
                     <label className="relative inline-flex size-6 items-center justify-center">
                     <input
-                      className="peer size-6 appearance-none rounded-full border border-slate-300 bg-white shadow-sm transition-colors checked:border-blue-500 checked:bg-blue-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-1 focus-visible:ring-offset-white disabled:opacity-50 dark:border-slate-600 dark:bg-[#111418] dark:checked:border-blue-400 dark:checked:bg-blue-400 dark:focus-visible:ring-blue-300 dark:focus-visible:ring-offset-[#111418]"
+                      className="peer size-6 appearance-none rounded-full border border-border-subtle bg-bg-canvas shadow-sm transition-colors checked:border-bg-brand checked:bg-bg-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-bg-brand/20 disabled:opacity-50"
                       type="checkbox"
                       checked={form.allDay}
                       onChange={(event) => setForm((prev) => ({ ...prev, allDay: event.target.checked }))}
                     />
-                    <span className="pointer-events-none absolute text-slate-300 transition-colors peer-checked:text-white">
+                    <span className="pointer-events-none absolute text-text-tertiary transition-colors peer-checked:text-text-on-brand">
                       <Check className="size-4" />
                     </span>
                     </label>
                   </div>
                 </div>
-                <div className="h-px bg-gray-200 dark:bg-gray-700 mx-4" />
+                <div className="h-px bg-border-subtle mx-4" />
                 <div className="flex h-12 items-center px-4 py-2">
-                  <span className="w-7 shrink-0 text-[14px] font-medium text-[#374151]">시작</span>
+                  <span className="w-7 shrink-0 text-[14px] font-medium text-text-primary">시작</span>
                   <label className="sr-only">시작 날짜</label>
                   <div className="flex items-center gap-2 ml-auto">
                     <DatePopover
@@ -1383,9 +1383,9 @@ export default function EventModal({
                     )}
                   </div>
                 </div>
-                <div className="h-px bg-gray-200 dark:bg-gray-700 mx-4" />
+                <div className="h-px bg-border-subtle mx-4" />
                 <div className="flex h-12 items-center px-4 py-2">
-                  <span className="w-7 shrink-0 text-[14px] font-medium text-[#374151]">종료</span>
+                  <span className="w-7 shrink-0 text-[14px] font-medium text-text-primary">종료</span>
                   <label className="sr-only">종료 날짜</label>
                   <div className="flex items-center gap-2 ml-auto">
                     <DatePopover
@@ -1407,21 +1407,21 @@ export default function EventModal({
                   </div>
                 </div>
               </div>
-              <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632]">
+              <div className="rounded-lg border border-border-subtle bg-bg-canvas">
                 <div className="flex min-h-12 items-center gap-2 px-4">
-                  <MapPin className="size-4 text-slate-400" />
+                  <MapPin className="size-4 text-text-secondary" />
                   <label className="sr-only">장소</label>
                   <input
-                    className="h-10 w-full -translate-y-[1px] appearance-none border-none bg-transparent py-0 text-[15px] leading-none font-medium text-[#111827] placeholder:text-[15px] placeholder:font-normal placeholder:text-[#9CA3AF] focus:outline-none focus:ring-0"
+                    className="h-10 w-full -translate-y-[1px] appearance-none border-none bg-transparent py-0 text-[15px] leading-none font-medium text-text-primary placeholder:text-[15px] placeholder:font-normal placeholder:text-text-tertiary focus:outline-none focus:ring-0"
                     placeholder="장소"
                     value={form.location}
                     onChange={(event) => setForm((prev) => ({ ...prev, location: event.target.value }))}
                   />
                 </div>
               </div>
-              <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632] px-4 min-h-12 flex items-center">
+              <div className="rounded-lg border border-border-subtle bg-bg-canvas px-4 min-h-12 flex items-center">
                 <div className="flex w-full items-center justify-between gap-2">
-                  <label className="text-[14px] font-medium text-[#374151] whitespace-nowrap shrink-0">알림</label>
+                  <label className="text-[14px] font-medium text-text-primary whitespace-nowrap shrink-0">알림</label>
                   <div className="flex flex-wrap justify-end gap-2">
                   {(() => {
                     const baseValues = REMINDER_OPTIONS.map((option) => option.value);
@@ -1435,10 +1435,10 @@ export default function EventModal({
                       <button
                         key={value}
                         type="button"
-                        className={`px-3 py-1 rounded-full text-[13px] font-medium transition-colors ${
+                        className={`px-3 py-1 rounded-full text-[13px] transition-colors ${
                           active
-                            ? "text-[#2563EB] font-semibold underline"
-                            : "text-[#374151]"
+                            ? "text-text-brand font-bold underline"
+                            : "text-text-secondary font-medium"
                         }`}
                         onClick={() =>
                           setForm((prev) => ({
@@ -1457,7 +1457,7 @@ export default function EventModal({
                   <div className="relative">
                     <button
                       type="button"
-                      className="flex size-7 items-center justify-center rounded-full border border-gray-300 text-slate-500 hover:border-primary/40"
+                      className="flex size-7 items-center justify-center rounded-full border border-border-subtle text-text-tertiary hover:border-token-primary/40"
                       onClick={() => {
                         if (customReminderOpen) {
                           if (customReminderClosing) {
@@ -1477,7 +1477,7 @@ export default function EventModal({
                     </button>
                     {customReminderOpen && (
                       <div
-                        className={`absolute right-0 bottom-full mb-2 w-52 max-w-[calc(100vw-2rem)] popover-surface popover-animate border border-gray-100 dark:border-gray-700 bg-white dark:bg-[#111418] shadow-lg p-3 z-10 ${
+                        className={`absolute right-0 bottom-full mb-2 w-52 max-w-[calc(100vw-2rem)] popover-surface popover-animate border border-border-subtle bg-bg-canvas shadow-lg p-3 z-10 ${
                           customReminderClosing ? "is-closing" : ""
                         }`}
                         data-side="top"
@@ -1488,7 +1488,7 @@ export default function EventModal({
                           <input
                             type="number"
                             min="1"
-                            className="w-20 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632] px-2 py-1 text-xs"
+                            className="w-20 rounded-lg border border-border-subtle bg-bg-canvas px-2 py-1 text-xs"
                             value={customReminderValue}
                             onChange={(event) => setCustomReminderValue(event.target.value)}
                           />
@@ -1510,14 +1510,14 @@ export default function EventModal({
                         <div className="mt-3 flex justify-end gap-2">
                           <button
                             type="button"
-                            className="px-2 py-1 text-xs text-slate-500"
+                            className="px-2 py-1 text-xs text-text-tertiary"
                             onClick={closeCustomReminder}
                           >
                             취소
                           </button>
                           <button
                             type="button"
-                            className="px-3 py-1 rounded-full text-xs font-semibold bg-primary text-white"
+                            className="px-3 py-1 rounded-full text-xs font-semibold bg-token-primary text-white"
                             onClick={() => {
                               const numericValue = Number(customReminderValue);
                               if (!Number.isFinite(numericValue) || numericValue <= 0) return;
@@ -1547,9 +1547,9 @@ export default function EventModal({
                 </div>
               </div>
               </div>
-              <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632] px-4 py-2 min-h-12 flex items-center">
+              <div className="rounded-lg border border-border-subtle bg-bg-canvas px-4 py-2 min-h-12 flex items-center">
                 <div className="flex w-full items-center justify-between gap-2">
-                  <label className="text-[14px] font-medium text-[#374151] whitespace-nowrap shrink-0">색상</label>
+                  <label className="text-[14px] font-medium text-text-primary whitespace-nowrap shrink-0">색상</label>
                   <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
                     {visibleColorOptions.map((option) => {
                       const active = form.colorId === option.id;
@@ -1559,8 +1559,8 @@ export default function EventModal({
                           type="button"
                           className={`flex items-center rounded-full p-1 text-[13px] font-medium transition-colors ${
                             active
-                              ? "text-[#2563EB] font-semibold"
-                              : "text-[#374151]"
+                              ? "text-text-brand font-semibold"
+                              : "text-text-secondary"
                           }`}
                           onClick={() => setForm((prev) => ({ ...prev, colorId: option.id }))}
                           aria-label={option.label}
@@ -1581,7 +1581,7 @@ export default function EventModal({
                     {!showAllColors && (
                       <button
                         type="button"
-                        className="relative size-8 rounded-full text-[#374151] transition-colors hover:text-[#2563EB]"
+                        className="relative size-8 rounded-full text-text-secondary transition-colors hover:text-text-brand"
                         onClick={() => setShowAllColors(true)}
                         aria-label="모든 색상"
                         title="모든 색상"
@@ -1592,7 +1592,7 @@ export default function EventModal({
                     {showAllColors && (
                       <button
                         type="button"
-                        className="relative size-8 rounded-full text-[#374151] transition-colors hover:text-[#2563EB]"
+                        className="relative size-8 rounded-full text-text-secondary transition-colors hover:text-text-brand"
                         onClick={() => setShowAllColors(false)}
                         aria-label="닫기"
                         title="닫기"
@@ -1604,10 +1604,10 @@ export default function EventModal({
                 </div>
               </div>
               <div className="flex items-center gap-2 px-1">
-                <p className="text-[14px] font-medium text-[#4B5563]">반복</p>
+                <p className="text-[14px] font-medium text-text-primary">반복</p>
                 <button
                   type="button"
-                  className="flex size-6 items-center justify-center text-slate-500 hover:text-primary disabled:opacity-50"
+                  className="flex size-6 items-center justify-center text-text-tertiary hover:text-token-primary disabled:opacity-50"
                   onClick={() =>
                     setForm((prev) => ({
                       ...prev,
@@ -1626,9 +1626,9 @@ export default function EventModal({
               {form.recurrenceEnabled && (
                 <div className="space-y-3">
                   <div className="grid grid-cols-2 gap-3">
-                    <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632] px-4 py-1 min-h-12 flex items-center">
+                    <div className="rounded-lg border border-border-subtle bg-bg-canvas px-4 py-1 min-h-12 flex items-center">
                       <div className="flex w-full items-center justify-between gap-2">
-                        <label className="text-[14px] font-medium text-[#4B5563] whitespace-nowrap shrink-0">
+                        <label className="text-[14px] font-medium text-text-secondary whitespace-nowrap shrink-0">
                           빈도
                         </label>
                         <CustomSelect
@@ -1650,16 +1650,16 @@ export default function EventModal({
                         />
                       </div>
                     </div>
-                    <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632] px-4 py-1 min-h-12 flex items-center">
+                    <div className="rounded-lg border border-border-subtle bg-bg-canvas px-4 py-1 min-h-12 flex items-center">
                       <div className="flex w-full items-center justify-between gap-2">
-                        <label className="text-[14px] font-medium text-[#4B5563] whitespace-nowrap shrink-0">
+                        <label className="text-[14px] font-medium text-text-secondary whitespace-nowrap shrink-0">
                           간격
                         </label>
                         <div className="ml-auto flex items-center gap-2">
                           <input
                             type="number"
                             min={1}
-                            className="flex-none border-none bg-transparent px-2 py-2 text-[15px] font-medium text-[#111827] focus:outline-none focus:ring-0"
+                            className="flex-none border-none bg-transparent px-2 py-2 text-[15px] font-medium text-text-primary focus:outline-none focus:ring-0"
                             style={{ width: recurrenceIntervalWidth }}
                             value={form.recurrenceInterval}
                             onChange={(event) =>
@@ -1672,7 +1672,7 @@ export default function EventModal({
                             }
                           />
                           {recurrenceIntervalUnit ? (
-                            <span className="text-[14px] font-medium text-[#4B5563]">
+                            <span className="text-[14px] font-medium text-text-secondary">
                               {recurrenceIntervalUnit}
                             </span>
                           ) : null}
@@ -1682,9 +1682,9 @@ export default function EventModal({
                   </div>
 
                   {form.recurrenceFrequency === "WEEKLY" && (
-                    <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632] px-4 py-2 min-h-12 flex items-center">
+                    <div className="rounded-lg border border-border-subtle bg-bg-canvas px-4 py-2 min-h-12 flex items-center">
                       <div className="flex w-full items-center justify-between gap-2">
-                        <label className="text-[14px] font-medium text-[#374151] whitespace-nowrap shrink-0">
+                        <label className="text-[14px] font-medium text-text-primary whitespace-nowrap shrink-0">
                           요일 선택
                         </label>
                         <div className="ml-auto flex flex-wrap justify-end gap-2">
@@ -1694,10 +1694,10 @@ export default function EventModal({
                               <button
                                 key={day.value}
                                 type="button"
-                                className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
+                                className={`px-3 py-1 rounded-full text-xs border transition-colors ${
                                   active
-                                    ? "bg-primary text-white border-primary"
-                                    : "border-gray-200 text-slate-500 hover:border-primary/30"
+                                    ? "bg-bg-brand text-white border-border-brand font-bold"
+                                    : "border-border-subtle text-text-tertiary font-semibold hover:border-border-brand/30"
                                 }`}
                                 onClick={() =>
                                   setForm((prev) => ({
@@ -1718,18 +1718,18 @@ export default function EventModal({
                   )}
 
                   {form.recurrenceFrequency === "MONTHLY" && (
-                    <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632]">
+                    <div className="rounded-lg border border-border-subtle bg-bg-canvas">
                       <div className="flex h-12 items-center px-4 py-2">
-                        <span className="w-14 shrink-0 text-[14px] font-medium text-[#374151]">월간</span>
+                        <span className="w-14 shrink-0 text-[14px] font-medium text-text-primary">월간</span>
                         <div className="flex w-full items-center justify-end gap-2">
                           {(["date", "weekday"] as const).map((mode) => (
                             <button
                               key={mode}
                               type="button"
-                              className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
+                              className={`px-3 py-1 rounded-full text-xs border transition-colors ${
                                 form.recurrenceMonthlyMode === mode
-                                  ? "bg-primary text-white border-primary"
-                                  : "border-gray-200 text-slate-500 hover:border-primary/30"
+                                  ? "bg-bg-brand text-white border-border-brand font-bold"
+                                  : "border-border-subtle text-text-tertiary font-semibold hover:border-border-brand/30"
                               }`}
                               onClick={() =>
                                 setForm((prev) => ({ ...prev, recurrenceMonthlyMode: mode }))
@@ -1740,17 +1740,17 @@ export default function EventModal({
                           ))}
                         </div>
                       </div>
-                      <div className="h-px bg-gray-200 dark:bg-gray-700 mx-4" />
+                      <div className="h-px bg-border-subtle mx-4" />
                       {form.recurrenceMonthlyMode === "date" ? (
                         <div className="flex h-12 items-center px-4 py-2">
-                          <span className="w-14 shrink-0 text-[14px] font-medium text-[#374151]">날짜</span>
+                          <span className="w-14 shrink-0 text-[14px] font-medium text-text-primary">날짜</span>
                           <label className="sr-only">매월 날짜</label>
                           <div className="flex w-full items-center justify-end gap-1">
                             <input
                               type="number"
                               min={1}
                               max={31}
-                              className="flex-none border-none bg-transparent px-2 py-2 text-[15px] font-medium text-[#111827] focus:outline-none focus:ring-0"
+                              className="flex-none border-none bg-transparent px-2 py-2 text-[15px] font-medium text-text-primary focus:outline-none focus:ring-0"
                               style={{ width: recurrenceMonthDayWidth }}
                               value={form.recurrenceMonthDay}
                               onChange={(event) =>
@@ -1760,12 +1760,12 @@ export default function EventModal({
                                 }))
                               }
                             />
-                            <span className="text-[14px] font-medium text-[#4B5563]">일</span>
+                            <span className="text-[14px] font-medium text-text-secondary">일</span>
                           </div>
                         </div>
                       ) : (
                         <div className="flex h-12 items-center px-4 py-2">
-                          <span className="w-14 shrink-0 text-[14px] font-medium text-[#374151]">요일</span>
+                          <span className="w-14 shrink-0 text-[14px] font-medium text-text-primary">요일</span>
                           <label className="sr-only">월간 규칙 요일</label>
                           <div className="flex w-full items-center justify-end gap-2">
                             <CustomSelect
@@ -1805,9 +1805,9 @@ export default function EventModal({
 
                   {form.recurrenceFrequency === "YEARLY" && (
                     <div className="grid grid-cols-2 gap-3">
-                      <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632]">
+                      <div className="rounded-lg border border-border-subtle bg-bg-canvas">
                         <div className="flex h-12 items-center justify-between gap-2 px-4 py-2">
-                          <span className="text-[14px] font-medium text-[#374151]">날짜</span>
+                          <span className="text-[14px] font-medium text-text-primary">날짜</span>
                           <label className="sr-only">월</label>
                           <div className="flex items-center justify-end gap-0">
                             <div className="flex items-center gap-1">
@@ -1851,9 +1851,9 @@ export default function EventModal({
                     </div>
                   )}
 
-                  <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632] px-4 py-1 min-h-12 flex items-center">
+                  <div className="rounded-lg border border-border-subtle bg-bg-canvas px-4 py-1 min-h-12 flex items-center">
                     <div className="flex w-full items-center justify-between gap-2">
-                      <label className="text-[14px] font-medium text-[#374151]">종료</label>
+                      <label className="text-[14px] font-medium text-text-primary">종료</label>
                       <div className="ml-auto flex items-center gap-2">
                         <CustomSelect
                           value={form.recurrenceEndMode}
@@ -1871,7 +1871,7 @@ export default function EventModal({
                             <label className="sr-only">종료 날짜</label>
                             <input
                               type="date"
-                              className="w-auto flex-none border-none bg-transparent px-3 py-2 text-[15px] font-medium text-[#111827] focus:outline-none focus:ring-0"
+                              className="w-auto flex-none border-none bg-transparent px-3 py-2 text-[15px] font-medium text-text-primary focus:outline-none focus:ring-0"
                               value={form.recurrenceEndDate}
                               onChange={(event) =>
                                 setForm((prev) => ({ ...prev, recurrenceEndDate: event.target.value }))
@@ -1885,21 +1885,21 @@ export default function EventModal({
                             <input
                               type="number"
                               min={1}
-                              className="flex-none border-none bg-transparent px-2 py-2 text-[15px] font-medium text-[#111827] focus:outline-none focus:ring-0"
+                              className="flex-none border-none bg-transparent px-2 py-2 text-[15px] font-medium text-text-primary focus:outline-none focus:ring-0"
                               style={{ width: recurrenceCountWidth }}
                               value={form.recurrenceEndCount}
                               onChange={(event) =>
                                 setForm((prev) => ({ ...prev, recurrenceEndCount: event.target.value }))
                               }
                             />
-                            <span className="text-[14px] font-medium text-[#4B5563]">회</span>
+                            <span className="text-[14px] font-medium text-text-secondary">회</span>
                           </>
                         )}
                       </div>
                     </div>
                   </div>
                   {recurrenceError && (
-                    <p className="text-xs text-red-500">{recurrenceError}</p>
+                    <p className="text-xs text-token-error">{recurrenceError}</p>
                   )}
                 </div>
               )}
@@ -1908,41 +1908,41 @@ export default function EventModal({
 
           {activeTab === "advanced" && (
             <>
-              <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632]">
+              <div className="rounded-lg border border-border-subtle bg-bg-canvas">
                 <div
                   className={`flex min-h-12 gap-2 px-4 py-2 ${
                     descriptionMultiline ? "items-start" : "items-center"
                   }`}
                 >
-                  <FileText className={`size-4 text-slate-400 ${descriptionMultiline ? "mt-1" : ""}`} />
+                  <FileText className={`size-4 text-text-tertiary ${descriptionMultiline ? "mt-1" : ""}`} />
                   <label className="sr-only">설명</label>
                   <textarea
                     ref={descriptionRef}
                     rows={1}
-                    className="w-full resize-none border-none bg-transparent text-[15px] font-medium text-[#111827] placeholder:text-[15px] placeholder:font-normal placeholder:text-[#9CA3AF] focus:outline-none focus:ring-0"
+                    className="w-full resize-none border-none bg-transparent text-[15px] font-medium text-text-primary placeholder:text-[15px] placeholder:font-normal placeholder:text-text-tertiary focus:outline-none focus:ring-0"
                     placeholder="설명"
                     value={form.description}
                     onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
                   />
                 </div>
               </div>
-              <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632]">
+              <div className="rounded-lg border border-border-subtle bg-bg-canvas">
                 <div className="flex h-12 items-center gap-2 px-4 py-2">
-                  <Users className="size-4 text-slate-400" />
+                  <Users className="size-4 text-text-tertiary" />
                   <label className="sr-only">참석자</label>
                   <input
-                    className="w-full -translate-y-[1px] border-none bg-transparent text-[15px] font-medium text-[#111827] placeholder:text-[15px] placeholder:font-normal placeholder:text-[#9CA3AF] focus:outline-none focus:ring-0"
+                    className="w-full -translate-y-[1px] border-none bg-transparent text-[15px] font-medium text-text-primary placeholder:text-[15px] placeholder:font-normal placeholder:text-text-tertiary focus:outline-none focus:ring-0"
                     placeholder="참석자"
                     value={form.attendees}
                     onChange={(event) => setForm((prev) => ({ ...prev, attendees: event.target.value }))}
                   />
                 </div>
-                <div className="h-px bg-gray-200 dark:bg-gray-700 mx-4" />
+                <div className="h-px bg-border-subtle mx-4" />
                 <div className="flex h-12 items-center gap-2 px-4 py-2">
-                  <Link className="size-4 text-slate-400" />
+                  <Link className="size-4 text-text-tertiary" />
                   <label className="sr-only">회의 링크</label>
                   <input
-                    className="w-full -translate-y-[1px] border-none bg-transparent text-[15px] font-medium text-[#111827] placeholder:text-[15px] placeholder:font-normal placeholder:text-[#9CA3AF] focus:outline-none focus:ring-0"
+                    className="w-full -translate-y-[1px] border-none bg-transparent text-[15px] font-medium text-text-primary placeholder:text-[15px] placeholder:font-normal placeholder:text-text-tertiary focus:outline-none focus:ring-0"
                     placeholder="회의 링크"
                     value={form.meetingUrl}
                     onChange={(event) => setForm((prev) => ({ ...prev, meetingUrl: event.target.value }))}
@@ -1950,9 +1950,9 @@ export default function EventModal({
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632] px-4 py-1 min-h-12 flex items-center">
+                <div className="rounded-lg border border-border-subtle bg-bg-canvas px-4 py-1 min-h-12 flex items-center">
                   <div className="flex w-full items-center justify-between gap-2">
-                    <span className="text-[14px] font-medium text-[#374151] whitespace-nowrap shrink-0">공개</span>
+                    <span className="text-[14px] font-medium text-text-primary whitespace-nowrap shrink-0">공개</span>
                     <label className="sr-only">공개 범위</label>
                     <CustomSelect
                       value={form.visibility}
@@ -1966,9 +1966,9 @@ export default function EventModal({
                     />
                   </div>
                 </div>
-                <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632] px-4 py-1 min-h-12 flex items-center">
+                <div className="rounded-lg border border-border-subtle bg-bg-canvas px-4 py-1 min-h-12 flex items-center">
                   <div className="flex w-full items-center justify-between gap-2">
-                    <span className="text-[14px] font-medium text-[#374151] whitespace-nowrap shrink-0">표시</span>
+                    <span className="text-[14px] font-medium text-text-primary whitespace-nowrap shrink-0">표시</span>
                     <label className="sr-only">표시 상태</label>
                     <CustomSelect
                       value={form.transparency}
@@ -1982,9 +1982,9 @@ export default function EventModal({
                   </div>
                 </div>
               </div>
-              <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#1a2632] px-4 py-1 min-h-12 flex items-center">
+              <div className="rounded-lg border border-border-subtle bg-bg-canvas px-4 py-1 min-h-12 flex items-center">
                 <div className="flex w-full items-center justify-between gap-2">
-                  <label className="text-[14px] font-medium text-[#374151] whitespace-nowrap shrink-0">
+                  <label className="text-[14px] font-medium text-text-primary whitespace-nowrap shrink-0">
                     시간대
                   </label>
                   <CustomSelect
@@ -2004,14 +2004,14 @@ export default function EventModal({
         <div
           className={
             isDrawer
-              ? "flex items-center justify-between px-3 py-3 border-t border-gray-100 dark:border-gray-800"
-              : "flex items-center justify-between px-6 py-4 border-t border-gray-100 dark:border-gray-800"
+              ? "flex items-center justify-between px-3 py-3 border-t border-border-subtle"
+              : "flex items-center justify-between px-6 py-4 border-t border-border-subtle"
           }
         >
           {stableEvent && !forceCreate ? (
             <div className="relative" ref={deleteMenuRef}>
               <button
-                className="text-sm font-semibold text-red-500 hover:text-red-600"
+                className="text-sm font-semibold text-token-error hover:opacity-80"
                 onClick={async () => {
                   if (!stableEvent) return;
                   if (isRecurring) {
@@ -2028,13 +2028,13 @@ export default function EventModal({
               {isRecurring && deleteMenuOpen && (
                 <div className="absolute left-0 bottom-full mb-2 z-50 w-max">
                   <div
-                    className="min-w-full overflow-hidden whitespace-nowrap popover-surface popover-animate border border-gray-200 bg-white shadow-lg"
+                    className="min-w-full overflow-hidden whitespace-nowrap popover-surface popover-animate border border-border-subtle bg-bg-canvas shadow-lg"
                     data-side="top"
                     data-align="start"
                   >
                     <button
                       type="button"
-                      className="flex w-full justify-start rounded-md px-3 py-2 text-[15px] text-left font-medium text-[#111827] transition-colors hover:bg-gray-50"
+                      className="flex w-full justify-start rounded-md px-3 py-2 text-[15px] text-left font-medium text-text-primary transition-colors hover:bg-bg-subtle"
                       onClick={async () => {
                         if (!stableEvent) return;
                         await onDeleteOccurrence(stableEvent);
@@ -2046,7 +2046,7 @@ export default function EventModal({
                     </button>
                     <button
                       type="button"
-                      className="flex w-full justify-start rounded-md px-3 py-2 text-[15px] text-left font-medium text-red-600 transition-colors hover:bg-red-50"
+                      className="flex w-full justify-start rounded-md px-3 py-2 text-[15px] text-left font-medium text-token-error transition-colors hover:bg-token-error/10"
                       onClick={async () => {
                         if (!stableEvent) return;
                         await onDelete(stableEvent);
@@ -2065,14 +2065,14 @@ export default function EventModal({
           )}
           <div className="flex gap-2">
             <button
-              className="px-4 py-2 rounded-lg border text-[14px] font-semibold text-[#374151]"
+              className="px-4 py-2 rounded-lg border border-border-subtle text-[14px] font-semibold text-text-primary"
               onClick={handleCancel}
               type="button"
             >
               취소
             </button>
             <button
-              className="px-4 py-2 rounded-lg bg-primary text-[14px] font-semibold text-white disabled:opacity-50"
+              className="px-4 py-2 rounded-lg bg-bg-brand text-[14px] font-semibold text-white disabled:opacity-50"
               onClick={async () => {
                 if (form.recurrenceEnabled && recurringPayload && !isEdit) {
                   await onCreateRecurring(recurringPayload);

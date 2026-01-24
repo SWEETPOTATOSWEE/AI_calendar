@@ -334,6 +334,10 @@ export default function AiAssistantModal({
   const addItems = safeArray(view.addPreview?.items);
   const deleteGroups = safeArray(view.deletePreview?.groups);
   const conversation = safeArray(view.conversation);
+  console.log("[RENDER] conversation length:", conversation.length);
+  conversation.forEach((msg, i) => {
+    console.log(`[RENDER] msg[${i}]:`, msg.role, "text length:", msg.text.length, "text:", msg.text.substring(0, 50));
+  });
   const selectedAddCount = addItems.filter((_, index) => view.selectedAddItems[index]).length;
   const selectedDeleteCount = deleteGroups.filter((group) => view.selectedDeleteGroups[group.group_key]).length;
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -434,7 +438,8 @@ export default function AiAssistantModal({
 
   if (!visible) return null;
 
-  const canSend = view.text.trim().length > 0 || view.attachments.length > 0;
+  const canSend = view.text.trim().length > 0;
+  const hasAttachmentsOnly = view.attachments.length > 0 && !canSend;
   const handleSend = () => {
     if (!canSend || assistant.loading) return;
     assistant.preview();
@@ -515,7 +520,7 @@ export default function AiAssistantModal({
           </div>
         )}
         <div
-          className={`pb-0 pt-4 flex-1 min-h-0 flex flex-col gap-4 ${
+          className={`pb-0 pt-0 flex-1 min-h-0 flex flex-col gap-4 ${
             isDrawer ? "px-0" : "px-6"
           }`}
         >
@@ -585,20 +590,13 @@ export default function AiAssistantModal({
                               <div className="max-w-[70%] rounded-lg bg-gray-200 px-4 py-3 text-sm text-slate-800">
                                 <p className="whitespace-pre-line">{msg.text}</p>
                               </div>
-                            ) : (
+                            ) : msg.text.trim() ? (
                               <div className="w-full py-3 text-sm text-slate-700">
                                 <div className="space-y-2">
                                   {renderMarkdown(msg.text, `${msg.role}-${index}`)}
-                                  {index === assistant.conversation.length - 1 && assistant.loading && msg.text.trim() === "" && (
-                                    <div className="flex items-center gap-1">
-                                      <div className="size-1.5 animate-bounce rounded-full bg-slate-400 [animation-delay:-0.3s]" />
-                                      <div className="size-1.5 animate-bounce rounded-full bg-slate-400 [animation-delay:-0.15s]" />
-                                      <div className="size-1.5 animate-bounce rounded-full bg-slate-400" />
-                                    </div>
-                                  )}
                                 </div>
                               </div>
-                            )}
+                            ) : null}
                           </div>
                         )}
                       </div>
@@ -639,16 +637,12 @@ export default function AiAssistantModal({
                     <div className="space-y-2">
                       {hasPreview && (
                         <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
-                          <span className="inline-flex size-6 items-center justify-center rounded-full bg-blue-100 text-primary">
-                            <Sparkles className="size-3.5" />
-                          </span>
-                          <span>AI가 제안한 일정</span>
+                          <span>다음 일정이 감지되었습니다.</span>
                         </div>
                       )}
                       {view.error && !hasPreview && <p className="text-xs text-red-500">{view.error}</p>}
                       {view.mode === "add" && addItems.length > 0 && (
                         <div className="space-y-2">
-                          <p className="text-xs font-semibold text-slate-500">다음 일정이 감지되었습니다.</p>
                           {addItems.map((item, index) => {
                             const isSelected = view.selectedAddItems[index] ?? true;
                             return (
@@ -901,7 +895,7 @@ export default function AiAssistantModal({
                         onChange={handleFileChange}
                       />
                       {menuOpen && (
-                        <div className="absolute left-0 top-full z-10 mt-2 w-44 rounded-2xl border border-[#e6dfd6] bg-white p-1 text-sm shadow-lg">
+                        <div className="absolute left-0 bottom-full z-10 mb-2 w-44 rounded-2xl border border-[#e6dfd6] bg-white p-1 text-sm shadow-lg">
                           {INPUT_ACTIONS.map((action) => (
                             <button
                               key={action.type}
@@ -1001,21 +995,28 @@ export default function AiAssistantModal({
                     )}
                   </div>
 
-                  <button
-                    type="button"
-                    className={`inline-flex size-9 items-center justify-center rounded-full text-xs font-semibold transition ${
-                      assistant.loading
-                        ? "bg-[#1c1b18] text-white cursor-pointer"
-                        : canSend
-                        ? "bg-[#1c1b18] text-white hover:-translate-y-0.5 cursor-pointer"
-                        : "bg-[#1c1b18]/40 text-white"
-                    }`}
-                    onClick={handleSendClick}
-                    disabled={!assistant.loading && !canSend}
-                    aria-label={assistant.loading ? "중단" : "보내기"}
-                  >
-                    {assistant.loading ? <Square className="size-3.5" /> : <ArrowUp className="size-3.5" />}
-                  </button>
+                  <div className="relative group">
+                    <button
+                      type="button"
+                      className={`inline-flex size-9 items-center justify-center rounded-full text-xs font-semibold transition ${
+                        assistant.loading
+                          ? "bg-[#1c1b18] text-white cursor-pointer"
+                          : canSend
+                          ? "bg-[#1c1b18] text-white hover:-translate-y-0.5 cursor-pointer"
+                          : "bg-[#1c1b18]/40 text-white"
+                      }`}
+                      onClick={handleSendClick}
+                      disabled={!assistant.loading && !canSend}
+                      aria-label={assistant.loading ? "중단" : "보내기"}
+                    >
+                      {assistant.loading ? <Square className="size-3.5" /> : <ArrowUp className="size-3.5" />}
+                    </button>
+                    {hasAttachmentsOnly && (
+                      <span className="pointer-events-none absolute right-0 top-full z-20 mt-2 w-max max-w-[240px] rounded-full border border-[#1F2937] bg-[#111827] px-3 py-1 text-[11px] font-medium leading-[1.4] text-white opacity-0 transition-opacity group-hover:opacity-100 whitespace-nowrap text-center">
+                        이미지와 함께 간단한 설명을 입력해 주세요.
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

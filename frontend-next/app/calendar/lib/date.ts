@@ -24,7 +24,7 @@ export const endOfMonth = (date: Date) => new Date(date.getFullYear(), date.getM
 
 export const startOfWeek = (date: Date) => {
   const day = date.getDay();
-  const diff = (day + 6) % 7;
+  const diff = day;
   const result = new Date(date);
   result.setDate(date.getDate() - diff);
   result.setHours(0, 0, 0, 0);

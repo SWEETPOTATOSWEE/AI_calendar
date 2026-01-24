@@ -243,7 +243,7 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
   const refreshRangeRef = useRef<() => void>(() => {});
 
   const useGoogle = useMemo(
-    () => Boolean(authStatus?.enabled && authStatus?.has_token),
+    () => Boolean(authStatus?.enabled && authStatus?.has_token && !authStatus?.admin),
     [authStatus]
   );
 
@@ -348,7 +348,7 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
   );
 
   const refresh = useCallback(async (force = false) => {
-    if (!rangeStart || !rangeEnd) return;
+    if (!rangeStart || !rangeEnd || authStatus === null) return;
     setLoading(true);
     setError(null);
     try {
@@ -395,7 +395,7 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
     } finally {
       setLoading(false);
     }
-  }, [rangeStart, rangeEnd, activeKey, activeYear, activeMonth, useGoogle, updateCache]);
+  }, [rangeStart, rangeEnd, activeKey, activeYear, activeMonth, useGoogle, updateCache, authStatus]);
 
   const refreshRange = useCallback(async () => {
     if (!rangeStart || !rangeEnd) return;

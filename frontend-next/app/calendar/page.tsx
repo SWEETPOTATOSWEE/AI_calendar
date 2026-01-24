@@ -11,6 +11,7 @@ import "./fullcalendar.css";
 import EventModal from "./components/EventModal";
 import AiAssistantModal from "./components/AiAssistantModal";
 import CalendarHeaderActions from "./components/CalendarHeaderActions";
+import ThemeTokenProvider from "./components/ThemeTokenProvider";
 import {
   addDays,
   addMonths,
@@ -476,11 +477,18 @@ function CalendarPageInner() {
   const monthCalendarEvents = useMemo(() => {
     return state.allEvents.map((event) => {
       const colors = getMonthEventColor(event);
+      const endForCalendar = (() => {
+        if (!event.all_day) return event.end || undefined;
+        const base = parseISODateTime(event.end || "") || parseISODateTime(event.start || "");
+        if (!base) return event.end || undefined;
+        const baseDate = new Date(base.getFullYear(), base.getMonth(), base.getDate());
+        return toISODate(addDays(baseDate, 1));
+      })();
       return {
         id: String(event.id),
         title: event.title,
         start: event.start,
-        end: event.end || undefined,
+        end: endForCalendar,
         allDay: !!event.all_day,
         backgroundColor: colors.bg,
         borderColor: colors.border,
@@ -1094,7 +1102,7 @@ function CalendarPageInner() {
       : viewTitle;
   const weekdayLabels = useMemo(() => {
     const labels = ["일", "월", "화", "수", "목", "금", "토"];
-    const startIndex = 1;
+    const startIndex = 0;
     return labels.slice(startIndex).concat(labels.slice(0, startIndex));
   }, []);
   const monthPopupTransform = useMemo(() => {
@@ -1122,20 +1130,20 @@ function CalendarPageInner() {
 
   return (
     <div
-      className={`month-shell bg-background-light dark:bg-background-dark text-slate-900 dark:text-white ${
+      className={`month-shell bg-bg-canvas text-text-primary ${
         view === "month" ? "overflow-visible" : "overflow-hidden"
       } h-screen flex flex-col ${rightPanelOpen ? "pr-[320px]" : "pr-0"} ${
         leftPanelOpen ? "pl-[320px]" : "pl-0"
       }`}
     >
 
-      <header className="relative flex flex-col whitespace-nowrap px-3 py-3 bg-white backdrop-blur-md sticky top-0 z-50">
+      <header className="relative flex flex-col whitespace-nowrap px-3 py-3 bg-bg-canvas sticky top-0 z-50">
         <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 text-slate-900 dark:text-white">
+          <div className="flex items-center gap-3 text-text-primary">
             {!leftPanelOpen && (
               <button
                 type="button"
-                className="flex size-9 items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-slate-600 dark:text-slate-300"
+                className="flex size-9 items-center justify-center rounded-full hover:bg-bg-subtle transition-colors text-text-secondary"
                 onClick={() => setLeftPanelOpen(true)}
                 aria-label="왼쪽 탭 열기"
                 aria-expanded={leftPanelOpen}
@@ -1145,12 +1153,21 @@ function CalendarPageInner() {
               </button>
             )}
             <div className="flex flex-col gap-0.5">
-              <span className="text-lg font-semibold leading-tight">{headerDateLabel}</span>
-              {viewBadge && <span className="text-xs font-semibold text-slate-500">{viewBadge}</span>}
+              <div className="flex items-baseline gap-1.5 text-lg font-semibold leading-tight">
+                {view === "month" ? (
+                  <>
+                    <span className="text-text-secondary">{currentMonth.getFullYear()}년</span>
+                    <span className="text-text-primary">{viewTitle}</span>
+                  </>
+                ) : (
+                  <span className="text-text-primary">{viewTitle}</span>
+                )}
+              </div>
+              {viewBadge && <span className="text-xs font-semibold text-text-disabled">{viewBadge}</span>}
             </div>
             <div className="flex items-center gap-1 rounded-full px-2 py-1 hidden md:flex">
               <button
-                className="size-7 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 text-slate-600 dark:text-slate-300"
+                className="size-7 flex items-center justify-center rounded-full hover:bg-bg-subtle text-text-secondary"
                 type="button"
                 onClick={handlePrev}
                 aria-label="이전"
@@ -1158,14 +1175,14 @@ function CalendarPageInner() {
                 <ChevronLeft className="size-4" />
               </button>
               <button
-                className="px-3 py-1 rounded-full text-[13px] font-medium text-gray-700 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+                className="px-3 py-1 rounded-full text-[13px] font-medium text-text-secondary hover:bg-bg-subtle"
                 type="button"
                 onClick={handleToday}
               >
                 오늘
               </button>
               <button
-                className="size-7 flex items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 text-slate-600 dark:text-slate-300"
+                className="size-7 flex items-center justify-center rounded-full hover:bg-bg-subtle text-text-secondary"
                 type="button"
                 onClick={handleNext}
                 aria-label="다음"
@@ -1174,7 +1191,7 @@ function CalendarPageInner() {
               </button>
             </div>
           </div>
-          <div className="relative flex flex-1 items-center justify-end min-h-[48px] gap-3">
+          <div className="relative flex flex-1 items-center justify-end min-h-[36px] gap-3">
             {!searchOpen && (
               <motion.div
                 className="header-actions-layer flex flex-wrap items-center gap-3 justify-end"
@@ -1183,22 +1200,22 @@ function CalendarPageInner() {
                 transition={{ duration: 0.2, ease: [0.2, 0.7, 0.2, 1] }}
               >
               <div
-                className="relative hidden md:flex items-center bg-gray-100 dark:bg-gray-800 p-1 rounded-full mr-2 segmented-toggle"
+                className="relative hidden md:flex items-center bg-bg-surface p-1 rounded-full mr-2 segmented-toggle"
                 style={viewToggleStyle}
               >
                 <span className="segmented-indicator">
                   <span
                     key={view}
-                    className="view-indicator-pulse block h-full w-full rounded-full bg-white dark:bg-gray-700 shadow-sm"
+                    className="view-indicator-pulse block h-full w-full rounded-full bg-bg-canvas shadow-sm"
                   />
                 </span>
                 {viewKeys.map((key) => (
                   <button
                     key={key}
-                    className={`relative z-10 flex-1 px-3 py-1 text-sm font-semibold transition-colors ${
+                    className={`relative z-10 flex-1 px-3 py-1 text-sm transition-all ${
                       view === key
-                        ? "text-gray-900 dark:text-white"
-                        : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+                        ? "text-text-primary !font-bold"
+                        : "text-text-secondary font-normal hover:text-text-primary"
                     }`}
                     type="button"
                     onClick={() => handleViewChange(key)}
@@ -1210,7 +1227,7 @@ function CalendarPageInner() {
               <div className="flex gap-1">
                 <div className="relative" ref={createMenuRef}>
                   <button
-                    className="flex items-center justify-center rounded-full size-9 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-slate-600 dark:text-slate-300"
+                    className="flex items-center justify-center rounded-full size-9 hover:bg-bg-subtle transition-colors text-text-secondary"
                     type="button"
                     onClick={() => setCreateMenuOpen((prev) => !prev)}
                     aria-label="일정 추가"
@@ -1222,13 +1239,13 @@ function CalendarPageInner() {
                   {createMenuOpen && (
                     <div className="absolute left-0 mt-2 z-50 w-max" role="menu">
                       <div
-                        className="min-w-full overflow-hidden whitespace-nowrap popover-surface popover-animate border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-[#111418]"
+                        className="min-w-full overflow-hidden whitespace-nowrap popover-surface popover-animate border border-border-subtle bg-bg-surface shadow-lg"
                         data-side="bottom"
                         data-align="start"
                       >
                         <button
                           type="button"
-                          className="flex w-full justify-start rounded-md px-3 py-2 text-[15px] text-left font-medium text-[#111827] transition-colors hover:bg-gray-50 dark:hover:bg-[#1a2632]"
+                          className="flex w-full justify-start rounded-md px-3 py-2 text-[15px] text-left font-medium text-text-primary transition-colors hover:bg-bg-subtle"
                           onClick={() => {
                             setActiveEvent(null);
                             setAiDraftEvent(null);
@@ -1242,7 +1259,7 @@ function CalendarPageInner() {
                         </button>
                         <button
                           type="button"
-                          className="flex w-full justify-start rounded-md px-3 py-2 text-[15px] text-left font-medium text-[#111827] transition-colors hover:bg-gray-50 dark:hover:bg-[#1a2632]"
+                          className="flex w-full justify-start rounded-md px-3 py-2 text-[15px] text-left font-medium text-text-primary transition-colors hover:bg-bg-subtle"
                         onClick={() => {
                           openAiDrawer();
                           setCreateMenuOpen(false);
@@ -1256,7 +1273,7 @@ function CalendarPageInner() {
                   )}
                 </div>
                 <button
-                  className="flex items-center justify-center rounded-full size-9 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-slate-600 dark:text-slate-300"
+                  className="flex items-center justify-center rounded-full size-9 hover:bg-bg-subtle transition-colors text-text-secondary"
                   type="button"
                   onClick={() => setSearchOpen(true)}
                   aria-label="검색"
@@ -1271,7 +1288,7 @@ function CalendarPageInner() {
               </div>
               <div ref={mobileMenuRef} className="relative md:hidden">
                 <button
-                  className="flex items-center justify-center rounded-full size-9 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-slate-600 dark:text-slate-300"
+                  className="flex items-center justify-center rounded-full size-9 hover:bg-bg-subtle transition-colors text-text-secondary"
                   type="button"
                   onClick={() => setMobileMenuOpen((prev) => !prev)}
                   aria-label="사용자 메뉴"
@@ -1281,11 +1298,11 @@ function CalendarPageInner() {
                   <MoreVertical className="size-5" />
                 </button>
                 {mobileMenuOpen && (
-                  <div className="absolute right-0 mt-2 w-52 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-[#111418] shadow-lg p-3 flex flex-col gap-2 z-50">
+                  <div className="absolute right-0 mt-2 w-52 rounded-xl border border-border-subtle bg-bg-surface shadow-lg p-3 flex flex-col gap-2 z-50">
                     <CalendarHeaderActions
                       status={state.authStatus}
                       className="flex flex-col items-stretch gap-2"
-                      buttonClassName="w-full text-left"
+                      buttonClassName="w-full text-left font-medium text-text-primary"
                     />
                   </div>
                 )}
@@ -1293,7 +1310,7 @@ function CalendarPageInner() {
               {!rightPanelOpen && (
                 <button
                   type="button"
-                  className="flex size-9 items-center justify-center rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-slate-600 dark:text-slate-300"
+                  className="flex size-9 items-center justify-center rounded-full hover:bg-bg-subtle transition-colors text-text-secondary"
                   onClick={() => openEventDrawer()}
                   aria-label="오른쪽 탭 열기"
                   aria-expanded={rightPanelOpen}
@@ -1313,7 +1330,7 @@ function CalendarPageInner() {
               >
                 <div className="flex w-full items-start justify-center gap-3">
                   <div
-                    className={`flex flex-1 max-w-3xl flex-col rounded-[28px] border border-gray-200 bg-white px-4 py-2 shadow-sm ${
+                    className={`flex flex-1 max-w-3xl flex-col rounded-[28px] border border-border-subtle bg-bg-surface px-4 py-2 shadow-sm ${
                       searchAdvancedOpen ? "" : "min-h-[48px]"
                     } ${searchAdvancedOpen || searchResultsOpen ? "justify-start" : "justify-center"}`}
                   >
@@ -1322,10 +1339,10 @@ function CalendarPageInner() {
                         searchResultsOpen || searchAdvancedOpen ? "pb-2" : "pb-0"
                       }`}
                     >
-                      <div className="flex flex-1 items-center rounded-full bg-white">
-                        <Search className="mr-2 size-4 text-gray-500" />
+                      <div className="flex flex-1 items-center rounded-full bg-bg-surface">
+                        <Search className="mr-2 size-4 text-text-secondary" />
                         <input
-                          className="w-full bg-transparent text-[13px] text-gray-700 placeholder:text-gray-400 focus:outline-none"
+                          className="w-full bg-transparent text-[13px] text-text-primary placeholder:text-text-tertiary focus:outline-none"
                           type="text"
                           placeholder="일정 키워드 입력"
                           value={searchFilters.title}
@@ -1343,7 +1360,7 @@ function CalendarPageInner() {
                       </div>
                       <button
                         type="button"
-                        className="flex size-8 items-center justify-center rounded-full bg-transparent text-gray-600 transition-colors hover:bg-gray-200"
+                        className="flex size-8 items-center justify-center rounded-full bg-transparent text-text-secondary transition-colors hover:bg-bg-surface"
                         onClick={() => setSearchAdvancedOpen((prev) => !prev)}
                         aria-label="고급 검색 토글"
                         aria-expanded={searchAdvancedOpen}
@@ -1359,7 +1376,7 @@ function CalendarPageInner() {
                     >
                       <div ref={searchResultsPanelRef} className="px-5 pb-4 pt-3">
                         {searchResults.length === 0 ? (
-                          <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-xs text-gray-500">
+                          <div className="rounded-xl border border-dashed border-border-subtle bg-bg-surface px-4 py-6 text-center text-xs text-text-tertiary">
                             검색 결과가 없습니다.
                           </div>
                         ) : (
@@ -1370,13 +1387,13 @@ function CalendarPageInner() {
                               return (
                                 <div
                                   key={`search-result-${event.id}-${event.start ?? "no-start"}-${index}`}
-                                  className="flex items-center justify-between gap-4 rounded-xl border border-gray-100 bg-white px-4 py-3 text-xs text-gray-700 shadow-sm"
+                                  className="flex items-center justify-between gap-4 rounded-xl border border-border-subtle bg-bg-surface px-4 py-3 text-xs text-text-primary shadow-sm"
                                 >
                                   <div className="min-w-0">
-                                    <div className="truncate font-semibold text-gray-800">{event.title}</div>
-                                    <div className="mt-1 text-[11px] text-gray-500">{dateLabel}</div>
+                                    <div className="truncate font-semibold text-text-primary">{event.title}</div>
+                                    <div className="mt-1 text-[11px] text-text-secondary">{dateLabel}</div>
                                   </div>
-                                  <div className="min-w-[120px] text-right text-[11px] text-gray-500">
+                                  <div className="min-w-[120px] text-right text-[11px] text-text-secondary">
                                     {event.location?.trim() || "-"}
                                   </div>
                                 </div>
@@ -1392,9 +1409,9 @@ function CalendarPageInner() {
                     >
                       <div ref={searchAdvancedRef} className="px-5 pb-4 pt-2">
                         <div className="grid grid-cols-[140px_1fr] gap-x-6 gap-y-3 text-sm">
-                          <div className="pt-2 text-gray-700">참석자</div>
+                          <div className="pt-2 text-text-primary">참석자</div>
                           <input
-                            className="w-full rounded-full border border-[#e6e6e1] bg-white px-4 py-2 text-[13px] text-[#6b6460] placeholder:text-[#6b6460] focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
+                            className="w-full rounded-full border border-border-subtle bg-bg-surface px-4 py-2 text-[13px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand"
                             type="text"
                             placeholder="참석자, 주최자 또는 크리에이터 입력"
                             value={searchFilters.attendees}
@@ -1404,9 +1421,9 @@ function CalendarPageInner() {
                             aria-label="참석자"
                           />
 
-                          <div className="pt-2 text-gray-700">장소</div>
+                          <div className="pt-2 text-text-primary">장소</div>
                           <input
-                            className="w-full rounded-full border border-[#e6e6e1] bg-white px-4 py-2 text-[13px] text-[#6b6460] placeholder:text-[#6b6460] focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
+                            className="w-full rounded-full border border-border-subtle bg-bg-surface px-4 py-2 text-[13px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand"
                             type="text"
                             placeholder="위치 또는 회의실 입력"
                             value={searchFilters.location}
@@ -1416,9 +1433,9 @@ function CalendarPageInner() {
                             aria-label="장소"
                           />
 
-                          <div className="pt-2 text-gray-700">제외할 검색어</div>
+                          <div className="pt-2 text-text-primary">제외할 검색어</div>
                           <input
-                            className="w-full rounded-full border border-[#e6e6e1] bg-white px-4 py-2 text-[13px] text-[#6b6460] placeholder:text-[#6b6460] focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
+                            className="w-full rounded-full border border-border-subtle bg-bg-surface px-4 py-2 text-[13px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand"
                             type="text"
                             placeholder="일정에 포함되지 않은 키워드"
                             value={searchFilters.exclude}
@@ -1428,10 +1445,10 @@ function CalendarPageInner() {
                             aria-label="제외할 검색어"
                           />
 
-                          <div className="pt-2 text-gray-700">날짜</div>
+                          <div className="pt-2 text-text-primary">날짜</div>
                           <div className="flex flex-wrap items-center gap-2">
                             <input
-                              className="rounded-full border border-[#e6e6e1] bg-white px-4 py-2 text-[13px] text-[#6b6460] focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
+                              className="rounded-full border border-border-subtle bg-bg-surface px-4 py-2 text-[13px] text-text-primary focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand"
                               type="date"
                               value={searchFilters.startDate}
                               onChange={(event) =>
@@ -1439,9 +1456,9 @@ function CalendarPageInner() {
                               }
                               aria-label="시작 날짜"
                             />
-                            <span className="text-gray-400">-</span>
+                            <span className="text-text-tertiary">-</span>
                             <input
-                              className="rounded-full border border-[#e6e6e1] bg-white px-4 py-2 text-[13px] text-[#6b6460] focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
+                              className="rounded-full border border-border-subtle bg-bg-surface px-4 py-2 text-[13px] text-text-primary focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand"
                               type="date"
                               value={searchFilters.endDate}
                               onChange={(event) =>
@@ -1451,10 +1468,10 @@ function CalendarPageInner() {
                             />
                           </div>
 
-                          <div className="pt-2 text-gray-700">검색 범위</div>
+                          <div className="pt-2 text-text-primary">검색 범위</div>
                           <div className="flex flex-wrap items-center gap-2">
                             <input
-                              className="rounded-full border border-[#e6e6e1] bg-white px-4 py-2 text-[13px] text-[#6b6460] focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
+                              className="rounded-full border border-border-subtle bg-bg-surface px-4 py-2 text-[13px] text-text-primary focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand"
                               type="date"
                               value={searchFilters.rangeStart}
                               onChange={(event) =>
@@ -1462,9 +1479,9 @@ function CalendarPageInner() {
                               }
                               aria-label="검색 범위 시작"
                             />
-                            <span className="text-gray-400">-</span>
+                            <span className="text-text-tertiary">-</span>
                             <input
-                              className="rounded-full border border-[#e6e6e1] bg-white px-4 py-2 text-[13px] text-[#6b6460] focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-300"
+                              className="rounded-full border border-border-subtle bg-bg-surface px-4 py-2 text-[13px] text-text-primary focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand"
                               type="date"
                               value={searchFilters.rangeEnd}
                               onChange={(event) =>
@@ -1477,7 +1494,7 @@ function CalendarPageInner() {
                         <div className="mt-4 flex items-center justify-end gap-4 text-sm">
                           <button
                             type="button"
-                            className="flex size-9 items-center justify-center rounded-full border border-[#e6e6e1] text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
+                            className="flex size-9 items-center justify-center rounded-full border border-border-subtle text-text-tertiary transition-colors hover:bg-bg-surface hover:text-text-secondary"
                             aria-label="재설정"
                           >
                             <Undo2 className="size-4" />
@@ -1489,7 +1506,7 @@ function CalendarPageInner() {
                   <div className="flex items-center gap-2 pt-3">
                     <button
                       type="button"
-                      className="flex size-8 items-center justify-center rounded-full bg-transparent text-gray-600 transition-colors hover:bg-gray-200"
+                      className="flex size-8 items-center justify-center rounded-full bg-transparent text-text-secondary transition-colors hover:bg-bg-surface"
                       onClick={() => setSearchOpen(false)}
                       aria-label="검색 닫기"
                     >
@@ -1511,18 +1528,18 @@ function CalendarPageInner() {
         <div className="flex flex-col lg:flex-row gap-6 flex-1 min-h-0">
           <div className="order-1 lg:order-2 flex-1 flex flex-col gap-4 min-h-0 min-w-0">
             <section
-              className={`flex-1 bg-white dark:bg-[#111418] shadow-sm flex flex-col ${
+              className={`flex-1 bg-bg-canvas shadow-sm flex flex-col ${
                 view === "month" ? "overflow-visible" : "overflow-hidden"
               } min-h-[300px]`}
             >
             <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-              <div className="flex-1 min-h-0 overflow-visible border border-gray-100 dark:border-gray-800 border-t-0 border-l-0 border-r-0 bg-white dark:bg-[#111418] flex flex-col relative z-10">
+              <div className="flex-1 min-h-0 overflow-visible bg-bg-canvas flex flex-col relative z-10">
                 {view === "month" && (
-                  <div className="grid grid-cols-7">
+                  <div className="grid grid-cols-7 bg-bg-canvas">
                     {weekdayLabels.map((label) => (
                       <div
                         key={label}
-                        className="py-2 text-center text-[12px] font-semibold uppercase tracking-[0.08em] text-gray-600"
+                        className="py-2 text-center text-[12px] font-semibold uppercase tracking-[0.08em] text-text-secondary"
                       >
                         {label}
                       </div>
@@ -1540,7 +1557,7 @@ function CalendarPageInner() {
                     height="100%"
                     expandRows={view === "month"}
                     fixedWeekCount={false}
-                    firstDay={1}
+                    firstDay={0}
                     locale="ko"
                     headerToolbar={false}
                     allDayText="종일 일정"
@@ -1725,8 +1742,8 @@ function CalendarPageInner() {
                   />
                 </div>
               </div>
-              {state.loading && <p className="text-xs text-slate-400 mt-3">일정 불러오는 중...</p>}
-              {state.error && <p className="text-xs text-red-500 mt-3">{state.error}</p>}
+              {state.loading && <p className="text-xs text-text-tertiary mt-3">일정 불러오는 중...</p>}
+              {state.error && <p className="text-xs text-token-error mt-3">{state.error}</p>}
             </div>
             </section>
           </div>
@@ -1734,7 +1751,7 @@ function CalendarPageInner() {
       </main>
       {dayEventsPopup && (
         <div
-          className="fixed z-[80] w-[min(360px,calc(100vw-32px))] rounded-3xl border border-[#e8dfd4] bg-white p-5 text-[#1b1814] shadow-[0_20px_45px_rgba(20,16,12,0.2)] dark:border-gray-800 dark:bg-[#111418] dark:text-white"
+          className="fixed z-[80] w-[min(360px,calc(100vw-32px))] rounded-3xl border border-border-subtle bg-bg-surface p-5 text-text-primary shadow-[0_20px_45px_rgba(20,16,12,0.2)]"
           style={{
             top: dayEventsPopup.top,
             left: dayEventsPopup.left,
@@ -1748,7 +1765,7 @@ function CalendarPageInner() {
             <button
               type="button"
               onClick={() => setDayEventsPopup(null)}
-              className="rounded-full border border-[#e8dfd4] p-2 text-[#6f6257] hover:bg-[#f9f3ea] dark:border-gray-800 dark:text-slate-300 dark:hover:bg-[#1c2027]"
+              className="rounded-full border border-border-subtle p-2 text-text-secondary hover:bg-bg-subtle"
               aria-label="팝업 닫기"
             >
               <X className="size-4" />
@@ -1756,7 +1773,7 @@ function CalendarPageInner() {
           </div>
           <div className="mt-4 max-h-[50vh] space-y-2 overflow-y-auto pr-1">
             {dayPopupEvents.length === 0 ? (
-              <p className="text-sm text-[#6f6257] dark:text-slate-300">등록된 일정이 없습니다.</p>
+              <p className="text-sm text-text-secondary">등록된 일정이 없습니다.</p>
             ) : (
               dayPopupEvents.map((event) => {
                 const timeLabel = getEventTimeLabel(event);
@@ -1766,7 +1783,7 @@ function CalendarPageInner() {
                   <button
                     key={`day-popup-${event.id}`}
                     type="button"
-                    className="flex w-full flex-col gap-1 rounded-lg border border-[#f1e6d8] px-3 py-2 text-left text-[#1b1814] transition dark:border-gray-800 dark:text-white"
+                    className="flex w-full flex-col gap-1 rounded-lg border border-border-subtle px-3 py-2 text-left text-text-primary transition"
                     onClick={(clickEvent) => {
                       const startDate = getEventStartDate(event.start);
                       if (startDate) setSelectedDate(startDate);
@@ -1785,7 +1802,7 @@ function CalendarPageInner() {
                       />
                       <span className="text-sm font-semibold">{event.title}</span>
                     </div>
-                    <div className="text-xs text-[#6f6257] dark:text-slate-400">
+                    <div className="text-xs text-text-secondary">
                       {timeLabel}
                       {location ? ` · ${location}` : ""}
                     </div>
@@ -1799,7 +1816,7 @@ function CalendarPageInner() {
       {monthEventPopup && monthPopupEvent && (
         <>
           <div
-            className="fixed z-[80] w-[min(360px,calc(100vw-32px))] rounded-3xl border border-[#e8dfd4] bg-white p-5 text-[#1b1814] shadow-[0_20px_45px_rgba(20,16,12,0.2)] dark:border-gray-800 dark:bg-[#111418] dark:text-white"
+            className="fixed z-[80] w-[min(360px,calc(100vw-32px))] rounded-3xl border border-border-subtle bg-bg-surface p-5 text-text-primary shadow-[0_20px_45px_rgba(20,16,12,0.2)]"
             style={{
               top: monthEventPopup.top,
               left: monthEventPopup.left,
@@ -1811,7 +1828,7 @@ function CalendarPageInner() {
           >
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                <h3 className="text-lg font-semibold text-text-primary">
                   {monthPopupEvent.title}
                 </h3>
               </div>
@@ -1819,7 +1836,7 @@ function CalendarPageInner() {
                 <button
                   type="button"
                   onClick={() => handleEditFromPopup(monthPopupEvent)}
-                  className="rounded-full border border-[#e8dfd4] p-2 text-[#6f6257] hover:bg-[#f9f3ea] dark:border-gray-800 dark:text-slate-300 dark:hover:bg-[#1c2027]"
+                  className="rounded-full border border-border-subtle p-2 text-text-secondary hover:bg-bg-surface"
                   aria-label="일정 수정"
                 >
                   <Pencil className="size-4" />
@@ -1827,7 +1844,7 @@ function CalendarPageInner() {
                 <button
                   type="button"
                   onClick={() => setMonthEventPopup(null)}
-                  className="rounded-full border border-[#e8dfd4] p-2 text-[#6f6257] hover:bg-[#f9f3ea] dark:border-gray-800 dark:text-slate-300 dark:hover:bg-[#1c2027]"
+                  className="rounded-full border border-border-subtle p-2 text-text-secondary hover:bg-bg-surface"
                   aria-label="팝업 닫기"
                 >
                   <X className="size-4" />
@@ -1835,17 +1852,17 @@ function CalendarPageInner() {
               </div>
             </div>
 
-            <div className="mt-4 space-y-3 text-sm text-[#5d534a] dark:text-slate-200">
+            <div className="mt-4 space-y-3 text-sm text-text-secondary">
               <div
                 className="flex items-start gap-3 rounded-xl px-3 py-2"
                 style={{ backgroundColor: monthPopupCardBg }}
               >
-                <Clock className="mt-0.5 size-4 text-[#1b1814] dark:text-slate-100" />
+                <Clock className="mt-0.5 size-4 text-text-primary" />
                 <div>
-                  <p className="text-xs uppercase tracking-[0.2em] text-[#a18f7b] dark:text-slate-400">
+                  <p className="text-xs uppercase tracking-[0.2em] text-text-tertiary">
                     일정
                   </p>
-                  <p className="font-semibold text-[#1b1814] dark:text-white">
+                  <p className="font-semibold text-text-primary">
                     {monthPopupDateLabel}
                   </p>
                   <p>{monthPopupTimeLabel}</p>
@@ -1908,16 +1925,16 @@ function CalendarPageInner() {
       >
         <div
           id="calendar-left-panel"
-          className={`h-full w-[320px] border-r border-gray-200 bg-[#F9FAFB] backdrop-blur ${
+          className={`h-full w-[320px] border-r border-border-subtle bg-bg-surface ${
             leftPanelOpen ? "translate-x-0 pointer-events-auto" : "-translate-x-full pointer-events-none"
           }`}
         >
-          <div className="flex h-full flex-col gap-4 px-3 py-3 text-slate-900">
+          <div className="flex h-full flex-col gap-4 px-3 py-3 text-text-primary">
             {leftPanelOpen && (
               <div className="flex justify-start">
                 <button
                   type="button"
-                  className="flex size-9 items-center justify-center rounded-full hover:bg-gray-100 transition-colors text-slate-600"
+                  className="flex size-9 items-center justify-center rounded-full hover:bg-bg-subtle transition-colors text-text-secondary"
                   onClick={() => setLeftPanelOpen(false)}
                   aria-label="왼쪽 탭 닫기"
                 >
@@ -1927,7 +1944,7 @@ function CalendarPageInner() {
             )}
             {isTimeGridView && (
               <div
-                className={`mini-calendar bg-[#F9FAFB] dark:bg-[#111418] p-4 ${
+                className={`mini-calendar bg-bg-surface p-4 ${
                   view === "day" ? "mini-calendar-day" : ""
                 }`}
               >
@@ -1938,7 +1955,7 @@ function CalendarPageInner() {
                   initialDate={selectedDate}
                   height="auto"
                   fixedWeekCount={false}
-                  firstDay={1}
+                  firstDay={0}
                   locale="ko"
                   headerToolbar={{ left: "title", center: "", right: "prev,next" }}
                   titleFormat={{ year: "numeric", month: "long" }}
@@ -2010,7 +2027,7 @@ function CalendarPageInner() {
       >
         <div
           id="calendar-right-panel"
-          className={`h-full w-[320px] border-l border-gray-200 bg-[#F9FAFB] backdrop-blur flex flex-col ${
+          className={`h-full w-[320px] border-l border-border-subtle bg-bg-surface flex flex-col ${
             rightPanelOpen ? "translate-x-0 pointer-events-auto" : "translate-x-full pointer-events-none"
           }`}
         >
@@ -2019,7 +2036,7 @@ function CalendarPageInner() {
               {ai.open ? (
                 <div className="flex items-center gap-4">
                   <button
-                    className="size-9 rounded-full flex items-center justify-center bg-[#E5E7EB] text-slate-500 hover:text-primary"
+                    className="size-9 rounded-full flex items-center justify-center bg-bg-subtle text-text-secondary hover:text-token-primary"
                     type="button"
                     onClick={ai.resetConversation}
                     aria-label="대화 초기화"
@@ -2032,7 +2049,7 @@ function CalendarPageInner() {
               )}
               <button
                 type="button"
-                className="flex size-9 items-center justify-center rounded-full hover:bg-gray-100 transition-colors text-slate-600"
+                className="flex size-9 items-center justify-center rounded-full hover:bg-bg-subtle transition-colors text-text-secondary"
                 onClick={closeEventDrawer}
                 aria-label="오른쪽 탭 닫기"
               >
@@ -2040,7 +2057,7 @@ function CalendarPageInner() {
               </button>
             </div>
           )}
-          <div className="flex-1 overflow-hidden">
+          <div className={ai.open ? "flex-1 overflow-visible" : "flex-1 overflow-hidden"}>
             {ai.open ? (
               <AiAssistantModal
                 assistant={ai}
@@ -2144,7 +2161,8 @@ function CalendarPageInner() {
 
 export default function CalendarPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-[#f7f7f5]" />}>
+    <Suspense fallback={<div className="min-h-screen bg-bg-canvas" />}>
+      <ThemeTokenProvider />
       <CalendarPageInner />
     </Suspense>
   );

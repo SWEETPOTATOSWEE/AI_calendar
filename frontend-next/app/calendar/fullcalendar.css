@@ -2,22 +2,22 @@
 
 /* Custom month view styling */
 .fc {
-  --fc-border-color: #e5e7eb;
-  --fc-page-bg-color: #ffffff;
-  --fc-today-bg-color: #eef2ff;
+  --fc-border-color: oklch(var(--border-subtle));
+  --fc-page-bg-color: oklch(var(--bg-canvas));
+  --fc-today-bg-color: oklch(var(--primary-low));
 }
 .fc .fc-col-header-cell {
-  background-color: #ffffff;
+  background-color: oklch(var(--bg-canvas));
 }
 .fc .fc-timegrid .fc-col-header-cell {
-  background-color: #f8fafc;
+  background-color: oklch(var(--bg-surface));
 }
 .fc .fc-col-header-cell-cushion {
   padding: 12px 0;
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #4b5563;
+  color: oklch(var(--text-secondary));
   font-weight: 600;
 }
 .fc .fc-daygrid-day-top {
@@ -29,13 +29,50 @@
   opacity: 1;
 }
 .fc .fc-daygrid-day-number {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
-  color: #111827;
+  color: oklch(var(--text-primary));
   margin: 6px 0 0 8px;
   padding: 0;
   line-height: 1;
 }
+.fc .fc-daygrid-day.fc-day-today .fc-daygrid-day-number {
+  color: #ffffff;
+}
+.fc .fc-day-other .fc-daygrid-day-number {
+  color: oklch(var(--text-disabled)) !important;
+}
+.fc .fc-day-sat .fc-daygrid-day-number,
+.fc .fc-day-sun .fc-daygrid-day-number {
+  /* weekend color can stay secondary or follow primary as per request */
+  color: oklch(var(--text-primary)); 
+}
+.fc-theme-standard .fc-scrollgrid-section-sticky>* {
+  background: oklch(var(--bg-canvas));
+}
+
+/* Remove outer borders: Left, Right, Bottom */
+.fc-theme-standard .fc-scrollgrid {
+  border-left: none !important;
+  border-right: none !important;
+  border-bottom: none !important;
+}
+.fc .fc-scrollgrid-section-header th {
+  border-left: none !important;
+}
+.fc .fc-scrollgrid-section-body td {
+  border-left: none !important;
+}
+.fc .fc-scrollgrid-section-header th:last-child {
+  border-right: none !important;
+}
+.fc .fc-scrollgrid-section-body td:last-child {
+  border-right: none !important;
+}
+.fc-scrollgrid-section-body:last-child td {
+  border-bottom: none !important;
+}
+
 .fc .fc-timegrid .fc-col-header-cell-cushion {
   display: flex;
   justify-content: center;
@@ -48,7 +85,7 @@
   gap: 4px;
 }
 .fc .fc-scrollgrid-section-header .fc-timegrid-axis {
-  background-color: #f8fafc;
+  background-color: oklch(var(--bg-surface));
   position: relative;
 }
 .fc .fc-scrollgrid-section-header .fc-timegrid-axis::before {
@@ -59,7 +96,8 @@
   width: 18px;
   height: 18px;
   background: no-repeat center / 18px 18px
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='8'/><path d='M12 7v5l3 2'/></svg>");
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='8'/><path d='M12 7v5l3 2'/></svg>");
+  color: oklch(var(--text-tertiary));
 }
 .fc .fc-timegrid-slot-label-frame {
   text-align: center;
@@ -67,29 +105,30 @@
 .fc .fc-timegrid-slot-label-cushion {
   display: flex;
   justify-content: center;
+  color: oklch(var(--text-secondary));
 }
 .fc .fc-timegrid-weekday {
   font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #64748b;
+  color: oklch(var(--text-secondary));
 }
 .fc .fc-timegrid-date {
   font-size: 12px;
   font-weight: 600;
-  color: #0f172a;
+  color: oklch(var(--text-primary));
 }
 .fc .fc-timegrid-col.fc-day-today .fc-timegrid-day-header {
-  background-color: #f1f5f9;
+  background-color: oklch(var(--bg-subtle));
   border-radius: 6px;
   padding: 4px 0;
 }
 .fc .fc-timegrid-col.fc-day-today .fc-timegrid-weekday {
-  color: #2563eb;
+  color: oklch(var(--primary));
 }
 .fc .fc-timegrid-col.fc-day-today .fc-timegrid-date {
-  background-color: #2563eb;
+  background-color: oklch(var(--primary));
   color: #ffffff;
   border-radius: 9999px;
   width: 22px;
@@ -126,7 +165,7 @@
   white-space: nowrap;
 }
 .fc .fc-col-header-cell.fc-day-today {
-  background-color: #e2e8f0;
+  background-color: oklch(var(--bg-subtle));
 }
 .fc .fc-col-header-cell.fc-day-today .fc-timegrid-day-header {
   background-color: transparent;
@@ -134,7 +173,7 @@
   padding: 0;
 }
 .fc .fc-col-header-cell.fc-day-today .fc-timegrid-weekday {
-  color: #2563eb;
+  color: oklch(var(--primary));
 }
 .fc .fc-col-header-cell.fc-day-today .fc-timegrid-date {
   position: relative;
@@ -153,7 +192,7 @@
   height: 22px;
   transform: translate(-50%, -50%);
   border-radius: 9999px;
-  background-color: #2563eb;
+  background-color: oklch(var(--primary));
   z-index: -1;
 }
 .dark .fc .fc-timegrid-weekday {
@@ -201,7 +240,20 @@
   height: var(--timegrid-slot-height);
 }
 .fc .fc-day-other .fc-daygrid-day-number {
-  color: #9ca3af;
+  color: oklch(var(--text-disabled));
+}
+.fc .fc-daygrid-day {
+  background-color: oklch(var(--bg-canvas));
+}
+.fc .fc-day-sat, .fc .fc-day-sun {
+  background-color: oklch(var(--bg-surface));
+}
+.fc .fc-day-other {
+  background-color: oklch(var(--bg-canvas)) !important;
+}
+.fc .fc-day-other.fc-day-sat,
+.fc .fc-day-other.fc-day-sun {
+  background-color: oklch(var(--bg-surface)) !important;
 }
 .fc .fc-daygrid-day.fc-day-today {
   background-color: var(--fc-today-bg-color, #eef2ff);
@@ -234,18 +286,15 @@
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   transform: translate(-50%, -50%);
   border-radius: 9999px;
-  background-color: #2563eb;
+  background-color: oklch(var(--primary));
   z-index: -1;
 }
 .fc .fc-daygrid-day.fc-day-selected {
-  box-shadow: inset 0 0 0 1px #2563eb;
-}
-.fc .fc-daygrid-day:hover {
-  background-color: #f1f5f9;
+  box-shadow: inset 0 0 0 1px oklch(var(--primary));
 }
 .mini-calendar.mini-calendar-day .fc-daygrid-day:hover {
   background-color: transparent;
@@ -406,10 +455,10 @@
 .mini-calendar .fc-daygrid-day-number {
   font-size: 11px;
   padding: 4px 6px 0 6px;
-  color: #111827;
+  color: oklch(var(--text-primary));
 }
 .mini-calendar .fc-daygrid-day.fc-day-other .fc-daygrid-day-number {
-  color: #6b7280;
+  color: oklch(var(--text-disabled));
 }
 .mini-calendar .fc-scrollgrid,
 .mini-calendar .fc-scrollgrid table,
@@ -455,7 +504,7 @@
   z-index: 1;
 }
 .mini-calendar .fc-daygrid-day.fc-day-today .fc-daygrid-day-number {
-  background-color: #2563eb;
+  background-color: oklch(var(--primary));
   color: #ffffff;
   border-radius: 9999px;
   width: 24px;
@@ -489,14 +538,6 @@
   font-size: 10px;
   pointer-events: auto;
   cursor: pointer;
-}
-
-/* Dim non-current month days */
-.fc .fc-daygrid-day.fc-day-other {
-  background-color: #f8fafc;
-}
-.fc .fc-daygrid-day-events {
-  margin-top: 0;
 }
 
 /* Hide built-in weekday header row only for daygrid (custom header rendered outside) */

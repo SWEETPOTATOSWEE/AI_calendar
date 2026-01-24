@@ -14,39 +14,6 @@ import {
 } from "./api";
 import type { CalendarEvent, EventRecurrence } from "./types";
 
-// ... (existing types)
-
-const extractContentFromPartialJson = (json: string): string | undefined => {
-  const contentStartMatch = json.match(/"content"\s*:\s*"/);
-  if (!contentStartMatch) return undefined;
-
-  const startIndex = (contentStartMatch.index || 0) + contentStartMatch[0].length;
-  let contentValue = "";
-  let escaped = false;
-
-  for (let i = startIndex; i < json.length; i++) {
-    const char = json[i];
-    if (escaped) {
-      if (char === "n") contentValue += "\n";
-      else if (char === "r") contentValue += "\r";
-      else if (char === "t") contentValue += "\t";
-      else if (char === "\"") contentValue += "\"";
-      else if (char === "\\") contentValue += "\\";
-      else contentValue += char;
-      escaped = false;
-    } else if (char === "\\") {
-      escaped = true;
-    } else if (char === "\"") {
-      break;
-    } else {
-      contentValue += char;
-    }
-  }
-  return contentValue;
-};
-
-// ... (rest of the code)
-
 type AiMode = "add" | "delete";
 type AiModel = "nano" | "mini";
 type NlpClassification = "add" | "delete" | "complex" | "garbage";
@@ -452,74 +419,120 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
       }
 
       if (requestMode === "add") {
-        let fullJsonRaw = "";
-        let currentAssistantText = "";
-        let messageAppended = false;
-        let permissionRequestedLocally = false;
+        let finalData: AddPreviewResponse | null = null;
 
-        await previewNlpStream(
-          payloadText,
-          attachmentsToUse.map((item) => item.dataUrl),
-          reasoningEffort,
-          model,
-          requestId,
-          contextConfirmed,
-          (event) => {
-            if (requestIdRef.current !== requestId) return;
-
-            if (event.type === "status") {
-              if (event.context_used) {
-                setProgressByMode((prev) => ({ ...prev, [requestMode]: "context" }));
-              }
-            } else if (event.type === "permission_required") {
-              permissionRequestedLocally = true;
-              setPermissionRequiredByMode((prev) => ({ ...prev, [requestMode]: true }));
-            } else if (event.type === "reset_buffer") {
-              fullJsonRaw = "";
-            } else if (event.type === "chunk" || event.type === "full") {
-              setProgressByMode((prev) => ({ ...prev, [requestMode]: null }));
-              if (event.type === "chunk") {
-                fullJsonRaw += event.delta;
-              } else {
-                fullJsonRaw = JSON.stringify(event.data);
-              }
-
-              const content = extractContentFromPartialJson(fullJsonRaw);
-              if (content !== undefined && content.trim() !== "" && content !== currentAssistantText) {
-                currentAssistantText = content;
-                setConversationByMode((prev) => {
-                  const current = prev[requestMode] ?? [];
-                  const lastMsg = current[current.length - 1];
-                  if (lastMsg && lastMsg.role === "assistant" && messageAppended) {
-                    const next = [...current];
-                    next[next.length - 1] = { ...lastMsg, text: content };
-                    return { ...prev, [requestMode]: next };
-                  } else {
-                    messageAppended = true;
-                    return {
-                      ...prev,
-                      [requestMode]: [...current, { role: "assistant", text: content, includeInPrompt: true }],
-                    };
-                  }
-                });
-              }
-            } else if (event.type === "error") {
-              throw new Error(event.detail);
+        const updateAssistantText = (delta: string) => {
+          console.log("[UPDATE] delta:", delta.substring(0, 30));
+          setConversationByMode((prev) => {
+            const current = (prev[requestMode] ?? []);
+            const lastIndex = current.length - 1;
+            
+            // 마지막 메시지가 어시스턴트 메시지인지 확인
+            const hasAssistantMessage = lastIndex >= 0 && current[lastIndex].role === "assistant";
+            
+            if (!hasAssistantMessage) {
+              // 새 어시스턴트 메시지 생성
+              const newConversation = [...current, { role: "assistant", text: delta, includeInPrompt: true }];
+              console.log("[UPDATE] Creating new assistant message, initial text length:", delta.length);
+              return {
+                ...prev,
+                [requestMode]: newConversation,
+              };
+            } else {
+              // 기존 메시지에 추가
+              const next = [...current];
+              const oldLength = next[lastIndex].text.length;
+              next[lastIndex] = { ...next[lastIndex], text: next[lastIndex].text + delta };
+              console.log("[UPDATE] Appending delta, old length:", oldLength, "new length:", next[lastIndex].text.length, "delta length:", delta.length);
+              return { ...prev, [requestMode]: next };
             }
+          });
+        };
+
+        const resetAssistantText = () => {
+          setConversationByMode((prev) => {
+            const current = (prev[requestMode] ?? []);
+            const next = [...current];
+            const lastIndex = next.length - 1;
+            if (lastIndex >= 0 && next[lastIndex].role === "assistant") {
+              next[lastIndex] = { ...next[lastIndex], text: "" };
+            }
+            return { ...prev, [requestMode]: next };
+          });
+        };
+
+        try {
+          await previewNlpStream(
+            {
+              text: payloadText,
+              images: attachmentsToUse.map((item) => item.dataUrl),
+              reasoning_effort: reasoningEffort,
+              model: model,
+              request_id: requestId,
+              context_confirmed: contextConfirmed,
+            },
+            (event, data) => {
+              if (requestIdRef.current !== requestId) return;
+
+              console.log("[SSE Event]", event, data);
+
+              if (event === "content_delta") {
+                if (data.content_delta) {
+                  setProgressByMode((prev) => {
+                    if (prev[requestMode] === null) return prev;
+                    return { ...prev, [requestMode]: null };
+                  });
+                  updateAssistantText(data.content_delta);
+                }
+              } else if (event === "status") {
+                if (data.context_used) {
+                  setProgressByMode((prev) => ({ ...prev, [requestMode]: "context" }));
+                }
+              } else if (event === "reset_buffer") {
+                resetAssistantText();
+              } else if (event === "data") {
+                finalData = data as AddPreviewResponse;
+              }
+            }
+          );
+        } catch (err: any) {
+          if (requestIdRef.current === requestId) {
+            setErrorByMode((prev) => ({ ...prev, [requestMode]: err.message }));
+            setLoadingByMode((prev) => ({ ...prev, [requestMode]: false }));
+            setProgressByMode((prev) => ({ ...prev, [requestMode]: null }));
           }
-        );
+          return;
+        }
 
         if (requestIdRef.current !== requestId) return;
 
-        let finalData: AddPreviewResponse = {};
-        try {
-          finalData = JSON.parse(fullJsonRaw);
-        } catch (e) {
-          console.warn("Complete JSON parse failed", e);
+        if (!finalData) {
+          setLoadingByMode((prev) => ({ ...prev, [requestMode]: false }));
+          setProgressByMode((prev) => ({ ...prev, [requestMode]: null }));
+          return;
         }
 
-        if (finalData.permission_required || permissionRequestedLocally) {
+        setProgressByMode((prev) => ({ ...prev, [requestMode]: null }));
+
+        if (finalData.content) {
+          setConversationByMode((prev) => {
+            const current = prev[requestMode] ?? [];
+            const next = [...current];
+            const lastIndex = next.length - 1;
+            if (lastIndex >= 0 && next[lastIndex].role === "assistant") {
+              // 스트리밍된 내용과 최종 내용이 다를 수 있으므로(마지막 조각 등) 최종 내용으로 덮어씀
+              next[lastIndex] = { ...next[lastIndex], text: finalData!.content! };
+            } else {
+              // 만약 비서 메시지가 아예 없었다면 추가
+              next.push({ role: "assistant", text: finalData!.content!, includeInPrompt: true });
+            }
+            return { ...prev, [requestMode]: next };
+          });
+        }
+
+        if (finalData.permission_required) {
           setPermissionRequiredByMode((prev) => ({ ...prev, [requestMode]: true }));
+          setLoadingByMode((prev) => ({ ...prev, [requestMode]: false }));
           return;
         }
         setPermissionRequiredByMode((prev) => ({ ...prev, [requestMode]: false }));
@@ -531,6 +544,7 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
           selection[idx] = true;
         });
         setSelectedAddItems(selection);
+        setLoadingByMode((prev) => ({ ...prev, [requestMode]: false }));
       } else {
         const range = resolveDeleteRange();
         if (!range.start || !range.end) {
@@ -568,6 +582,15 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
             requestMode,
             "assistant",
             "삭제 후보를 찾았습니다. 확인 후 적용하세요.",
+            {
+              includeInPrompt: false,
+            }
+          );
+        } else {
+          appendConversationForMode(
+            requestMode,
+            "assistant",
+            "삭제할 수 있는 일정을 찾지 못했습니다. 삭제 범위를 확인하거나 다른 문장으로 요청해주세요.",
             {
               includeInPrompt: false,
             }

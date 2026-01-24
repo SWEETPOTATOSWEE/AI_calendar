@@ -30,6 +30,7 @@ export type AuthStatus = {
   configured: boolean;
   has_token: boolean;
   admin?: boolean;
+  photo_url?: string | null;
 };
 
 export type EventPayload = {

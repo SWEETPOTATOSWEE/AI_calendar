@@ -7,6 +7,7 @@ BACKEND_PORT="${BACKEND_PORT:-8000}"
 FRONTEND_HOST="${FRONTEND_HOST:-0.0.0.0}"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 BACKEND_PUBLIC_BASE="${BACKEND_PUBLIC_BASE:-http://localhost:${BACKEND_PORT}}"
+FRONTEND_BASE_URL="${FRONTEND_BASE_URL:-http://localhost:${FRONTEND_PORT}}"
 
 cleanup() {
   if [[ -n "${BACKEND_PID:-}" ]]; then
@@ -19,7 +20,7 @@ trap cleanup EXIT INT TERM
 
 echo "Starting backend on ${BACKEND_HOST}:${BACKEND_PORT}..."
 HOST="${BACKEND_HOST}" PORT="${BACKEND_PORT}" \
-  FRONTEND_BASE_URL="http://localhost:${FRONTEND_PORT}" \
+  FRONTEND_BASE_URL="${FRONTEND_BASE_URL}" \
   "${ROOT_DIR}/scripts/restart-backend.sh" &
 BACKEND_PID=$!
 

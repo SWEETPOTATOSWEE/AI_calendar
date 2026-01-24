@@ -5,7 +5,7 @@ type NlpDeletePreviewResponse = Record<string, unknown>;
 type NlpClassifyResponse = { type?: string };
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "/api").replace(/\/$/, "");
-const BACKEND_BASE = (process.env.NEXT_PUBLIC_BACKEND_BASE || "").replace(/\/$/, "");
+const BACKEND_BASE = (process.env.NEXT_PUBLIC_BACKEND_BASE || (API_BASE.startsWith("http") ? new URL(API_BASE).origin : "")).replace(/\/$/, "");
 
 const buildUrl = (base: string, path: string) => {
   if (!base) return path;
@@ -51,8 +51,7 @@ const fetchJson = async <T>(url: string, options?: RequestInit): Promise<T> => {
 };
 
 export const fetchAuthStatus = async (): Promise<AuthStatus> => {
-  const url = BACKEND_BASE ? backendUrl("/auth/google/status") : "/auth/google/status";
-  return fetchJson<AuthStatus>(url, { method: "GET" });
+  return fetchJson<AuthStatus>(backendUrl("/auth/google/status"), { method: "GET" });
 };
 
 export const getGoogleStreamUrl = () => apiUrl("/google/stream");
@@ -185,54 +184,55 @@ export const previewNlp = async (
 };
 
 export const previewNlpStream = async (
-  text: string,
-  images?: string[],
-  reasoning_effort?: string,
-  model?: string,
-  request_id?: string,
-  context_confirmed?: boolean,
-  onEvent?: (event: any) => void
+  payload: {
+    text: string;
+    images?: string[];
+    reasoning_effort?: string;
+    model?: string;
+    request_id?: string;
+    context_confirmed?: boolean;
+  },
+  onMessage: (event: string, data: any) => void
 ) => {
   const url = apiUrl("/nlp-preview-stream");
   const response = await fetch(url, {
     method: "POST",
-    credentials: "include",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      text,
-      images,
-      reasoning_effort,
-      model,
-      request_id,
-      context_confirmed,
-    }),
+    body: JSON.stringify(payload),
+    credentials: "include",
   });
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `HTTP error! status: ${response.status}`);
+    throw new Error(text || `Streaming failed: ${response.status}`);
   }
 
-  if (!response.body) throw new Error("No response body");
-  const reader = response.body.getReader();
+  const reader = response.body?.getReader();
+  if (!reader) return;
+
   const decoder = new TextDecoder();
   let buffer = "";
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
+
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split("\n\n");
     buffer = lines.pop() || "";
+
     for (const line of lines) {
-      if (line.startsWith("data: ")) {
+      const eventMatch = line.match(/^event: (.*)$/m);
+      const dataMatch = line.match(/^data: (.*)$/m);
+      if (dataMatch) {
+        const event = eventMatch ? eventMatch[1] : "message";
         try {
-          const data = JSON.parse(line.slice(6));
-          onEvent?.(data);
+          const data = JSON.parse(dataMatch[1]);
+          onMessage(event, data);
         } catch (e) {
-          console.error("Error parsing SSE data", e);
+          console.error("Failed to parse SSE data", e);
         }
       }
     }

@@ -71,6 +71,8 @@ GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
 GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary")
 GCAL_SCOPES = [
+    "openid",
+    "profile",
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/calendar.readonly",
 ]
@@ -2227,6 +2229,42 @@ async def _invoke_event_parser(kind: str,
   return data
 
 
+def _extract_content_from_partial_json(json_str: str) -> Optional[str]:
+  """불완전한 JSON에서 content 필드 값을 실시간으로 추출"""
+  match = re.search(r'"content"\s*:\s*"', json_str)
+  if not match:
+    return None
+  
+  start_idx = match.end()
+  content_value = ""
+  escaped = False
+  
+  for i in range(start_idx, len(json_str)):
+    char = json_str[i]
+    if escaped:
+      if char == "n":
+        content_value += "\n"
+      elif char == "r":
+        content_value += "\r"
+      elif char == "t":
+        content_value += "\t"
+      elif char == '"':
+        content_value += '"'
+      elif char == "\\":
+        content_value += "\\"
+      else:
+        content_value += char
+      escaped = False
+    elif char == "\\":
+      escaped = True
+    elif char == '"':
+      break
+    else:
+      content_value += char
+  
+  return content_value
+
+
 async def _invoke_event_parser_stream(kind: str,
                                       text: str,
                                       images: List[str],
@@ -2268,11 +2306,18 @@ async def _invoke_event_parser_stream(kind: str,
           model_name=model_name)
     
     full_content = ""
+    prev_extracted_content = ""
     async for chunk in stream:
       delta = chunk.choices[0].delta.content
       if delta:
         full_content += delta
         yield {"type": "chunk", "delta": delta}
+        extracted = _extract_content_from_partial_json(full_content)
+        if extracted is not None and len(extracted) > len(prev_extracted_content):
+          content_delta = extracted[len(prev_extracted_content):]
+          prev_extracted_content = extracted
+          print(f"[STREAM DEBUG CACHED] content_delta: {content_delta[:50]}...")
+          yield {"type": "content_delta", "content_delta": content_delta}
     
     latency_ms = (time.perf_counter() - started) * 1000.0
     _debug_print(kind, user_txt, sys_prompt, full_content, latency_ms, model_name=model)
@@ -2303,20 +2348,30 @@ async def _invoke_event_parser_stream(kind: str,
         model_name=model_name)
 
   full_content = ""
+  prev_extracted_content = ""
   yield {"type": "status", "context_used": False}
   async for chunk in stream:
     delta = chunk.choices[0].delta.content
     if delta:
       full_content += delta
       yield {"type": "chunk", "delta": delta}
+      extracted = _extract_content_from_partial_json(full_content)
+      if extracted is not None and len(extracted) > len(prev_extracted_content):
+        content_delta = extracted[len(prev_extracted_content):]
+        prev_extracted_content = extracted
+        print(f"[STREAM DEBUG] content_delta: {content_delta[:50]}...")
+        yield {"type": "content_delta", "content_delta": content_delta}
 
   latency_ms = (time.perf_counter() - started) * 1000.0
   _debug_print(kind, user_txt, sys_prompt, full_content, latency_ms, model_name=model)
 
   data = _safe_json_loads(full_content)
+  if isinstance(data, dict):
+    data["context_used"] = False
   needs_context, scopes = _extract_context_request(data)
 
   if not needs_context:
+    yield {"type": "data", "data": data}
     return
 
   if not context_confirmed:
@@ -2360,14 +2415,26 @@ async def _invoke_event_parser_stream(kind: str,
         model_name=model_name)
 
   full_content = ""
+  prev_extracted_content = ""
   async for chunk in stream:
     delta = chunk.choices[0].delta.content
     if delta:
       full_content += delta
       yield {"type": "chunk", "delta": delta}
+      extracted = _extract_content_from_partial_json(full_content)
+      if extracted is not None and len(extracted) > len(prev_extracted_content):
+        content_delta = extracted[len(prev_extracted_content):]
+        prev_extracted_content = extracted
+        print(f"[STREAM DEBUG 2ND] content_delta: {content_delta[:50]}...")
+        yield {"type": "content_delta", "content_delta": content_delta}
   
   latency_ms = (time.perf_counter() - started) * 1000.0
   _debug_print(kind, user_txt, sys_prompt, full_content, latency_ms, model_name=model)
+
+  data = _safe_json_loads(full_content)
+  if isinstance(data, dict):
+    data["context_used"] = True
+  yield {"type": "data", "data": data}
 
 
 def build_delete_system_prompt() -> str:
@@ -3199,16 +3266,21 @@ def _new_oauth_state() -> str:
   return secrets.token_urlsafe(16)
 
 
-def _store_oauth_state(state_value: str, session_id: str) -> None:
+def _store_oauth_state(state_value: str,
+                       session_id: str,
+                       redirect_uri: Optional[str] = None) -> None:
   if not state_value or not session_id:
     return
-  oauth_state_store[state_value] = {
+  entry: Dict[str, Any] = {
       "session_id": session_id,
       "created_at": time.time(),
   }
+  if redirect_uri:
+    entry["redirect_uri"] = redirect_uri
+  oauth_state_store[state_value] = entry
 
 
-def _pop_oauth_state(state_value: Optional[str]) -> Optional[str]:
+def _pop_oauth_state(state_value: Optional[str]) -> Optional[Dict[str, Any]]:
   if not state_value:
     return None
   entry = oauth_state_store.pop(state_value, None)
@@ -3217,7 +3289,7 @@ def _pop_oauth_state(state_value: Optional[str]) -> Optional[str]:
   created_at = entry.get("created_at")
   if created_at and (time.time() - float(created_at)) > OAUTH_STATE_MAX_AGE_SECONDS:
     return None
-  return entry.get("session_id")
+  return entry
 
 
 def _set_cookie(response: Response,
@@ -3244,6 +3316,23 @@ def _frontend_url(path: str) -> str:
   if not path.startswith("/"):
     path = f"/{path}"
   return f"{FRONTEND_BASE_URL}{path}"
+
+
+def _request_base_url(request: Request) -> str:
+  forwarded_proto = request.headers.get("x-forwarded-proto")
+  forwarded_host = request.headers.get("x-forwarded-host")
+  proto = forwarded_proto or request.url.scheme
+  host = forwarded_host or request.headers.get("host") or request.url.netloc
+  return f"{proto}://{host}"
+
+
+def _resolve_google_redirect_uri(request: Request) -> Optional[str]:
+  if FRONTEND_BASE_URL:
+    return f"{FRONTEND_BASE_URL}/auth/google/callback"
+  if GOOGLE_REDIRECT_URI:
+    return GOOGLE_REDIRECT_URI
+  request_base = _request_base_url(request)
+  return f"{request_base}/auth/google/callback"
 
 
 def load_gcal_token_for_session(session_id: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -3374,6 +3463,38 @@ def get_gcal_service(session_id: str):
   return service
 
 
+def get_google_userinfo(request: Request) -> Optional[Dict[str, Any]]:
+  session_id = _get_session_id(request)
+  if not session_id:
+    return None
+  token_data = load_gcal_token_for_session(session_id)
+  if not token_data:
+    return None
+  creds = Credentials.from_authorized_user_info(token_data, GCAL_SCOPES)
+  if creds.expired and creds.refresh_token:
+    creds.refresh(GoogleRequest())
+    new_data = json.loads(creds.to_json())
+    save_gcal_token_for_session(session_id, new_data)
+  access_token = creds.token
+  if not access_token:
+    return None
+  try:
+    response = requests.get(
+        "https://openidconnect.googleapis.com/v1/userinfo",
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=5,
+    )
+  except Exception:
+    return None
+  if not response.ok:
+    return None
+  try:
+    payload = response.json()
+  except Exception:
+    return None
+  return payload if isinstance(payload, dict) else None
+
+
 def list_google_calendars(session_id: str) -> List[Dict[str, Any]]:
   service = get_gcal_service(session_id)
   calendars: List[Dict[str, Any]] = []
@@ -3431,6 +3552,14 @@ def ensure_gcal_watches(session_id: str) -> None:
 
   for item in calendars:
     calendar_id = item["id"]
+    if item.get("access_role") == "reader":
+      existing = calendars_state.get(calendar_id)
+      if isinstance(existing, dict):
+        _stop_gcal_watch_channel(session_id,
+                                 existing.get("channel_id", ""),
+                                 existing.get("resource_id"))
+        _remove_watch_entry(state, session_id, calendar_id, existing)
+      continue
     existing = calendars_state.get(calendar_id)
     if isinstance(existing, dict) and not _watch_expiring(existing.get("expiration")):
       continue
@@ -4481,6 +4610,10 @@ async def preview_events_from_natural_text_core(
                                     context_session_id=context_session_id,
                                     context_confirmed=context_confirmed,
                                     is_google=is_google)
+  return _post_process_nlp_preview_result(data)
+
+
+def _post_process_nlp_preview_result(data: Dict[str, Any]) -> Dict[str, Any]:
   if data.get("permission_required"):
     return data
 
@@ -5007,19 +5140,22 @@ async def delete_preview_groups(text: str,
     return {"groups": []}
 
   if is_google:
-    if session_id and scope:
-      id_set = {str(x) for x in ids}
+    id_set = {str(x) for x in ids}
     combined_events = fetch_google_events_between(scope[0], scope[1], session_id)
-    targets = [
-        e for e in combined_events
-        if (f"{e.get('calendar_id')}::{e.get('id')}"
-            if e.get("calendar_id") else str(e.get("id"))) in id_set
-    ]
+    targets = []
+    for e in combined_events:
+      cal_id = e.get("calendar_id")
+      raw_id = str(e.get("id"))
+      full_id = f"{cal_id}::{raw_id}" if cal_id else raw_id
+      if full_id in id_set or raw_id in id_set:
+        targets.append(e)
 
     groups_map: Dict[str, Dict[str, Any]] = {}
     for e in targets:
-      event_id = str(e.get("id"))
-      key = f"single::{event_id}"
+      cal_id = e.get("calendar_id")
+      raw_id = str(e.get("id"))
+      full_id = f"{cal_id}::{raw_id}" if cal_id else raw_id
+      key = f"single::{full_id}"
       g = groups_map.get(key)
       if g is None:
         t = (e.get("start") or "")[11:16] if isinstance(
@@ -5035,9 +5171,9 @@ async def delete_preview_groups(text: str,
         }
         groups_map[key] = g
 
-      g["ids"].append(event_id)
+      g["ids"].append(full_id)
       g["items"].append({
-          "id": event_id,
+          "id": full_id,
           "title": e.get("title"),
           "start": e.get("start"),
           "end": e.get("end"),
@@ -5045,19 +5181,47 @@ async def delete_preview_groups(text: str,
           "recur": None,
           "all_day": e.get("all_day"),
       })
-    else:
-      groups_map = {}
   else:
-    id_set = set(ids)
+    id_set = set()
+    parent_id_set = set()
+    for x in ids:
+      try:
+        val = int(x)
+        id_set.add(val)
+        # 만약 발생(occurrence) ID라면 변환된 부모 ID도 포함하여 탐색 허용
+        p_id = _decode_occurrence_id(val)
+        if p_id:
+          parent_id_set.add(p_id)
+      except Exception:
+        continue
+
     combined_events = list(events)
     combined_events.extend(_collect_local_recurring_occurrences(scope=scope))
+    # 반복 일정 원형(Prototype)도 id_set에 있으면 포함
     for rec in recurring_events:
       event_obj = _recurring_definition_to_event(rec)
-      if _event_within_scope(event_obj, scope):
-        combined_events.append(event_obj)
-    targets = [
-        e for e in combined_events if e.id in id_set and _event_within_scope(e, scope)
-    ]
+      combined_events.append(event_obj)
+
+    targets = []
+    for e in combined_events:
+      # 1. ID 자체가 매칭됨
+      # 2. 혹은 부모 ID가 매칭됨 (발생 일정인 경우)
+      # 3. 혹은 부모 ID 자체가 매칭됨 (원형 일정인 경우)
+      matched = False
+      if e.id in id_set:
+        matched = True
+      elif e.recur == "recurring":
+        # 발생 일정인 경우
+        p_id = _decode_occurrence_id(e.id)
+        if p_id and p_id in id_set:
+          matched = True
+        elif e.id in parent_id_set:
+          matched = True
+
+      if matched:
+        # 이미 snapshot 시점에 scope 필터링이 되었으므로 여기서는 최소한의 체크만
+        if _event_within_scope(e, scope) or e.recur == "recurring":
+          targets.append(e)
 
     def group_key(e: Event) -> str:
       t = (e.start or
@@ -5115,7 +5279,8 @@ async def delete_preview_groups(text: str,
 @app.get("/auth/google/login")
 def google_login(request: Request):
   _log_debug("[GCAL] login start")
-  if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and GOOGLE_REDIRECT_URI):
+  redirect_uri = _resolve_google_redirect_uri(request)
+  if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and redirect_uri):
     raise HTTPException(
         status_code=500,
         detail=
@@ -5134,7 +5299,7 @@ def google_login(request: Request):
       prompt = "consent"
   params = {
       "client_id": GOOGLE_CLIENT_ID,
-      "redirect_uri": GOOGLE_REDIRECT_URI,
+      "redirect_uri": redirect_uri,
       "response_type": "code",
       "scope": " ".join(GCAL_SCOPES),
       "access_type": "offline",
@@ -5154,7 +5319,7 @@ def google_login(request: Request):
               OAUTH_STATE_COOKIE_NAME,
               state_value,
               max_age=OAUTH_STATE_MAX_AGE_SECONDS)
-  _store_oauth_state(state_value, session_id)
+  _store_oauth_state(state_value, session_id, redirect_uri)
   return resp
 
 
@@ -5171,11 +5336,14 @@ def google_callback(request: Request):
 
   if not code:
     raise HTTPException(status_code=400, detail="code가 없습니다.")
-  stored_session_id = _pop_oauth_state(state)
-  if not state or (expected_state and state != expected_state and not stored_session_id):
+  oauth_entry = _pop_oauth_state(state)
+  if not state or (expected_state and state != expected_state and not oauth_entry):
     raise HTTPException(status_code=400, detail="state 검증에 실패했습니다.")
 
-  if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and GOOGLE_REDIRECT_URI):
+  redirect_uri = (
+      oauth_entry.get("redirect_uri") if isinstance(oauth_entry, dict) else None)
+  redirect_uri = redirect_uri or GOOGLE_REDIRECT_URI
+  if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and redirect_uri):
     raise HTTPException(
         status_code=500,
         detail=
@@ -5187,7 +5355,7 @@ def google_callback(request: Request):
       "code": code,
       "client_id": GOOGLE_CLIENT_ID,
       "client_secret": GOOGLE_CLIENT_SECRET,
-      "redirect_uri": GOOGLE_REDIRECT_URI,
+      "redirect_uri": redirect_uri,
       "grant_type": "authorization_code",
   }
 
@@ -5197,6 +5365,9 @@ def google_callback(request: Request):
     raise HTTPException(status_code=500,
                         detail=f"토큰 교환 실패: {resp.status_code} {resp.text}")
 
+  stored_session_id = (
+      oauth_entry.get("session_id")
+      if isinstance(oauth_entry, dict) else None)
   session_id = _get_session_id(request) or stored_session_id
   if not session_id:
     raise HTTPException(status_code=400, detail="세션이 없습니다.")
@@ -5248,11 +5419,18 @@ def google_callback(request: Request):
 @app.get("/auth/google/status")
 def google_status(request: Request):
   token_data = load_gcal_token_for_request(request)
+  userinfo = get_google_userinfo(request) if token_data else None
+  photo_url = None
+  if isinstance(userinfo, dict):
+    picture = userinfo.get("picture")
+    if isinstance(picture, str) and picture.strip():
+      photo_url = picture
   return {
       "enabled": ENABLE_GCAL,
       "configured": is_gcal_configured(),
       "has_token": token_data is not None,
       "admin": is_admin(request),
+      "photo_url": photo_url,
   }
 
 
@@ -6034,22 +6212,32 @@ async def nlp_preview_stream(body: NaturalText, request: Request, response: Resp
     async def event_generator():
       try:
         async for chunk in _invoke_event_parser_stream(
-            "preview",
+            "parse",
             body.text,
             images,
-            effort,
+            reasoning_effort=effort,
             model_name=model_name,
             context_cache_key=cache_key,
             context_session_id=gcal_session_id if use_google_context else None,
             context_confirmed=bool(body.context_confirmed),
-            is_google=use_google_context):
-          yield f"data: {json.dumps(chunk)}\n\n"
+            is_google=use_google_context
+        ):
+          if await request.is_disconnected():
+            break
+
+          if chunk.get("type") == "data":
+            processed = _post_process_nlp_preview_result(chunk["data"])
+            processed["request_id"] = request_id
+            yield _format_sse_event("data", processed)
+          else:
+            yield _format_sse_event(chunk.get("type", "message"), chunk)
       except Exception as e:
-        yield f"data: {json.dumps({'type': 'error', 'detail': str(e)})}\n\n"
+        yield _format_sse_event("error", {"detail": str(e)})
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
   except Exception as e:
-    raise HTTPException(status_code=502, detail=f"Stream Preview error: {str(e)}")
+    raise HTTPException(status_code=502,
+                        detail=f"Preview NLP stream error: {str(e)}")
 
 
 @app.post("/api/nlp-apply-add", response_model=List[Event])
