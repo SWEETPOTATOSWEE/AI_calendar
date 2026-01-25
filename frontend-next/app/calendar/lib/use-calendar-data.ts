@@ -9,6 +9,7 @@ import {
   fetchAuthStatus,
   getGoogleStreamUrl,
   listEvents,
+  listGoogleTasks,
   updateEvent,
   updateRecurringEvent,
   addRecurringException,
@@ -247,6 +248,17 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
     [authStatus]
   );
 
+  const fetchEventsWithTasks = useCallback(
+    async (start: string, end: string, year: number) => {
+      const eventsPromise = listEvents(start, end, useGoogle);
+      const tasksPromise = useGoogle ? listGoogleTasks().catch(() => []) : Promise.resolve([]);
+      const [events, tasks] = await Promise.all([eventsPromise, tasksPromise]);
+      const filteredTasks = tasks.filter((t) => toYearFromIso(t.start) === year);
+      return [...events, ...filteredTasks];
+    },
+    [useGoogle]
+  );
+
   const activeYear = useMemo(() => {
     if (viewAnchor) return viewAnchor.getFullYear();
     const startDate = toDateOnly(rangeStart);
@@ -362,7 +374,7 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
           const adjacentKey = `${useGoogle ? "google" : "local"}:${adjacentYear}`;
           if (!cacheRef.current[adjacentKey]) {
             const { start: adjStart, end: adjEnd } = getYearRange(adjacentYear);
-            listEvents(adjStart, adjEnd, useGoogle)
+            fetchEventsWithTasks(adjStart, adjEnd, adjacentYear)
               .then((prefetch) => {
                 updateCache(adjacentKey, buildIndexes(prefetch));
               })
@@ -372,7 +384,7 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
         return;
       }
       const { start, end } = getYearRange(activeYear);
-      const data = await listEvents(start, end, useGoogle);
+      const data = await fetchEventsWithTasks(start, end, activeYear);
       cacheRef.current[activeKey] = buildIndexes(data);
       setEvents(cacheRef.current[activeKey].events);
       setIndexes(cacheRef.current[activeKey].indexes);
@@ -382,7 +394,7 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
         const adjacentKey = `${useGoogle ? "google" : "local"}:${adjacentYear}`;
         if (!cacheRef.current[adjacentKey]) {
           const { start: adjStart, end: adjEnd } = getYearRange(adjacentYear);
-          listEvents(adjStart, adjEnd, useGoogle)
+          fetchEventsWithTasks(adjStart, adjEnd, adjacentYear)
             .then((prefetch) => {
               updateCache(adjacentKey, buildIndexes(prefetch));
             })
@@ -402,10 +414,16 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
     setLoading(true);
     setError(null);
     try {
-      const data = await listEvents(rangeStart, rangeEnd, useGoogle);
+      const tasksPromise = useGoogle ? listGoogleTasks().catch(() => []) : Promise.resolve([]);
+      const [data, tasks] = await Promise.all([
+        listEvents(rangeStart, rangeEnd, useGoogle),
+        tasksPromise,
+      ]);
+      const combined = [...data, ...tasks];
+
       const yearsInRange = new Set<number>();
       getYearsInRange(rangeStart, rangeEnd).forEach((year) => yearsInRange.add(year));
-      data.forEach((event) => {
+      combined.forEach((event) => {
         const year = toYearFromIso(event.start);
         if (year) yearsInRange.add(year);
       });
@@ -422,7 +440,7 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
         const remaining = current.events.filter(
           (event) => !eventOverlapsRange(event, rangeStart, rangeEnd)
         );
-        const additions = data.filter((event) => toYearFromIso(event.start) === year);
+        const additions = combined.filter((event) => toYearFromIso(event.start) === year);
         updateCache(key, buildIndexes([...remaining, ...additions]));
       });
 
@@ -430,7 +448,7 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
         await Promise.all(
           missingYears.map(async (year) => {
             const { start, end } = getYearRange(year);
-            const fullData = await listEvents(start, end, useGoogle);
+            const fullData = await fetchEventsWithTasks(start, end, year);
             updateCache(`${prefix}:${year}`, buildIndexes(fullData));
           })
         );
@@ -665,7 +683,7 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
         });
         for (const year of years) {
           const { start, end } = getYearRange(year);
-          const data = await listEvents(start, end, useGoogle);
+          const data = await fetchEventsWithTasks(start, end, year);
           const key = `${useGoogle ? "google" : "local"}:${year}`;
           updateCache(key, buildIndexes(data));
         }
@@ -766,7 +784,7 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
         missing.map(async (year) => {
           const key = `${prefix}:${year}`;
           const { start, end } = getYearRange(year);
-          const data = await listEvents(start, end, useGoogle);
+          const data = await fetchEventsWithTasks(start, end, year);
           updateCache(key, buildIndexes(data));
         })
       );

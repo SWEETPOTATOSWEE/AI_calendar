@@ -7,6 +7,20 @@ type NlpClassifyResponse = { type?: string };
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "/api").replace(/\/$/, "");
 const BACKEND_BASE = (process.env.NEXT_PUBLIC_BACKEND_BASE || (API_BASE.startsWith("http") ? new URL(API_BASE).origin : "")).replace(/\/$/, "");
 
+// SSE 스트리밍을 위한 직접 백엔드 URL 가져오기 (Next.js rewrites 우회)
+const getBackendDirectUrl = () => {
+  if (process.env.NEXT_PUBLIC_BACKEND_DIRECT) {
+    return process.env.NEXT_PUBLIC_BACKEND_DIRECT.replace(/\/$/, "");
+  }
+  if (BACKEND_BASE) {
+    return BACKEND_BASE;
+  }
+  if (typeof window !== "undefined") {
+    return window.location.origin;
+  }
+  return "";
+};
+
 const buildUrl = (base: string, path: string) => {
   if (!base) return path;
   return `${base}${path.startsWith("/") ? "" : "/"}${path}`;
@@ -22,6 +36,20 @@ const apiUrl = (path: string) => {
   }
   return url;
 };
+
+// SSE 스트리밍용 URL (Next.js rewrites 우회)
+const streamingUrl = (path: string) => {
+  const backendDirect = getBackendDirectUrl();
+  const url = buildUrl(backendDirect, path);
+  if (typeof window !== "undefined") {
+    const sp = new URLSearchParams(window.location.search);
+    if (sp.get("mode") === "google") {
+      return url + (url.includes("?") ? "&" : "?") + "mode=google";
+    }
+  }
+  return url;
+};
+
 const backendUrl = (path: string) => buildUrl(BACKEND_BASE, path);
 
 const buildGoogleEventKey = (calendarId?: string | null, eventId?: string | number | null) => {
@@ -75,6 +103,21 @@ export const listEvents = async (startDate: string, endDate: string, useGoogle: 
   return (data || []).map((event) => ({
     ...event,
     source: "local" as const,
+  }));
+};
+
+export const listGoogleTasks = async () => {
+  const url = apiUrl("/google/tasks");
+  const data = await fetchJson<any[]>(url, { method: "GET" });
+  return (data || []).map((task) => ({
+    id: `task:${task.id}`,
+    title: task.title,
+    start: task.due || new Date().toISOString(),
+    end: task.due || null,
+    description: task.notes || "",
+    source: "google_task" as const,
+    google_event_id: task.id,
+    all_day: task.due ? !task.due.includes("T") : true,
   }));
 };
 
@@ -194,7 +237,10 @@ export const previewNlpStream = async (
   },
   onMessage: (event: string, data: any) => void
 ) => {
-  const url = apiUrl("/nlp-preview-stream");
+  const url = streamingUrl("/api/nlp-preview-stream");
+  console.log("[SSE] Starting stream request to:", url);
+  console.log("[SSE] Payload:", { ...payload, images: payload.images ? `${payload.images.length} images` : undefined });
+  
   const response = await fetch(url, {
     method: "POST",
     headers: {
@@ -204,39 +250,63 @@ export const previewNlpStream = async (
     credentials: "include",
   });
 
+  console.log("[SSE] Response status:", response.status);
+  console.log("[SSE] Response headers:", Object.fromEntries(response.headers.entries()));
+
   if (!response.ok) {
     const text = await response.text();
     throw new Error(text || `Streaming failed: ${response.status}`);
   }
 
   const reader = response.body?.getReader();
-  if (!reader) return;
+  if (!reader) {
+    console.error("[SSE] No reader available");
+    return;
+  }
 
+  console.log("[SSE] Starting to read stream...");
   const decoder = new TextDecoder();
   let buffer = "";
+  let chunkCount = 0;
 
   while (true) {
     const { done, value } = await reader.read();
-    if (done) break;
+    chunkCount++;
+    
+    if (done) {
+      console.log("[SSE] Stream ended. Total chunks:", chunkCount);
+      break;
+    }
 
-    buffer += decoder.decode(value, { stream: true });
+    const decoded = decoder.decode(value, { stream: true });
+    console.log(`[SSE] Chunk ${chunkCount} received, length:`, decoded.length, "bytes:", decoded.substring(0, 100));
+    
+    buffer += decoded;
     const lines = buffer.split("\n\n");
     buffer = lines.pop() || "";
 
+    console.log(`[SSE] Processing ${lines.length} messages from chunk ${chunkCount}`);
+
     for (const line of lines) {
+      if (!line.trim()) continue;
+      
       const eventMatch = line.match(/^event: (.*)$/m);
       const dataMatch = line.match(/^data: (.*)$/m);
+      
       if (dataMatch) {
         const event = eventMatch ? eventMatch[1] : "message";
         try {
           const data = JSON.parse(dataMatch[1]);
+          console.log(`[SSE] Parsed event: ${event}`, data);
           onMessage(event, data);
         } catch (e) {
-          console.error("Failed to parse SSE data", e);
+          console.error("[SSE] Failed to parse SSE data", e, "Raw:", dataMatch[1]);
         }
       }
     }
   }
+  
+  console.log("[SSE] Stream processing complete");
 };
 
 export const classifyNlp = async (text: string, has_images?: boolean, request_id?: string) => {

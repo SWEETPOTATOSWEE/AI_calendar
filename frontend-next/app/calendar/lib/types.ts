@@ -1,4 +1,4 @@
-export type CalendarEventSource = "local" | "google";
+export type CalendarEventSource = "local" | "google" | "google_task";
 
 export type CalendarEvent = {
   id: number | string;

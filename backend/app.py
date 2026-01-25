@@ -75,6 +75,7 @@ GCAL_SCOPES = [
     "profile",
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/tasks",
 ]
 
 ADMIN_COOKIE_NAME = "admin"
@@ -3463,6 +3464,26 @@ def get_gcal_service(session_id: str):
   return service
 
 
+def get_google_tasks_service(session_id: str):
+  if not is_gcal_configured():
+    raise RuntimeError("Google Calendar is not configured.")
+
+  token_data = load_gcal_token_for_session(session_id)
+  if not token_data:
+    raise RuntimeError(
+        "Google OAuth token not found. Run /auth/google/login first.")
+
+  creds = Credentials.from_authorized_user_info(token_data, GCAL_SCOPES)
+
+  if creds.expired and creds.refresh_token:
+    creds.refresh(GoogleRequest())
+    new_data = json.loads(creds.to_json())
+    save_gcal_token_for_session(session_id, new_data)
+
+  service = build("tasks", "v1", credentials=creds)
+  return service
+
+
 def get_google_userinfo(request: Request) -> Optional[Dict[str, Any]]:
   session_id = _get_session_id(request)
   if not session_id:
@@ -5644,6 +5665,20 @@ def google_events(request: Request,
   return fetch_google_events_between(scope[0], scope[1], session_id)
 
 
+@app.get("/api/google/tasks")
+def google_tasks(request: Request):
+  session_id = get_google_session_id(request)
+  if not session_id:
+    raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
+  try:
+    service = get_google_tasks_service(session_id)
+    results = service.tasks().list(tasklist='@default').execute()
+    return results.get('items', [])
+  except Exception as e:
+    logger.exception("Google Tasks fetch error")
+    raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.delete("/api/google/events/{event_id}")
 def google_delete_event(request: Request,
                         event_id: str,
@@ -6209,7 +6244,10 @@ async def nlp_preview_stream(body: NaturalText, request: Request, response: Resp
                                                     use_google_context)
     gcal_session_id = get_google_session_id(request)
 
+    print(f"[SSE STREAM] Starting stream for request_id={request_id}, google_mode={use_google_context}, session_id={session_id}")
+
     async def event_generator():
+      chunk_count = 0
       try:
         async for chunk in _invoke_event_parser_stream(
             "parse",
@@ -6223,19 +6261,38 @@ async def nlp_preview_stream(body: NaturalText, request: Request, response: Resp
             is_google=use_google_context
         ):
           if await request.is_disconnected():
+            print(f"[SSE STREAM] Client disconnected at chunk {chunk_count}")
             break
 
+          chunk_count += 1
+          event_type = chunk.get("type", "message")
+          
           if chunk.get("type") == "data":
             processed = _post_process_nlp_preview_result(chunk["data"])
             processed["request_id"] = request_id
-            yield _format_sse_event("data", processed)
+            event_data = _format_sse_event("data", processed)
+            print(f"[SSE STREAM] Chunk {chunk_count}: Sending final data event, size={len(event_data)} bytes")
+            yield event_data
           else:
-            yield _format_sse_event(chunk.get("type", "message"), chunk)
+            event_data = _format_sse_event(event_type, chunk)
+            print(f"[SSE STREAM] Chunk {chunk_count}: Sending {event_type} event, size={len(event_data)} bytes")
+            yield event_data
+            
+        print(f"[SSE STREAM] Stream completed successfully, total chunks: {chunk_count}")
       except Exception as e:
+        print(f"[SSE STREAM] Error in stream: {e}")
         yield _format_sse_event("error", {"detail": str(e)})
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+      event_generator(),
+      media_type="text/event-stream",
+      headers={
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+      }
+    )
   except Exception as e:
+    print(f"[SSE STREAM] Failed to start stream: {e}")
     raise HTTPException(status_code=502,
                         detail=f"Preview NLP stream error: {str(e)}")
 

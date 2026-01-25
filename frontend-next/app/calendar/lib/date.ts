@@ -72,6 +72,14 @@ export const formatLongDate = (date: Date) => {
   });
 };
 
+export const formatSearchDate = (date: Date) => {
+  const year = date.getFullYear();
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  const weekday = date.toLocaleDateString("ko-KR", { weekday: "short" });
+  return `${year} ${month}/${day} (${weekday})`;
+};
+
 export const formatShortDate = (date: Date) => {
   return date.toLocaleDateString("ko-KR", { month: "long", day: "numeric", year: "numeric" });
 };

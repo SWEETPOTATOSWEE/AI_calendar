@@ -17,6 +17,7 @@ import {
   addMonths,
   formatLongDate,
   formatMonthYear,
+  formatSearchDate,
   formatShortDate,
   formatTime,
   formatTimeRange,
@@ -31,8 +32,10 @@ import {
 import type { CalendarEvent, EventRecurrence, RecurringEventPayload } from "./lib/types";
 import { useCalendarData } from "./lib/use-calendar-data";
 import { useAiAssistant, type AddPreviewItem } from "./lib/use-ai-assistant";
+import { DatePopover } from "./components/DatePopover";
 import {
   Bell,
+  Calendar as CalendarIcon,
   ChevronLeft,
   ChevronRight,
   ChevronDown,
@@ -81,20 +84,17 @@ const VIEW_LABELS: Record<ViewMode, string> = {
 
 
 const MONTH_EVENT_COLOR_MAP: Record<string, { bg: string; border: string; text: string }> = {
-  "1": { bg: "#dbeafe", border: "#2563eb", text: "#1e3a8a" },
-  "2": { bg: "#d1fae5", border: "#059669", text: "#065f46" },
-  "3": { bg: "#ede9fe", border: "#7c3aed", text: "#4c1d95" },
-  "4": { bg: "#ffe4e6", border: "#e11d48", text: "#9f1239" },
-  "5": { bg: "#ffedd5", border: "#ea580c", text: "#9a3412" },
-  "6": { bg: "#ccfbf1", border: "#0d9488", text: "#115e59" },
-  "7": { bg: "#e0e7ff", border: "#4f46e5", text: "#3730a3" },
-  "8": { bg: "#fef3c7", border: "#d97706", text: "#92400e" },
-  "9": { bg: "#fce7f3", border: "#db2777", text: "#9d174d" },
-  "10": { bg: "#f1f5f9", border: "#64748b", text: "#334155" },
-  "11": { bg: "#cffafe", border: "#0891b2", text: "#0e7490" },
+  "1": { bg: "oklch(var(--success) / 0.15)", border: "oklch(var(--success))", text: "oklch(var(--success))" },
+  "2": { bg: "oklch(var(--error) / 0.15)", border: "oklch(var(--error))", text: "oklch(var(--error))" },
+  "3": { bg: "oklch(var(--warning) / 0.15)", border: "oklch(var(--warning))", text: "oklch(var(--warning))" },
+  "4": { bg: "oklch(var(--info) / 0.15)", border: "oklch(var(--info))", text: "oklch(var(--info))" },
 };
 
-const DEFAULT_MONTH_EVENT_COLOR = { bg: "#dbeafe", border: "#64748b", text: "#2f5bd6" };
+const DEFAULT_MONTH_EVENT_COLOR = { 
+  bg: "oklch(var(--primary-low))", 
+  border: "oklch(var(--primary))", 
+  text: "oklch(var(--primary))" 
+};
 const getMonthEventColor = (event: CalendarEvent) => {
   const colorKey = event.color_id ? String(event.color_id) : "";
   if (colorKey && colorKey !== "default") {
@@ -440,12 +440,14 @@ function CalendarPageInner() {
   };
 
   const openAiDrawer = () => {
+    setSearchOpen(false);
     setModalOpen(false);
     setRightPanelOpen(true);
     ai.openWithText("");
   };
 
   const openEventDrawer = (options?: { reset?: boolean; showForm?: boolean }) => {
+    setSearchOpen(false);
     if (options?.reset) {
       resetEventForm();
     }
@@ -467,6 +469,9 @@ function CalendarPageInner() {
   const closeEventDrawer = () => {
     hideEventForm();
     setRightPanelOpen(false);
+    setSearchOpen(false);
+    setSearchResultsOpen(false);
+    setSearchAdvancedOpen(false);
   };
 
   const selectedEvents = useMemo(() => {
@@ -898,7 +903,6 @@ function CalendarPageInner() {
       lastSearchKeyRef.current = null;
       searchResultsCacheRef.current = [];
       setSearchResults([]);
-      setSearchIndex(0);
       return [];
     }
 
@@ -906,7 +910,6 @@ function CalendarPageInner() {
       lastSearchKeyRef.current = null;
       searchResultsCacheRef.current = [];
       setSearchResults([]);
-      setSearchIndex(0);
       return [];
     }
 
@@ -973,6 +976,18 @@ function CalendarPageInner() {
     setSearchAdvancedOpen(false);
     await getSearchResults("basic", { resetIndex: true, focusFirst: false });
     setSearchResultsOpen(true);
+  };
+
+  const handleAdvancedSearch = async () => {
+    await getSearchResults("advanced", { resetIndex: true });
+    setSearchResultsOpen(true);
+  };
+
+  const onSearchKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      void handleAdvancedSearch();
+    }
   };
 
   const openMonthEventPopup = (event: CalendarEvent, anchor: HTMLElement | null) => {
@@ -1118,8 +1133,8 @@ function CalendarPageInner() {
     return "translate(0, 0)";
   }, [dayEventsPopup]);
   const monthPopupEvent = monthEventPopup?.event ?? null;
-  const monthPopupAccent = monthPopupEvent ? getPopupAccentColor(monthPopupEvent) : "#111827";
-  const monthPopupCardBg = "#F9FAFB";
+  const monthPopupAccent = monthPopupEvent ? getPopupAccentColor(monthPopupEvent) : "oklch(var(--text-primary))";
+  const monthPopupCardBg = "oklch(var(--bg-surface))";
   const monthPopupDateLabel = monthPopupEvent ? getEventDateLabel(monthPopupEvent) : "";
   const monthPopupTimeLabel = monthPopupEvent ? getEventTimeLabel(monthPopupEvent) : "";
   const monthPopupReminderLabel = monthPopupEvent ? getReminderLabel(monthPopupEvent.reminders) : null;
@@ -1192,7 +1207,6 @@ function CalendarPageInner() {
             </div>
           </div>
           <div className="relative flex flex-1 items-center justify-end min-h-[36px] gap-3">
-            {!searchOpen && (
               <motion.div
                 className="header-actions-layer flex flex-wrap items-center gap-3 justify-end"
                 initial={{ opacity: 0, y: -8 }}
@@ -1239,7 +1253,7 @@ function CalendarPageInner() {
                   {createMenuOpen && (
                     <div className="absolute left-0 mt-2 z-50 w-max" role="menu">
                       <div
-                        className="min-w-full overflow-hidden whitespace-nowrap popover-surface popover-animate border border-border-subtle bg-bg-surface shadow-lg"
+                        className="min-w-full overflow-hidden whitespace-nowrap popover-surface popover-animate border border-border-subtle bg-canvas shadow-lg"
                         data-side="bottom"
                         data-align="start"
                       >
@@ -1275,7 +1289,12 @@ function CalendarPageInner() {
                 <button
                   className="flex items-center justify-center rounded-full size-9 hover:bg-bg-subtle transition-colors text-text-secondary"
                   type="button"
-                  onClick={() => setSearchOpen(true)}
+                  onClick={() => {
+                    setSearchOpen(true);
+                    setModalOpen(false);
+                    setRightPanelOpen(true);
+                    ai.close();
+                  }}
                   aria-label="검색"
                   aria-expanded={searchOpen}
                 >
@@ -1320,202 +1339,6 @@ function CalendarPageInner() {
                 </button>
               )}
               </motion.div>
-            )}
-            {searchOpen && (
-              <motion.div
-                className="absolute left-0 right-0 -top-0.5 z-50 px-6 flex justify-center"
-                initial={{ opacity: 0, y: -8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.25, ease: [0.2, 0.7, 0.2, 1] }}
-              >
-                <div className="flex w-full items-start justify-center gap-3">
-                  <div
-                    className={`flex flex-1 max-w-3xl flex-col rounded-[28px] border border-border-subtle bg-bg-surface px-4 py-2 shadow-sm ${
-                      searchAdvancedOpen ? "" : "min-h-[48px]"
-                    } ${searchAdvancedOpen || searchResultsOpen ? "justify-start" : "justify-center"}`}
-                  >
-                    <div
-                      className={`flex items-center gap-3 transition-[padding] duration-300 ease-out ${
-                        searchResultsOpen || searchAdvancedOpen ? "pb-2" : "pb-0"
-                      }`}
-                    >
-                      <div className="flex flex-1 items-center rounded-full bg-bg-surface">
-                        <Search className="mr-2 size-4 text-text-secondary" />
-                        <input
-                          className="w-full bg-transparent text-[13px] text-text-primary placeholder:text-text-tertiary focus:outline-none"
-                          type="text"
-                          placeholder="일정 키워드 입력"
-                          value={searchFilters.title}
-                          onChange={(event) =>
-                            setSearchFilters((prev) => ({ ...prev, title: event.target.value }))
-                          }
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter") {
-                              event.preventDefault();
-                              void handleBasicSearch();
-                            }
-                          }}
-                          aria-label="기본 검색어"
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        className="flex size-8 items-center justify-center rounded-full bg-transparent text-text-secondary transition-colors hover:bg-bg-surface"
-                        onClick={() => setSearchAdvancedOpen((prev) => !prev)}
-                        aria-label="고급 검색 토글"
-                        aria-expanded={searchAdvancedOpen}
-                      >
-                        <ChevronDown
-                          className={`size-4 transition-transform ${searchAdvancedOpen ? "rotate-180" : ""}`}
-                        />
-                      </button>
-                    </div>
-                    <div
-                      className="overflow-hidden transition-[height] duration-[350ms] ease-[cubic-bezier(0.09,0.75,0.53,1)]"
-                      style={{ height: searchResultsHeight }}
-                    >
-                      <div ref={searchResultsPanelRef} className="px-5 pb-4 pt-3">
-                        {searchResults.length === 0 ? (
-                          <div className="rounded-xl border border-dashed border-border-subtle bg-bg-surface px-4 py-6 text-center text-xs text-text-tertiary">
-                            검색 결과가 없습니다.
-                          </div>
-                        ) : (
-                          <div className="max-h-[240px] space-y-2 overflow-y-auto pr-1">
-                            {searchResults.map((event, index) => {
-                              const eventDate = getEventStartDate(event.start);
-                              const dateLabel = eventDate ? formatShortDate(eventDate) : "날짜 없음";
-                              return (
-                                <div
-                                  key={`search-result-${event.id}-${event.start ?? "no-start"}-${index}`}
-                                  className="flex items-center justify-between gap-4 rounded-xl border border-border-subtle bg-bg-surface px-4 py-3 text-xs text-text-primary shadow-sm"
-                                >
-                                  <div className="min-w-0">
-                                    <div className="truncate font-semibold text-text-primary">{event.title}</div>
-                                    <div className="mt-1 text-[11px] text-text-secondary">{dateLabel}</div>
-                                  </div>
-                                  <div className="min-w-[120px] text-right text-[11px] text-text-secondary">
-                                    {event.location?.trim() || "-"}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <div
-                      className="overflow-hidden transition-[height] duration-[400ms] ease-[cubic-bezier(0.09,0.75,0.53,1)]"
-                      style={{ height: searchAdvancedHeight }}
-                    >
-                      <div ref={searchAdvancedRef} className="px-5 pb-4 pt-2">
-                        <div className="grid grid-cols-[140px_1fr] gap-x-6 gap-y-3 text-sm">
-                          <div className="pt-2 text-text-primary">참석자</div>
-                          <input
-                            className="w-full rounded-full border border-border-subtle bg-bg-surface px-4 py-2 text-[13px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand"
-                            type="text"
-                            placeholder="참석자, 주최자 또는 크리에이터 입력"
-                            value={searchFilters.attendees}
-                            onChange={(event) =>
-                              setSearchFilters((prev) => ({ ...prev, attendees: event.target.value }))
-                            }
-                            aria-label="참석자"
-                          />
-
-                          <div className="pt-2 text-text-primary">장소</div>
-                          <input
-                            className="w-full rounded-full border border-border-subtle bg-bg-surface px-4 py-2 text-[13px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand"
-                            type="text"
-                            placeholder="위치 또는 회의실 입력"
-                            value={searchFilters.location}
-                            onChange={(event) =>
-                              setSearchFilters((prev) => ({ ...prev, location: event.target.value }))
-                            }
-                            aria-label="장소"
-                          />
-
-                          <div className="pt-2 text-text-primary">제외할 검색어</div>
-                          <input
-                            className="w-full rounded-full border border-border-subtle bg-bg-surface px-4 py-2 text-[13px] text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand"
-                            type="text"
-                            placeholder="일정에 포함되지 않은 키워드"
-                            value={searchFilters.exclude}
-                            onChange={(event) =>
-                              setSearchFilters((prev) => ({ ...prev, exclude: event.target.value }))
-                            }
-                            aria-label="제외할 검색어"
-                          />
-
-                          <div className="pt-2 text-text-primary">날짜</div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <input
-                              className="rounded-full border border-border-subtle bg-bg-surface px-4 py-2 text-[13px] text-text-primary focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand"
-                              type="date"
-                              value={searchFilters.startDate}
-                              onChange={(event) =>
-                                setSearchFilters((prev) => ({ ...prev, startDate: event.target.value }))
-                              }
-                              aria-label="시작 날짜"
-                            />
-                            <span className="text-text-tertiary">-</span>
-                            <input
-                              className="rounded-full border border-border-subtle bg-bg-surface px-4 py-2 text-[13px] text-text-primary focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand"
-                              type="date"
-                              value={searchFilters.endDate}
-                              onChange={(event) =>
-                                setSearchFilters((prev) => ({ ...prev, endDate: event.target.value }))
-                              }
-                              aria-label="종료 날짜"
-                            />
-                          </div>
-
-                          <div className="pt-2 text-text-primary">검색 범위</div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <input
-                              className="rounded-full border border-border-subtle bg-bg-surface px-4 py-2 text-[13px] text-text-primary focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand"
-                              type="date"
-                              value={searchFilters.rangeStart}
-                              onChange={(event) =>
-                                setSearchFilters((prev) => ({ ...prev, rangeStart: event.target.value }))
-                              }
-                              aria-label="검색 범위 시작"
-                            />
-                            <span className="text-text-tertiary">-</span>
-                            <input
-                              className="rounded-full border border-border-subtle bg-bg-surface px-4 py-2 text-[13px] text-text-primary focus:outline-none focus:ring-2 focus:ring-brand/20 focus:border-brand"
-                              type="date"
-                              value={searchFilters.rangeEnd}
-                              onChange={(event) =>
-                                setSearchFilters((prev) => ({ ...prev, rangeEnd: event.target.value }))
-                              }
-                              aria-label="검색 범위 종료"
-                            />
-                          </div>
-                        </div>
-                        <div className="mt-4 flex items-center justify-end gap-4 text-sm">
-                          <button
-                            type="button"
-                            className="flex size-9 items-center justify-center rounded-full border border-border-subtle text-text-tertiary transition-colors hover:bg-bg-surface hover:text-text-secondary"
-                            aria-label="재설정"
-                          >
-                            <Undo2 className="size-4" />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 pt-3">
-                    <button
-                      type="button"
-                      className="flex size-8 items-center justify-center rounded-full bg-transparent text-text-secondary transition-colors hover:bg-bg-surface"
-                      onClick={() => setSearchOpen(false)}
-                      aria-label="검색 닫기"
-                    >
-                      <X className="size-4" />
-                    </button>
-                  </div>
-                </div>
-              </motion.div>
-            )}
           </div>
         </div>
       </header>
@@ -1736,7 +1559,7 @@ function CalendarPageInner() {
                       skipDateClickRef.current = true;
                       setSelectedDate(arg.date);
                       setMonthEventPopup(null);
-                      openDayEventsPopup(arg.date, hiddenEvents, anchor);
+                      openDayEventsPopup(arg.date, hiddenEvents, anchor as HTMLElement | null);
                       return {} as unknown as "popover";
                     }}
                   />
@@ -1873,12 +1696,12 @@ function CalendarPageInner() {
                   className="flex items-start gap-3 rounded-xl px-3 py-2"
                   style={{ backgroundColor: monthPopupCardBg }}
                 >
-                  <MapPin className="mt-0.5 size-4 text-[#1b1814] dark:text-slate-100" />
+                  <MapPin className="mt-0.5 size-4 text-text-primary dark:text-slate-100" />
                   <div>
-                    <p className="text-xs uppercase tracking-[0.2em] text-[#a18f7b] dark:text-slate-400">
+                    <p className="text-xs uppercase tracking-[0.2em] text-text-disabled dark:text-slate-400">
                       장소
                     </p>
-                    <p className="font-semibold text-[#1b1814] dark:text-white">
+                    <p className="font-semibold text-text-primary dark:text-white">
                       {monthPopupLocation}
                     </p>
                   </div>
@@ -1889,12 +1712,12 @@ function CalendarPageInner() {
                   className="flex items-start gap-3 rounded-xl px-3 py-2"
                   style={{ backgroundColor: monthPopupCardBg }}
                 >
-                  <Bell className="mt-0.5 size-4 text-[#1b1814] dark:text-slate-100" />
+                  <Bell className="mt-0.5 size-4 text-text-primary dark:text-slate-100" />
                   <div>
-                    <p className="text-xs uppercase tracking-[0.2em] text-[#a18f7b] dark:text-slate-400">
+                    <p className="text-xs uppercase tracking-[0.2em] text-text-disabled dark:text-slate-400">
                       알림
                     </p>
-                    <p className="font-semibold text-[#1b1814] dark:text-white">
+                    <p className="font-semibold text-text-primary dark:text-white">
                       {monthPopupReminderLabel}
                     </p>
                   </div>
@@ -1904,13 +1727,13 @@ function CalendarPageInner() {
 
             {monthPopupDescription && (
               <div
-                className="mt-4 rounded-xl px-4 py-3 text-sm text-[#5d534a] dark:text-slate-200"
+                className="mt-4 rounded-xl px-4 py-3 text-sm text-text-secondary dark:text-slate-200"
                 style={{ backgroundColor: monthPopupCardBg }}
               >
-                <p className="text-xs uppercase tracking-[0.2em] text-[#a18f7b] dark:text-slate-400">
+                <p className="text-xs uppercase tracking-[0.2em] text-text-disabled dark:text-slate-400">
                   메모
                 </p>
-                <p className="mt-2 text-sm text-[#1b1814] dark:text-white">
+                <p className="mt-2 text-sm text-text-primary dark:text-white">
                   {monthPopupDescription}
                 </p>
               </div>
@@ -2032,11 +1855,11 @@ function CalendarPageInner() {
           }`}
         >
           {rightPanelOpen && (
-            <div className="flex items-center justify-between px-3 pt-3">
-              {ai.open ? (
+            <div className="flex items-center justify-between px-3 pt-3 bg-bg-surface">
+              {ai.open && !searchOpen ? (
                 <div className="flex items-center gap-4">
                   <button
-                    className="size-9 rounded-full flex items-center justify-center bg-bg-subtle text-text-secondary hover:text-token-primary"
+                    className="size-9 rounded-full flex items-center justify-center bg-subtle text-text-secondary hover:text-token-primary"
                     type="button"
                     onClick={ai.resetConversation}
                     aria-label="대화 초기화"
@@ -2049,7 +1872,7 @@ function CalendarPageInner() {
               )}
               <button
                 type="button"
-                className="flex size-9 items-center justify-center rounded-full hover:bg-bg-subtle transition-colors text-text-secondary"
+                className="flex size-9 items-center justify-center rounded-full hover:bg-subtle transition-colors text-text-secondary"
                 onClick={closeEventDrawer}
                 aria-label="오른쪽 탭 닫기"
               >
@@ -2057,8 +1880,192 @@ function CalendarPageInner() {
               </button>
             </div>
           )}
-          <div className={ai.open ? "flex-1 overflow-visible" : "flex-1 overflow-hidden"}>
-            {ai.open ? (
+          <div className={ai.open ? "flex-1 overflow-visible" : "flex-1 overflow-hidden min-h-0"}>
+            {searchOpen ? (
+              <div className="flex h-full flex-col overflow-hidden min-h-0">
+                <div className="px-3 py-2">
+                  <div className="flex items-center gap-2 rounded-xl border border-border-subtle bg-bg-canvas px-3 py-1.5 shadow-sm">
+                    <Search className="size-4 text-text-secondary" />
+                    <input
+                      className="flex-1 bg-transparent text-[13px] text-text-primary focus:outline-none placeholder:text-text-disabled"
+                      placeholder="일정 키워드 입력"
+                      value={searchFilters.title}
+                      onChange={(event) =>
+                        setSearchFilters((prev) => ({ ...prev, title: event.target.value }))
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void handleBasicSearch();
+                        }
+                      }}
+                      aria-label="기본 검색어"
+                    />
+                    <button
+                      type="button"
+                      className={`flex size-7 items-center justify-center rounded-lg transition-colors hover:bg-bg-subtle ${
+                        searchAdvancedOpen ? "text-token-primary bg-bg-subtle" : "text-text-secondary"
+                      }`}
+                      onClick={() => setSearchAdvancedOpen((prev) => !prev)}
+                      aria-label="고급 검색 토글"
+                      aria-expanded={searchAdvancedOpen}
+                    >
+                      <ChevronDown
+                        className={`size-4 transition-transform ${searchAdvancedOpen ? "rotate-180" : ""}`}
+                      />
+                    </button>
+                  </div>
+                </div>
+
+                {searchAdvancedOpen && (
+                  <div className="px-3 pb-4 border-b border-border-subtle animate-in slide-in-from-top-1 duration-200">
+                    <div className="space-y-3 pt-1">
+                      <div className="space-y-1">
+                        <div className="text-[11px] font-medium text-text-secondary px-1">참석자</div>
+                        <input
+                          className="w-full rounded-lg border border-border-subtle bg-bg-canvas px-3 py-1.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-token-primary/20"
+                          type="text"
+                          placeholder="참석자, 주최자 입력"
+                          value={searchFilters.attendees}
+                          onChange={(event) =>
+                            setSearchFilters((prev) => ({ ...prev, attendees: event.target.value }))
+                          }
+                          onKeyDown={onSearchKeyDown}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <div className="text-[11px] font-medium text-text-secondary px-1">장소</div>
+                        <input
+                          className="w-full rounded-lg border border-border-subtle bg-bg-canvas px-3 py-1.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-token-primary/20"
+                          type="text"
+                          placeholder="위치 또는 회의실"
+                          value={searchFilters.location}
+                          onChange={(event) =>
+                            setSearchFilters((prev) => ({ ...prev, location: event.target.value }))
+                          }
+                          onKeyDown={onSearchKeyDown}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <div className="text-[11px] font-medium text-text-secondary px-1">제외할 검색어</div>
+                        <input
+                          className="w-full rounded-lg border border-border-subtle bg-bg-canvas px-3 py-1.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-token-primary/20"
+                          type="text"
+                          placeholder="제외할 키워드"
+                          value={searchFilters.exclude}
+                          onChange={(event) =>
+                            setSearchFilters((prev) => ({ ...prev, exclude: event.target.value }))
+                          }
+                          onKeyDown={onSearchKeyDown}
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <div className="text-[11px] font-medium text-text-secondary px-1">시작일</div>
+                          <DatePopover
+                            className="w-full"
+                            value={searchFilters.startDate}
+                            onChange={(val) =>
+                              setSearchFilters((prev) => ({ ...prev, startDate: val }))
+                            }
+                            label="시작일"
+                            icon={<CalendarIcon className="size-3.5" />}
+                            placeholder="시작일"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <div className="text-[11px] font-medium text-text-secondary px-1">종료일</div>
+                          <DatePopover
+                            className="w-full"
+                            value={searchFilters.endDate}
+                            onChange={(val) =>
+                              setSearchFilters((prev) => ({ ...prev, endDate: val }))
+                            }
+                            label="종료일"
+                            icon={<CalendarIcon className="size-3.5" />}
+                            placeholder="종료일"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex justify-end items-center pt-2">
+                        <button
+                          type="button"
+                          className="text-[11px] text-text-tertiary hover:text-text-secondary transition-colors inline-flex items-center gap-1"
+                          onClick={() => {
+                            setSearchFilters((prev) => ({
+                              ...prev,
+                              attendees: "",
+                              location: "",
+                              exclude: "",
+                              startDate: "",
+                              endDate: "",
+                            }));
+                          }}
+                        >
+                          <Undo2 className="size-3" /> 필터 초기화
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex-1 overflow-y-auto px-3 py-2 pb-10">
+                  {searchResultsOpen && (
+                    searchResults.length === 0 ? (
+                      <div className="py-10 text-center text-xs text-text-tertiary">
+                        검색 결과가 없습니다.
+                      </div>
+                    ) : (
+                      (() => {
+                        const groups: Record<string, typeof searchResults> = {};
+                        searchResults.forEach((event) => {
+                          const date = getEventStartDate(event.start);
+                          const key = date ? formatSearchDate(date) : "날짜 미지정";
+                          if (!groups[key]) groups[key] = [];
+                          groups[key].push(event);
+                        });
+
+                        return Object.entries(groups).map(([dateLabel, events], gIndex) => (
+                          <div key={`group-${dateLabel}-${gIndex}`} className="mb-4">
+                            <div className="px-1 mb-1 text-[13px] font-medium text-text-primary border-b border-border-subtle pb-1">
+                              {dateLabel}
+                            </div>
+                            <div className="space-y-0.5">
+                              {events.map((event, index) => {
+                                const colorId = (event as CalendarEvent).color_id || "default";
+                                const colorData =
+                                  MONTH_EVENT_COLOR_MAP[colorId] || DEFAULT_MONTH_EVENT_COLOR;
+                                const accentColor = colorData.border;
+                                return (
+                                  <div
+                                    key={`search-result-drawer-${event.id}-${index}`}
+                                    className="group flex items-center gap-2 rounded-md px-2 py-1.5 text-[14px] text-text-primary hover:bg-bg-subtle transition-colors cursor-pointer"
+                                    onClick={() => focusSearchResult(event)}
+                                  >
+                                    <div
+                                      className="w-[3px] self-stretch my-0.5 rounded-full shrink-0"
+                                      style={{ backgroundColor: accentColor }}
+                                    />
+                                    <div className="flex-1 flex flex-col min-w-0">
+                                      <div className="font-medium truncate">{event.title}</div>
+                                      {event.location && (
+                                        <div className="text-[12px] text-text-secondary truncate">
+                                          {event.location}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ));
+                      })()
+                    )
+                  )}
+                </div>
+              </div>
+            ) : ai.open ? (
               <AiAssistantModal
                 assistant={ai}
                 variant="drawer"

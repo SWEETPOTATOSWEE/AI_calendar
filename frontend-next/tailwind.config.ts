@@ -10,6 +10,9 @@ const config: Config = {
         "background-light": "oklch(var(--bg-canvas))",
         "background-dark": "oklch(var(--bg-canvas))",
         // Semantic Tokens
+        canvas: "oklch(var(--bg-canvas))",
+        surface: "oklch(var(--bg-surface))",
+        subtle: "oklch(var(--bg-subtle))",
         "bg-canvas": "oklch(var(--bg-canvas))",
         "bg-surface": "oklch(var(--bg-surface))",
         "bg-subtle": "oklch(var(--bg-subtle))",

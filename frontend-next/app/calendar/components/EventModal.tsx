@@ -28,6 +28,7 @@ import {
   Plus,
   Users,
 } from "lucide-react";
+import { DatePopover } from "./DatePopover";
 import type {
   CalendarEvent,
   EventPayload,
@@ -65,20 +66,13 @@ const REMINDER_OPTIONS = [
 const EVENT_MODAL_TABS = ["basic", "advanced"] as const;
 
 const COLOR_OPTIONS = [
-  { id: "default", label: "기본", chip: "bg-slate-300" },
-  { id: "1", label: "블루", chip: "bg-blue-500" },
-  { id: "2", label: "그린", chip: "bg-emerald-500" },
-  { id: "3", label: "퍼플", chip: "bg-violet-500" },
-  { id: "4", label: "레드", chip: "bg-rose-500" },
-  { id: "5", label: "오렌지", chip: "bg-orange-500" },
-  { id: "6", label: "청록", chip: "bg-teal-500" },
-  { id: "7", label: "인디고", chip: "bg-indigo-500" },
-  { id: "8", label: "앰버", chip: "bg-amber-500" },
-  { id: "9", label: "핑크", chip: "bg-pink-500" },
-  { id: "10", label: "슬레이트", chip: "bg-slate-500" },
-  { id: "11", label: "민트", chip: "bg-cyan-500" },
+  { id: "default", label: "블루", chip: "bg-token-primary" },
+  { id: "1", label: "그린", chip: "bg-token-success" },
+  { id: "2", label: "레드", chip: "bg-token-error" },
+  { id: "3", label: "오렌지", chip: "bg-token-warning" },
+  { id: "4", label: "청록", chip: "bg-token-info" },
 ];
-const DEFAULT_COLOR_IDS = new Set(["default", "2", "4", "5", "8"]);
+const DEFAULT_COLOR_IDS = new Set(["default", "1", "2", "3", "4"]);
 
 const TIMEZONE_OPTIONS = [
   { label: "한국 (Asia/Seoul)", value: "Asia/Seoul" },
@@ -391,7 +385,7 @@ const CustomSelect = <T extends string | number>({
       <button
         type="button"
         className={`inline-flex items-center justify-start gap-2 rounded-lg border border-transparent bg-transparent text-left focus:outline-none focus:ring-0 ${
-          disabled ? "text-text-tertiary" : "text-text-primary"
+          disabled ? "text-text-disabled" : "text-text-primary"
         } px-3 py-2 text-[15px] font-medium ${buttonClassName ?? ""}`}
         onClick={() => {
           if (open) {
@@ -409,7 +403,7 @@ const CustomSelect = <T extends string | number>({
         aria-haspopup="listbox"
       >
         <span className="truncate text-left">{selected?.label ?? ""}</span>
-        <ChevronsUpDown className={`size-4 text-text-tertiary ${iconClassName ?? ""}`} />
+        <ChevronsUpDown className={`size-4 text-text-disabled ${iconClassName ?? ""}`} />
       </button>
       {open && !disabled && (
         <div
@@ -456,20 +450,6 @@ const CustomSelect = <T extends string | number>({
   );
 };
 
-const parseISODate = (value: string) => {
-  if (!value) return null;
-  const [yearText, monthText, dayText] = value.split("-");
-  const year = Number(yearText);
-  const month = Number(monthText);
-  const day = Number(dayText);
-  if (!year || !month || !day) return null;
-  return new Date(year, month - 1, day);
-};
-
-const formatYearMonthLabel = (date: Date) => {
-  return `${date.getFullYear()}년 ${date.getMonth() + 1}월`;
-};
-
 const formatTimeLabel = (value: string) => {
   if (!value) return "";
   const [hourText, minuteText] = value.split(":");
@@ -493,312 +473,6 @@ const buildTimeOptions = (stepMinutes: number) => {
     }
   }
   return options;
-};
-
-export type DatePopoverProps = {
-  value: string;
-  onChange: (value: string) => void;
-  label: string;
-  icon: ReactNode;
-  disabled?: boolean;
-  placeholder?: string;
-};
-
-export const DatePopover = ({
-  value,
-  onChange,
-  label,
-  icon,
-  disabled = false,
-  placeholder = "날짜 선택",
-}: DatePopoverProps) => {
-  const disableAnimation = true;
-  const [open, setOpen] = useState(false);
-  const [scrollMode, setScrollMode] = useState(false);
-  const [viewDate, setViewDate] = useState<Date>(() => parseISODate(value) ?? new Date());
-  const [position, setPosition] = useState({ top: 0, left: 0 });
-  const [ready, setReady] = useState(false);
-  const [openUp, setOpenUp] = useState(false);
-  const [closing, setClosing] = useState(false);
-  const wrapperRef = useRef<HTMLDivElement | null>(null);
-  const popoverRef = useRef<HTMLDivElement | null>(null);
-  const anchorOffsetRef = useRef<{ x: number; y: number } | null>(null);
-  const yearRefs = useRef<Record<number, HTMLButtonElement | null>>({});
-  const monthRefs = useRef<Record<number, HTMLButtonElement | null>>({});
-
-  const selectedDate = parseISODate(value);
-  const today = new Date();
-
-  const yearRange = useMemo(() => {
-    const baseYear = viewDate.getFullYear();
-    return Array.from({ length: 21 }, (_, idx) => baseYear - 10 + idx);
-  }, [viewDate]);
-
-  useEffect(() => {
-    if (!open) return;
-    const handleClick = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (wrapperRef.current?.contains(target)) return;
-      if (popoverRef.current?.contains(target)) return;
-      closePopover();
-    };
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [open]);
-
-  useEffect(() => {
-    if (open) {
-      setReady(false);
-      setClosing(false);
-    }
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    setViewDate(parseISODate(value) ?? new Date());
-  }, [open, value]);
-
-  useLayoutEffect(() => {
-    if (!open) return;
-    const scrollParent = getScrollParent(wrapperRef.current);
-    const scrollTarget =
-      scrollParent === document.body || scrollParent === document.documentElement ? window : scrollParent;
-    const updatePlacement = () => {
-      if (!wrapperRef.current || !popoverRef.current) return;
-      const rect = wrapperRef.current.getBoundingClientRect();
-      const popoverRect = popoverRef.current.getBoundingClientRect();
-      const anchorOffset = anchorOffsetRef.current;
-      const anchorX = rect.left + (anchorOffset?.x ?? rect.width / 2);
-      const anchorY = rect.top + (anchorOffset?.y ?? rect.height);
-      const spaceBelow = window.innerHeight - anchorY;
-      const spaceAbove = anchorY;
-      const shouldOpenUp = spaceBelow < popoverRect.height && spaceAbove > spaceBelow;
-      const top = shouldOpenUp
-        ? Math.max(8, anchorY - popoverRect.height - 8)
-        : Math.min(window.innerHeight - popoverRect.height - 8, anchorY + 8);
-      const maxLeft = window.innerWidth - popoverRect.width - 8;
-      const preferredLeft = anchorX - popoverRect.width / 2;
-      const left = Math.min(Math.max(preferredLeft, 8), maxLeft);
-      setPosition({ top, left });
-      setOpenUp(shouldOpenUp);
-      setReady(true);
-    };
-    const frame = window.requestAnimationFrame(updatePlacement);
-    window.addEventListener("resize", updatePlacement);
-    scrollTarget.addEventListener("scroll", updatePlacement, { passive: true });
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.removeEventListener("resize", updatePlacement);
-      scrollTarget.removeEventListener("scroll", updatePlacement);
-    };
-  }, [open, scrollMode]);
-
-  useEffect(() => {
-    if (!open || !scrollMode) return;
-    yearRefs.current[viewDate.getFullYear()]?.scrollIntoView({ block: "center" });
-    monthRefs.current[viewDate.getMonth() + 1]?.scrollIntoView({ block: "center" });
-  }, [open, scrollMode, viewDate]);
-
-  const monthStart = startOfMonth(viewDate);
-  const calendarStart = startOfWeek(monthStart);
-  const days = Array.from({ length: 42 }, (_, idx) => addDays(calendarStart, idx));
-
-  const handleDateSelect = (date: Date) => {
-    onChange(toISODate(date));
-    closePopover();
-  };
-
-  const closePopover = () => {
-    if (!open || closing) return;
-    if (disableAnimation) {
-      setOpen(false);
-      setClosing(false);
-      setScrollMode(false);
-      return;
-    }
-    setClosing(true);
-    setScrollMode(false);
-  };
-
-  const handlePopoverAnimationEnd = (event: AnimationEvent<HTMLDivElement>) => {
-    if (!closing || event.currentTarget !== event.target) return;
-    if (event.animationName !== "popover-out") return;
-    setOpen(false);
-    setClosing(false);
-  };
-
-  return (
-    <div ref={wrapperRef} className="relative flex-none">
-      <button
-        type="button"
-        className="flex items-center justify-center gap-2 rounded-lg border border-border-subtle bg-bg-canvas px-3 py-1 text-[15px] font-medium text-text-primary disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
-        onClick={(event) => {
-          if (open) {
-            if (disableAnimation) {
-              setOpen(false);
-              setReady(false);
-              return;
-            }
-            if (closing) {
-              setClosing(false);
-            } else {
-              setClosing(true);
-            }
-            return;
-          }
-          const rect = wrapperRef.current?.getBoundingClientRect();
-          if (rect) {
-            const isKeyboard = event.clientX === 0 && event.clientY === 0;
-            const offsetX = isKeyboard ? rect.width / 2 : event.clientX - rect.left;
-            const offsetY = isKeyboard ? rect.height : event.clientY - rect.top;
-            anchorOffsetRef.current = { x: offsetX, y: offsetY };
-          }
-          setReady(false);
-          setClosing(false);
-          setOpen(true);
-        }}
-        disabled={disabled}
-        aria-label={label}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-      >
-        <span className={value ? "" : "text-text-tertiary"}>{value || placeholder}</span>
-      </button>
-      {open &&
-        !disabled &&
-        typeof document !== "undefined" &&
-        createPortal(
-          <div
-            ref={popoverRef}
-            className={`fixed z-[9999] w-72 overflow-hidden popover-surface border border-border-subtle bg-bg-canvas p-4 shadow-lg ${
-              !disableAnimation && (ready || closing) ? "popover-animate" : ""
-            } ${!disableAnimation && closing ? "is-closing" : ""}`}
-            style={{
-              top: position.top,
-              left: position.left,
-              visibility: ready ? "visible" : "hidden",
-              pointerEvents: ready ? "auto" : "none",
-            }}
-            data-side={openUp ? "top" : "bottom"}
-            data-align="end"
-            onAnimationEnd={disableAnimation ? undefined : handlePopoverAnimationEnd}
-          >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center">
-              <button
-                type="button"
-                className="flex h-7 items-center justify-center gap-0.5 pr-1 text-sm font-semibold text-text-primary hover:text-text-brand cursor-pointer"
-                onClick={() => setScrollMode((prev) => !prev)}
-                aria-label="월/년도 이동"
-              >
-                <span>{formatYearMonthLabel(viewDate)}</span>
-                <ChevronRight className={`size-4 translate-y-[1px] transition-transform ${scrollMode ? "rotate-90" : ""}`} />
-              </button>
-            </div>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                className="flex size-7 items-center justify-center rounded-full border border-border-subtle text-text-secondary hover:border-border-brand hover:text-text-brand cursor-pointer"
-                onClick={() => setViewDate((prev) => addMonths(prev, -1))}
-                aria-label="이전 달"
-              >
-                <ChevronLeft className="size-4" />
-              </button>
-              <button
-                type="button"
-                className="flex size-7 items-center justify-center rounded-full border border-border-subtle text-text-secondary hover:border-border-brand hover:text-text-brand cursor-pointer"
-                onClick={() => setViewDate((prev) => addMonths(prev, 1))}
-                aria-label="다음 달"
-              >
-                <ChevronRight className="size-4" />
-              </button>
-            </div>
-          </div>
-          {scrollMode && (
-            <div className="mt-3 grid grid-cols-2 gap-3">
-              <div className="max-h-40 overflow-y-auto rounded-lg border border-border-subtle bg-bg-canvas py-2">
-                {yearRange.map((year) => {
-                  const active = year === viewDate.getFullYear();
-                  return (
-                    <button
-                      key={year}
-                      type="button"
-                      ref={(node) => {
-                        yearRefs.current[year] = node;
-                      }}
-                      className={`flex w-full items-center justify-center px-3 py-2 text-sm font-medium transition-colors cursor-pointer ${
-                        active ? "text-text-brand" : "text-text-secondary hover:text-text-primary"
-                      }`}
-                      onClick={() => setViewDate(new Date(year, viewDate.getMonth(), 1))}
-                    >
-                      {year}년
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="max-h-40 overflow-y-auto rounded-lg border border-border-subtle bg-bg-canvas py-2">
-                {Array.from({ length: 12 }, (_, idx) => idx + 1).map((month) => {
-                  const active = month === viewDate.getMonth() + 1;
-                  return (
-                    <button
-                      key={month}
-                      type="button"
-                      ref={(node) => {
-                        monthRefs.current[month] = node;
-                      }}
-                      className={`flex w-full items-center justify-center px-3 py-2 text-sm font-medium transition-colors cursor-pointer ${
-                        active ? "text-text-brand" : "text-text-secondary hover:text-text-primary"
-                      }`}
-                      onClick={() => setViewDate(new Date(viewDate.getFullYear(), month - 1, 1))}
-                    >
-                      {month}월
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-          {!scrollMode && (
-            <>
-              <div className="mt-3 grid grid-cols-7 text-xs text-text-tertiary">
-                {["월", "화", "수", "목", "금", "토", "일"].map((day) => (
-                  <span key={day} className="text-center">
-                    {day}
-                  </span>
-                ))}
-              </div>
-              <div className="mt-2 grid grid-cols-7 gap-1 text-sm">
-                {days.map((date) => {
-                  const isCurrentMonth = date.getMonth() === viewDate.getMonth();
-                  const isSelected = selectedDate ? isSameDay(selectedDate, date) : false;
-                  const isToday = isSameDay(today, date);
-                  return (
-                    <button
-                      key={date.toISOString()}
-                      type="button"
-                      className={`flex h-8 w-full items-center justify-center rounded-full transition-colors cursor-pointer ${
-                        isSelected
-                          ? "bg-bg-brand text-white"
-                          : isToday
-                            ? "border border-border-brand text-text-brand"
-                            : isCurrentMonth
-                              ? "text-text-primary hover:bg-bg-subtle"
-                              : "text-text-tertiary"
-                      }`}
-                      onClick={() => handleDateSelect(date)}
-                    >
-                      {date.getDate()}
-                    </button>
-                  );
-                })}
-              </div>
-            </>
-          )}
-        </div>,
-        document.body
-      )}
-    </div>
-  );
 };
 
 type TimePopoverProps = {
@@ -941,7 +615,7 @@ const TimePopover = ({
         aria-haspopup="dialog"
         aria-expanded={open}
       >
-        <span className={value ? "" : "text-text-tertiary"}>
+        <span className={value ? "text-text-primary" : "text-text-disabled"}>
           {value ? formatTimeLabel(value) : placeholder}
         </span>
       </button>
@@ -973,7 +647,7 @@ const TimePopover = ({
                   type="button"
                   ref={active ? selectedRef : null}
                   className={`flex w-full items-center justify-center rounded-lg px-3 py-2 text-sm font-medium transition-colors cursor-pointer ${
-                    active ? "bg-bg-brand text-white" : "text-text-primary hover:bg-bg-subtle"
+                    active ? "bg-subtle text-text-primary font-bold" : "text-text-primary hover:bg-bg-subtle"
                   }`}
                   onClick={() => {
                     onChange(option.value);
@@ -1119,7 +793,7 @@ export default function EventModal({
     if (!form.recurrenceInterval) return null;
     const interval = Math.max(1, Number(form.recurrenceInterval) || 1);
     const rule: EventRecurrence = {
-      freq: form.recurrenceFrequency,
+      freq: form.recurrenceFrequency as EventRecurrence["freq"],
       interval,
       byweekday: null,
       bymonthday: null,
@@ -1315,7 +989,7 @@ export default function EventModal({
           </div>
           {showCloseButton && (
             <button
-              className="text-text-tertiary hover:text-text-primary"
+              className="text-text-disabled hover:text-text-primary"
               onClick={onClose}
               type="button"
             >
@@ -1336,7 +1010,7 @@ export default function EventModal({
                 <div className="flex min-h-12 items-center px-4">
                   <label className="sr-only">제목</label>
                   <input
-                    className="h-10 w-full -translate-y-[1px] appearance-none border-none bg-transparent py-0 text-[15px] leading-none font-medium text-text-primary placeholder:text-[15px] placeholder:font-normal placeholder:text-text-tertiary focus:outline-none focus:ring-0"
+                    className="h-10 w-full -translate-y-[1px] appearance-none border-none bg-transparent py-0 text-[15px] leading-none font-medium text-text-primary placeholder:text-[15px] placeholder:font-normal placeholder:text-text-disabled focus:outline-none focus:ring-0"
                     placeholder="제목"
                     value={form.title}
                     onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
@@ -1354,7 +1028,7 @@ export default function EventModal({
                       checked={form.allDay}
                       onChange={(event) => setForm((prev) => ({ ...prev, allDay: event.target.checked }))}
                     />
-                    <span className="pointer-events-none absolute text-text-tertiary transition-colors peer-checked:text-text-on-brand">
+                    <span className="pointer-events-none absolute text-text-disabled transition-colors peer-checked:text-text-on-brand">
                       <Check className="size-4" />
                     </span>
                     </label>
@@ -1367,6 +1041,7 @@ export default function EventModal({
                   <div className="flex items-center gap-2 ml-auto">
                     <DatePopover
                       label="시작 날짜"
+                      icon={<Calendar className="w-4 h-4" />}
                       value={form.startDate}
                       onChange={(value) => setForm((prev) => ({ ...prev, startDate: value }))}
                       placeholder="날짜 선택"
@@ -1374,6 +1049,7 @@ export default function EventModal({
                     {!form.allDay && (
                       <TimePopover
                         label="시작 시간"
+                        icon={<Clock className="w-4 h-4" />}
                         value={form.startTime}
                         onChange={(value) =>
                           setForm((prev) => ({ ...prev, startTime: normalizeTime(value) }))
@@ -1390,6 +1066,7 @@ export default function EventModal({
                   <div className="flex items-center gap-2 ml-auto">
                     <DatePopover
                       label="종료 날짜"
+                      icon={<Calendar className="w-4 h-4" />}
                       value={form.endDate}
                       onChange={(value) => setForm((prev) => ({ ...prev, endDate: value }))}
                       placeholder="날짜 선택"
@@ -1397,6 +1074,7 @@ export default function EventModal({
                     {!form.allDay && (
                       <TimePopover
                         label="종료 시간"
+                        icon={<Clock className="w-4 h-4" />}
                         value={form.endTime}
                         onChange={(value) =>
                           setForm((prev) => ({ ...prev, endTime: normalizeTime(value) }))
@@ -1412,7 +1090,7 @@ export default function EventModal({
                   <MapPin className="size-4 text-text-secondary" />
                   <label className="sr-only">장소</label>
                   <input
-                    className="h-10 w-full -translate-y-[1px] appearance-none border-none bg-transparent py-0 text-[15px] leading-none font-medium text-text-primary placeholder:text-[15px] placeholder:font-normal placeholder:text-text-tertiary focus:outline-none focus:ring-0"
+                    className="h-10 w-full -translate-y-[1px] appearance-none border-none bg-transparent py-0 text-[15px] leading-none font-medium text-text-primary placeholder:text-[15px] placeholder:font-normal placeholder:text-text-disabled focus:outline-none focus:ring-0"
                     placeholder="장소"
                     value={form.location}
                     onChange={(event) => setForm((prev) => ({ ...prev, location: event.target.value }))}
@@ -1457,7 +1135,7 @@ export default function EventModal({
                   <div className="relative">
                     <button
                       type="button"
-                      className="flex size-7 items-center justify-center rounded-full border border-border-subtle text-text-tertiary hover:border-token-primary/40"
+                      className="flex size-7 items-center justify-center rounded-full border border-border-subtle text-text-disabled hover:border-token-primary/40"
                       onClick={() => {
                         if (customReminderOpen) {
                           if (customReminderClosing) {
@@ -1510,7 +1188,7 @@ export default function EventModal({
                         <div className="mt-3 flex justify-end gap-2">
                           <button
                             type="button"
-                            className="px-2 py-1 text-xs text-text-tertiary"
+                            className="px-2 py-1 text-xs text-text-disabled"
                             onClick={closeCustomReminder}
                           >
                             취소
@@ -1607,7 +1285,7 @@ export default function EventModal({
                 <p className="text-[14px] font-medium text-text-primary">반복</p>
                 <button
                   type="button"
-                  className="flex size-6 items-center justify-center text-text-tertiary hover:text-token-primary disabled:opacity-50"
+                  className="flex size-6 items-center justify-center text-text-disabled hover:text-token-primary disabled:opacity-50"
                   onClick={() =>
                     setForm((prev) => ({
                       ...prev,
@@ -1697,7 +1375,7 @@ export default function EventModal({
                                 className={`px-3 py-1 rounded-full text-xs border transition-colors ${
                                   active
                                     ? "bg-bg-brand text-white border-border-brand font-bold"
-                                    : "border-border-subtle text-text-tertiary font-semibold hover:border-border-brand/30"
+                                    : "border-border-subtle text-text-disabled font-semibold hover:border-border-brand/30"
                                 }`}
                                 onClick={() =>
                                   setForm((prev) => ({
@@ -1729,7 +1407,7 @@ export default function EventModal({
                               className={`px-3 py-1 rounded-full text-xs border transition-colors ${
                                 form.recurrenceMonthlyMode === mode
                                   ? "bg-bg-brand text-white border-border-brand font-bold"
-                                  : "border-border-subtle text-text-tertiary font-semibold hover:border-border-brand/30"
+                                  : "border-border-subtle text-text-disabled font-semibold hover:border-border-brand/30"
                               }`}
                               onClick={() =>
                                 setForm((prev) => ({ ...prev, recurrenceMonthlyMode: mode }))
@@ -1914,12 +1592,12 @@ export default function EventModal({
                     descriptionMultiline ? "items-start" : "items-center"
                   }`}
                 >
-                  <FileText className={`size-4 text-text-tertiary ${descriptionMultiline ? "mt-1" : ""}`} />
+                  <FileText className={`size-4 text-text-disabled ${descriptionMultiline ? "mt-1" : ""}`} />
                   <label className="sr-only">설명</label>
                   <textarea
                     ref={descriptionRef}
                     rows={1}
-                    className="w-full resize-none border-none bg-transparent text-[15px] font-medium text-text-primary placeholder:text-[15px] placeholder:font-normal placeholder:text-text-tertiary focus:outline-none focus:ring-0"
+                    className="w-full resize-none border-none bg-transparent text-[15px] font-medium text-text-primary placeholder:text-[15px] placeholder:font-normal placeholder:text-text-disabled focus:outline-none focus:ring-0"
                     placeholder="설명"
                     value={form.description}
                     onChange={(event) => setForm((prev) => ({ ...prev, description: event.target.value }))}
@@ -1928,10 +1606,10 @@ export default function EventModal({
               </div>
               <div className="rounded-lg border border-border-subtle bg-bg-canvas">
                 <div className="flex h-12 items-center gap-2 px-4 py-2">
-                  <Users className="size-4 text-text-tertiary" />
+                  <Users className="size-4 text-text-disabled" />
                   <label className="sr-only">참석자</label>
                   <input
-                    className="w-full -translate-y-[1px] border-none bg-transparent text-[15px] font-medium text-text-primary placeholder:text-[15px] placeholder:font-normal placeholder:text-text-tertiary focus:outline-none focus:ring-0"
+                    className="w-full -translate-y-[1px] border-none bg-transparent text-[15px] font-medium text-text-primary placeholder:text-[15px] placeholder:font-normal placeholder:text-text-disabled focus:outline-none focus:ring-0"
                     placeholder="참석자"
                     value={form.attendees}
                     onChange={(event) => setForm((prev) => ({ ...prev, attendees: event.target.value }))}
@@ -1939,10 +1617,10 @@ export default function EventModal({
                 </div>
                 <div className="h-px bg-border-subtle mx-4" />
                 <div className="flex h-12 items-center gap-2 px-4 py-2">
-                  <Link className="size-4 text-text-tertiary" />
+                  <Link className="size-4 text-text-disabled" />
                   <label className="sr-only">회의 링크</label>
                   <input
-                    className="w-full -translate-y-[1px] border-none bg-transparent text-[15px] font-medium text-text-primary placeholder:text-[15px] placeholder:font-normal placeholder:text-text-tertiary focus:outline-none focus:ring-0"
+                    className="w-full -translate-y-[1px] border-none bg-transparent text-[15px] font-medium text-text-primary placeholder:text-[15px] placeholder:font-normal placeholder:text-text-disabled focus:outline-none focus:ring-0"
                     placeholder="회의 링크"
                     value={form.meetingUrl}
                     onChange={(event) => setForm((prev) => ({ ...prev, meetingUrl: event.target.value }))}
