@@ -88,8 +88,9 @@ export const formatWeekday = (date: Date) => {
   return date.toLocaleDateString("ko-KR", { weekday: "long" });
 };
 
-export const formatTime = (value?: string | null) => {
-  const parsed = parseISODateTime(value);
+export const formatTime = (value?: string | Date | null) => {
+  if (!value) return "";
+  const parsed = value instanceof Date ? value : parseISODateTime(value);
   if (!parsed) return "";
   return parsed.toLocaleTimeString("ko-KR", {
     hour: "2-digit",
@@ -98,7 +99,7 @@ export const formatTime = (value?: string | null) => {
   });
 };
 
-export const formatTimeRange = (start?: string | null, end?: string | null) => {
+export const formatTimeRange = (start?: string | Date | null, end?: string | Date | null) => {
   const startLabel = formatTime(start);
   const endLabel = formatTime(end);
   if (!startLabel && !endLabel) return "";

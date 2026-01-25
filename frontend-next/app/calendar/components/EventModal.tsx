@@ -940,21 +940,21 @@ export default function EventModal({
       className={
         isDrawer
           ? "flex h-full flex-col"
-          : "fixed inset-0 z-[999] flex items-center justify-center bg-black/40 px-4"
+          : "fixed inset-0 z-[999] flex items-center justify-center bg-black/40 md:px-4"
       }
     >
       <div
         className={
           isDrawer
             ? "flex h-full flex-col bg-bg-surface"
-            : "w-full max-w-2xl rounded-2xl bg-bg-surface border border-border-subtle shadow-xl"
+            : "w-full h-full md:h-auto md:max-w-2xl md:rounded-2xl bg-bg-surface border border-border-subtle shadow-xl flex flex-col"
         }
       >
         <div
           className={
             isDrawer
               ? "flex items-center justify-between px-3 py-3 border-b border-border-subtle"
-              : "flex items-center justify-between px-6 py-4 border-b border-border-subtle"
+              : "flex items-center justify-between px-6 py-4 border-b border-border-subtle shrink-0"
           }
         >
           <div className="flex items-center gap-3">
@@ -1001,7 +1001,7 @@ export default function EventModal({
           className={
             isDrawer
               ? "flex-1 px-3 py-3 space-y-4 overflow-y-auto"
-              : "px-6 py-5 space-y-4 max-h-[70vh] overflow-y-auto"
+              : "flex-1 md:flex-none px-6 py-5 space-y-4 overflow-y-auto md:max-h-[70vh]"
           }
         >
           {activeTab === "basic" && (
@@ -1683,7 +1683,7 @@ export default function EventModal({
           className={
             isDrawer
               ? "flex items-center justify-between px-3 py-3 border-t border-border-subtle"
-              : "flex items-center justify-between px-6 py-4 border-t border-border-subtle"
+              : "flex items-center justify-between px-6 py-4 border-t border-border-subtle shrink-0"
           }
         >
           {stableEvent && !forceCreate ? (

@@ -31,6 +31,7 @@ import { formatShortDate, formatTimeRange, parseISODateTime } from "../lib/date"
 import {
   formatRecurrenceDateLabel,
   formatRecurrencePattern,
+  formatRecurrenceSummary,
   formatRecurrenceTimeLabel,
 } from "../lib/recurrence-summary";
 import { useAiAssistant, type AddPreviewItem } from "../lib/use-ai-assistant";
@@ -220,7 +221,7 @@ const renderMarkdown = (text: string, keyPrefix: string): ReactNode[] => {
         return (
           <ul key={key} className={`${listClass} space-y-1 pl-5`}>
             {block.items.map((item, itemIndex) => (
-              <li key={`${key}-item-${itemIndex}`} className="leading-6 text-text-secondary">
+              <li key={`${key}-item-${itemIndex}`} className="leading-6 text-text-primary">
                 {parseInlineMarkdown(item)}
               </li>
             ))}
@@ -229,7 +230,7 @@ const renderMarkdown = (text: string, keyPrefix: string): ReactNode[] => {
       }
       case "quote":
         return (
-          <blockquote key={key} className="border-l-2 border-border-subtle pl-3 text-text-secondary">
+          <blockquote key={key} className="border-l-2 border-border-subtle pl-3 text-text-primary">
             {parseInlineMarkdown(block.text)}
           </blockquote>
         );
@@ -244,7 +245,7 @@ const renderMarkdown = (text: string, keyPrefix: string): ReactNode[] => {
       case "paragraph":
       default:
         return (
-          <p key={key} className="whitespace-pre-line leading-6 text-text-secondary">
+          <p key={key} className="whitespace-pre-line leading-6 text-text-primary">
             {parseInlineMarkdown(block.text)}
           </p>
         );
@@ -283,7 +284,7 @@ export default function AiAssistantModal({
   useEffect(() => {
     if (!assistant.open) return;
     setSnapshot(buildSnapshot(assistant));
-  }, [assistant.open, assistant.mode, assistant.text, assistant.reasoningEffort, assistant.model, assistant.startDate, assistant.endDate, assistant.attachments, assistant.loading, assistant.error, assistant.addPreview, assistant.deletePreview, assistant.selectedAddItems, assistant.selectedDeleteGroups]);
+  }, [assistant.open, assistant.mode, assistant.reasoningEffort, assistant.model, assistant.startDate, assistant.endDate, assistant.attachments, assistant.conversation, assistant.loading, assistant.error, assistant.addPreview, assistant.deletePreview, assistant.selectedAddItems, assistant.selectedDeleteGroups]);
 
   const view = snapshot;
   const conversation = safeArray(view.conversation);
@@ -303,6 +304,8 @@ export default function AiAssistantModal({
   const dragOriginRef = useRef({ x: 0, y: 0 });
   const rangeButtonRef = useRef<HTMLButtonElement | null>(null);
   const rangePopoverRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const isComposingRef = useRef(false);
 
   const hasPreview = addItems.length > 0 || deleteGroups.length > 0;
   const showConversation = conversation.length > 0 || hasPreview || assistant.progressLabel || view.error;
@@ -326,6 +329,15 @@ export default function AiAssistantModal({
   };
 
   useEffect(() => {
+    if (showConversation) {
+      scrollRef.current?.scrollTo({
+        top: scrollRef.current.scrollHeight,
+        behavior: "smooth",
+      });
+    }
+  }, [conversation, hasPreview, assistant.progressLabel, view.error, showConversation]);
+
+  useEffect(() => {
     if (!rangeOpen) return;
     const handleClick = (e: MouseEvent) => {
       if (!rangeButtonRef.current?.contains(e.target as Node) && !rangePopoverRef.current?.contains(e.target as Node)) {
@@ -340,7 +352,7 @@ export default function AiAssistantModal({
     if (!inputRef.current) return;
     inputRef.current.style.height = "auto";
     inputRef.current.style.height = `${inputRef.current.scrollHeight}px`;
-  }, [view.text]);
+  }, [assistant.text]);
 
   useEffect(() => {
     if (!dragging) return;
@@ -361,20 +373,20 @@ export default function AiAssistantModal({
 
   if (!assistant.open) return null;
 
-  const canSend = view.text.trim().length > 0;
+  const canSend = assistant.text.trim().length > 0;
   const handleSend = () => {
     if (canSend && !assistant.loading) assistant.preview();
   };
 
   return (
     <>
-      <div className={isDrawer ? "flex h-full flex-col bg-surface" : "fixed inset-0 z-[999] flex items-center justify-center px-4 pointer-events-none"}>
+      <div className={isDrawer ? "flex h-full flex-col bg-surface overflow-hidden" : "fixed inset-0 z-[999] flex items-center justify-center md:px-4 pointer-events-none"}>
         <div 
-          className={isDrawer ? "flex h-full w-full flex-col" : "w-[46vh] max-w-[90vw] aspect-[9/16] flex flex-col rounded-[2.5rem] bg-canvas border border-border-subtle shadow-xl overflow-visible pointer-events-auto"}
-          style={isDrawer ? undefined : { transform: `translate3d(${dragOffset.x}px, ${dragOffset.y}px, 0)` }}
+          className={isDrawer ? "flex h-full w-full flex-col overflow-hidden" : "w-full h-full md:w-[420px] md:max-w-[90vw] md:h-[760px] md:max-h-[90vh] flex flex-col md:rounded-[2.5rem] bg-canvas border border-border-subtle shadow-xl overflow-hidden pointer-events-auto"}
+          style={isDrawer ? undefined : { transform: typeof window !== 'undefined' && window.innerWidth < 768 ? undefined : `translate3d(${dragOffset.x}px, ${dragOffset.y}px, 0)` }}
         >
           {!isDrawer && (
-            <div className="relative flex items-center justify-center pb-1 pt-3" onPointerDown={(e) => {
+            <div className="relative hidden md:flex items-center justify-center pb-1 pt-3 flex-shrink-0" onPointerDown={(e) => {
               if (e.button !== 0) return;
               e.preventDefault();
               dragStartRef.current = { x: e.clientX, y: e.clientY };
@@ -386,7 +398,7 @@ export default function AiAssistantModal({
           )}
           
           {showHeaderControls && (
-            <div className={`relative z-50 flex items-center justify-between ${isDrawer ? "px-3 pt-0" : "px-6 pt-4"}`}>
+            <div className={`flex-shrink-0 relative z-50 flex items-center justify-between bg-bg-surface ${isDrawer ? "px-3 pt-0" : "px-6 pt-4"}`}>
               <button
                 className="size-9 rounded-full flex items-center justify-center bg-subtle text-text-secondary hover:text-token-primary transition-colors group relative"
                 onClick={assistant.resetConversation}
@@ -394,11 +406,22 @@ export default function AiAssistantModal({
                 <RotateCcw className="size-4" />
                 <span className={tooltipClass}>초기화</span>
               </button>
+              {!isDrawer && (
+                <button
+                  className="size-9 rounded-full flex items-center justify-center bg-subtle text-text-secondary hover:text-text-primary transition-colors md:hidden"
+                  onClick={() => assistant.setOpen(false)}
+                >
+                  <X className="size-5" />
+                </button>
+              )}
             </div>
           )}
 
-          <div className="flex-1 min-h-0 flex flex-col overflow-visible bg-surface">
-            <div className={`flex-1 min-h-0 overflow-y-auto space-y-3 p-4 scrollbar-hidden ${showConversation ? "" : "flex items-center justify-center"}`}>
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden bg-surface">
+            <div 
+              ref={scrollRef}
+              className={`flex-1 min-h-0 overflow-y-auto space-y-3 p-4 ${showConversation ? "" : "flex items-center justify-center"}`}
+            >
               {showConversation ? (
                 <>
                   {conversation.map((msg, index) => {
@@ -406,7 +429,7 @@ export default function AiAssistantModal({
                     const isUser = msg.role === "user";
                     return (
                       <div key={`${msg.role}-${index}`} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
-                        <div className={`flex flex-col ${isUser ? "items-end" : "items-start"}`}>
+                        <div className={`flex flex-col ${isUser ? "items-end max-w-[85%]" : "items-start w-full"}`}>
                           {attachments.length > 0 && (
                             <div className={`inline-grid ${attachments.length > 1 ? "grid-cols-2" : "grid-cols-1"} gap-2 mb-2`}>
                               {attachments.map((item) => (
@@ -417,11 +440,11 @@ export default function AiAssistantModal({
                             </div>
                           )}
                           {isUser ? (
-                            <div className="max-w-[85%] rounded-2xl bg-subtle px-4 py-2.5 text-sm text-text-primary">
-                              <p className="whitespace-pre-line">{msg.text}</p>
+                            <div className="rounded-xl bg-subtle px-4 py-2.5 text-sm text-text-primary">
+                              <p className="whitespace-pre-wrap break-words">{msg.text}</p>
                             </div>
                           ) : msg.text.trim() ? (
-                            <div className="w-full py-2 text-sm text-text-secondary">
+                            <div className="py-2 text-sm text-text-primary">
                               <div className="space-y-2">
                                 {renderMarkdown(msg.text, `${msg.role}-${index}`)}
                               </div>
@@ -453,29 +476,39 @@ export default function AiAssistantModal({
                       {view.error && <p className="text-xs text-token-error">{view.error}</p>}
                       {addItems.map((item, idx) => {
                         const isSelected = view.selectedAddItems[idx] ?? true;
+                        const isRecurring = item.type === "recurring";
+                        const dateLabel = isRecurring
+                          ? formatRecurrenceSummary(item)
+                          : item.start
+                          ? `${formatShortDate(parseISODateTime(item.start) || new Date())} ${formatTime(item.start)}`
+                          : "";
+
                         return (
                           <div key={idx} onClick={() => assistant.setSelectedAddItems(p => ({ ...p, [idx]: !isSelected }))}
-                            className={`relative flex flex-col gap-2 rounded-xl border p-3 transition-colors cursor-pointer ${isSelected ? "border-token-primary bg-token-primary-low/10" : "border-border-subtle bg-subtle opacity-60"}`}>
+                            className={`relative flex flex-col gap-2 rounded-lg border p-3 transition-colors cursor-pointer ${isSelected ? "border-token-primary bg-token-primary-low/10" : "border-border-subtle bg-subtle opacity-60"}`}>
                             <div className="flex justify-between items-start gap-2">
-                              <p className="text-sm font-semibold text-text-primary">{item.title}</p>
+                              <p className="text-sm font-medium text-text-primary">{item.title}</p>
                               <div className="flex gap-1.5 shrink-0">
                                 {onEditAddItem && <button onClick={(e) => { e.stopPropagation(); onEditAddItem(item, idx); }} className="size-7 flex items-center justify-center rounded-full border border-border-subtle bg-canvas text-text-secondary hover:text-text-primary transition-colors"><Pencil className="size-3.5" /></button>}
                                 <div className={`size-7 flex items-center justify-center rounded-full border ${isSelected ? "bg-token-primary border-token-primary text-white" : "bg-canvas border-border-subtle text-text-disabled"}`}><Check className="size-4" /></div>
                               </div>
                             </div>
-                            <div className="flex flex-wrap gap-1.5">
-                              {[item.start && { icon: Calendar, text: item.start }, item.location && { icon: MapPin, text: item.location }].filter(Boolean).map((p, i) => (
-                                <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-canvas/50 text-[10px] text-text-secondary border border-border-subtle/30"><p.icon className="size-3" />{p.text}</span>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {[
+                                dateLabel && { icon: Calendar, text: dateLabel },
+                                item.location && { icon: MapPin, text: item.location }
+                              ].filter(Boolean).map((p: any, i) => (
+                                <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-canvas/50 text-[10px] font-medium leading-none text-text-secondary border border-border-subtle/30"><p.icon className="size-3" />{p.text}</span>
                               ))}
                             </div>
                           </div>
                         );
                       })}
                       {deleteGroups.map((group) => (
-                        <label key={group.group_key} className="flex items-center justify-between gap-3 rounded-xl border border-border-subtle bg-subtle p-3 cursor-pointer">
+                        <label key={group.group_key} className="flex items-center justify-between gap-3 rounded-lg border border-border-subtle bg-subtle p-3 cursor-pointer">
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm font-semibold text-text-primary truncate">{group.title}</p>
-                            <p className="text-xs text-text-secondary">{group.count || 0}건 · {group.time}</p>
+                            <p className="text-sm font-medium text-text-primary truncate">{group.title}</p>
+                            <p className="text-xs font-medium text-text-secondary">{group.count || 0}건 · {group.time}</p>
                           </div>
                           <input type="checkbox" className="size-5 shrink-0 accent-token-primary" checked={view.selectedDeleteGroups[group.group_key] ?? true} onChange={(e) => assistant.setSelectedDeleteGroups(p => ({ ...p, [group.group_key]: e.target.checked }))} />
                         </label>
@@ -492,7 +525,7 @@ export default function AiAssistantModal({
 
                   {assistant.progressLabel && (
                     <div className="flex items-center py-1">
-                      <div className="m4s text-text-primary opacity-70 italic">{assistant.progressLabel}...</div>
+                      <div className="text-sm text-text-primary opacity-70 italic">{assistant.progressLabel}...</div>
                     </div>
                   )}
                 </>
@@ -504,15 +537,26 @@ export default function AiAssistantModal({
               )}
             </div>
 
-            <div className="p-4 pt-2 bg-surface education-input-area">
+            <div className="flex-shrink-0 p-4 pt-2 bg-surface education-input-area">
               <div className="relative rounded-[22px] border border-border-subtle bg-canvas px-1 shadow-sm focus-within:border-border-strong transition-colors">
                 <textarea
                   ref={inputRef}
                   rows={1}
-                  value={view.text}
-                  placeholder={PLACEHOLDER_TEXT[view.mode]}
+                  value={assistant.text}
+                  placeholder={PLACEHOLDER_TEXT[assistant.mode]}
                   onChange={(e) => assistant.setText(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), handleSend())}
+                  onCompositionStart={() => {
+                    isComposingRef.current = true;
+                  }}
+                  onCompositionEnd={() => {
+                    isComposingRef.current = false;
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey && !isComposingRef.current && !e.nativeEvent.isComposing) {
+                      e.preventDefault();
+                      handleSend();
+                    }
+                  }}
                   className="max-h-[8lh] w-full resize-none bg-transparent px-4 py-3 text-sm text-text-primary placeholder:text-text-disabled focus:outline-none"
                 />
 

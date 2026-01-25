@@ -4,8 +4,8 @@ import ThemeTokenProvider from "./calendar/components/ThemeTokenProvider";
 
 export const metadata: Metadata = {
   title: {
-    default: "캘린더",
-    template: "%s | 캘린더",
+    default: "OptCal",
+    template: "%s | OptCal",
   },
   description: "캘린더 프론트엔드",
 };

@@ -514,31 +514,34 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
 
         setProgressByMode((prev) => ({ ...prev, [requestMode]: null }));
 
-        if (finalData.content) {
+        const responseData = finalData as AddPreviewResponse | null;
+        
+        if (responseData?.content) {
+          const content = responseData.content;
           setConversationByMode((prev) => {
             const current = prev[requestMode] ?? [];
             const next = [...current];
             const lastIndex = next.length - 1;
             if (lastIndex >= 0 && next[lastIndex].role === "assistant") {
               // 스트리밍된 내용과 최종 내용이 다를 수 있으므로(마지막 조각 등) 최종 내용으로 덮어씀
-              next[lastIndex] = { ...next[lastIndex], text: finalData!.content! };
+              next[lastIndex] = { ...next[lastIndex], text: content };
             } else {
               // 만약 비서 메시지가 아예 없었다면 추가
-              next.push({ role: "assistant", text: finalData!.content!, includeInPrompt: true });
+              next.push({ role: "assistant", text: content, includeInPrompt: true });
             }
             return { ...prev, [requestMode]: next };
           });
         }
 
-        if (finalData.permission_required) {
+        if (responseData && responseData.permission_required) {
           setPermissionRequiredByMode((prev) => ({ ...prev, [requestMode]: true }));
           setLoadingByMode((prev) => ({ ...prev, [requestMode]: false }));
           return;
         }
         setPermissionRequiredByMode((prev) => ({ ...prev, [requestMode]: false }));
 
-        setAddPreview(finalData);
-        const items = finalData.items || [];
+        setAddPreview(responseData);
+        const items = responseData?.items || [];
         const selection: Record<number, boolean> = {};
         items.forEach((_, idx) => {
           selection[idx] = true;

@@ -23,7 +23,7 @@
 .fc .fc-daygrid-day-top {
   flex-direction: row;
   justify-content: flex-start;
-  margin-bottom: 6px;
+  margin-bottom: 0;
 }
 .fc .fc-day-other .fc-daygrid-day-top {
   opacity: 1;
@@ -453,7 +453,8 @@
   align-items: center;
 }
 .mini-calendar .fc-daygrid-day-number {
-  font-size: 11px;
+  font-size: 14px;
+  font-weight: 500;
   padding: 4px 6px 0 6px;
   color: oklch(var(--text-primary));
 }
@@ -584,4 +585,19 @@
 .fc .fc-daygrid-event.fc-event-selected::after,
 .fc .fc-daygrid-event:focus::after {
   content: none;
+}
+
+/* Reduce header toolbar margin */
+.fc .fc-toolbar.fc-header-toolbar {
+  margin-bottom: 0;
+}
+
+/* Align toolbar title with day numbers */
+.fc .fc-toolbar-title {
+  padding-left: 8px;
+}
+
+/* Align navigation buttons with calendar grid */
+.fc .fc-toolbar-chunk:last-child {
+  padding-right: 8px;
 }

@@ -92,6 +92,13 @@ const SECTIONS: Section[] = [
 type OKLCH = { l: number; c: number; h: number };
 type ModeColors = Record<string, OKLCH>;
 
+type ColorPreset = {
+  id: string;
+  name: string;
+  light: ModeColors;
+  dark: ModeColors;
+};
+
 const createInitialModeColors = (light: boolean): ModeColors => {
   if (light) {
     return {
@@ -142,11 +149,16 @@ export default function ColorsPage() {
   const [lightColors, setLightColors] = useState<ModeColors>(() => createInitialModeColors(true));
   const [darkColors, setDarkColors] = useState<ModeColors>(() => createInitialModeColors(false));
   const [editingColor, setEditingColor] = useState<string | null>(null);
+  const [presets, setPresets] = useState<ColorPreset[]>([]);
+  const [newPresetName, setNewPresetName] = useState('');
+  const [showSaveModal, setShowSaveModal] = useState(false);
 
-  // Load colors from localStorage on mount
+  // Load colors and presets from localStorage on mount
   useEffect(() => {
     const savedLight = localStorage.getItem('colors-light');
     const savedDark = localStorage.getItem('colors-dark');
+    const savedPresets = localStorage.getItem('colors-presets');
+
     if (savedLight) {
       try {
         setLightColors(JSON.parse(savedLight));
@@ -159,6 +171,13 @@ export default function ColorsPage() {
         setDarkColors(JSON.parse(savedDark));
       } catch (e) {
         console.error('Failed to parse dark colors', e);
+      }
+    }
+    if (savedPresets) {
+      try {
+        setPresets(JSON.parse(savedPresets));
+      } catch (e) {
+        console.error('Failed to parse presets', e);
       }
     }
   }, []);
@@ -179,6 +198,39 @@ export default function ColorsPage() {
   const activeSection = SECTIONS.find((s) => s.id === activeTab);
   const currentColors = isDarkMode ? darkColors : lightColors;
   const setModeColors = isDarkMode ? setDarkColors : setLightColors;
+
+  const savePreset = () => {
+    if (!newPresetName.trim()) {
+      alert('이름을 입력해주세요.');
+      return;
+    }
+    const newPreset: ColorPreset = {
+      id: Date.now().toString(),
+      name: newPresetName.trim(),
+      light: { ...lightColors },
+      dark: { ...darkColors },
+    };
+    const updatedPresets = [...presets, newPreset];
+    setPresets(updatedPresets);
+    localStorage.setItem('colors-presets', JSON.stringify(updatedPresets));
+    setNewPresetName('');
+    setShowSaveModal(false);
+  };
+
+  const loadPreset = (preset: ColorPreset) => {
+    if (confirm(`'${preset.name}' 프리셋을 불러오시겠습니까? 현재 변경사항이 덮어씌워집니다.`)) {
+      setLightColors(preset.light);
+      setDarkColors(preset.dark);
+    }
+  };
+
+  const deletePreset = (id: string, name: string) => {
+    if (confirm(`'${name}' 프리셋을 삭제하시겠습니까?`)) {
+      const updatedPresets = presets.filter(p => p.id !== id);
+      setPresets(updatedPresets);
+      localStorage.setItem('colors-presets', JSON.stringify(updatedPresets));
+    }
+  };
 
   const resetToDefaults = () => {
     if (confirm('모든 색상을 초기 기본값으로 재설정하시겠습니까?')) {
@@ -207,16 +259,28 @@ export default function ColorsPage() {
       <div className="max-w-4xl mx-auto">
         <div className="flex items-center gap-6 mb-8">
           <h1 className="text-2xl font-bold">Colors Overview</h1>
-          <button
-            onClick={resetToDefaults}
-            className={`px-3 py-1 text-xs font-medium rounded border transition-colors ${
-              isDarkMode 
-                ? 'bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700' 
-                : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
-            }`}
-          >
-            기본값 초기화
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowSaveModal(true)}
+              className={`px-3 py-1 text-xs font-medium rounded border transition-colors ${
+                isDarkMode 
+                  ? 'bg-blue-600 text-white border-blue-500 hover:bg-blue-500' 
+                  : 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700'
+              }`}
+            >
+              현재 설정 저장하기
+            </button>
+            <button
+              onClick={resetToDefaults}
+              className={`px-3 py-1 text-xs font-medium rounded border transition-colors ${
+                isDarkMode 
+                  ? 'bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700' 
+                  : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              기본값 초기화
+            </button>
+          </div>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setIsDarkMode(!isDarkMode)}
@@ -234,6 +298,77 @@ export default function ColorsPage() {
             <span className="text-sm font-medium">{isDarkMode ? 'Dark Mode' : 'Light Mode'}</span>
           </div>
         </div>
+
+        {/* Presets List */}
+        {presets.length > 0 && (
+          <div className={`mb-8 p-4 rounded-lg border ${isDarkMode ? 'bg-gray-800/50 border-gray-700' : 'bg-gray-50 border-gray-200'}`}>
+            <h2 className="text-sm font-bold mb-3 uppercase tracking-wider opacity-60">저장된 프리셋</h2>
+            <div className="flex flex-wrap gap-2">
+              {presets.map((preset) => (
+                <div key={preset.id} className="group relative flex items-center">
+                  <button
+                    onClick={() => loadPreset(preset)}
+                    className={`px-3 py-1.5 text-sm rounded-md border transition-all ${
+                      isDarkMode 
+                        ? 'bg-gray-800 border-gray-700 hover:border-blue-500 text-gray-200' 
+                        : 'bg-white border-gray-300 hover:border-blue-500 text-gray-700 shadow-sm'
+                    }`}
+                  >
+                    {preset.name}
+                  </button>
+                  <button
+                    onClick={() => deletePreset(preset.id, preset.name)}
+                    className="ml-1 p-1.5 opacity-0 group-hover:opacity-100 transition-opacity text-red-500 hover:bg-red-500/10 rounded"
+                    title="삭제"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Save Modal */}
+        {showSaveModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+            <div className={`w-96 p-6 rounded-2xl shadow-2xl ${isDarkMode ? 'bg-gray-800 text-white border border-gray-700' : 'bg-white text-gray-900'}`}>
+              <h3 className="text-lg font-bold mb-4">현재 테마 저장</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1 opacity-70">프리셋 이름</label>
+                  <input
+                    type="text"
+                    autoFocus
+                    value={newPresetName}
+                    onChange={(e) => setNewPresetName(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && savePreset()}
+                    placeholder="예: 내 캘린더 테마"
+                    className={`w-full px-4 py-2 rounded-xl border focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all ${
+                      isDarkMode ? 'bg-gray-700 border-gray-600' : 'bg-gray-50 border-gray-200'
+                    }`}
+                  />
+                </div>
+                <div className="flex gap-2 pt-2">
+                  <button
+                    onClick={() => setShowSaveModal(false)}
+                    className={`flex-1 px-4 py-2 rounded-xl text-sm font-medium transition-colors ${
+                      isDarkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-gray-100 hover:bg-gray-200'
+                    }`}
+                  >
+                    취소
+                  </button>
+                  <button
+                    onClick={savePreset}
+                    className="flex-1 px-4 py-2 rounded-xl text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                  >
+                    저장하기
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Tabs */}
         <div className="flex gap-4 mb-8">
@@ -310,10 +445,10 @@ export default function ColorsPage() {
                         type="number"
                         min="0"
                         max="100"
-                        step="0.1"
+                        step="0.0001"
                         value={currentColors[editingColor]?.l ?? (isDarkMode ? 0 : 100)}
                         onChange={(e) => handleOklchChange(editingColor, 'l', Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)))}
-                        className={`text-xs w-16 border rounded px-1 py-0.5 text-right font-mono ${isDarkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300'}`}
+                        className={`text-xs w-20 border rounded px-1 py-0.5 text-right font-mono ${isDarkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300'}`}
                       />
                       <span className="text-xs text-gray-500">%</span>
                     </div>
@@ -322,7 +457,7 @@ export default function ColorsPage() {
                     type="range"
                     min="0"
                     max="100"
-                    step="0.1"
+                    step="0.0001"
                     value={currentColors[editingColor]?.l ?? (isDarkMode ? 0 : 100)}
                     onChange={(e) => handleOklchChange(editingColor, 'l', parseFloat(e.target.value))}
                     className={`w-full h-2 rounded-lg appearance-none cursor-pointer accent-blue-600 ${isDarkMode ? 'bg-gray-700' : 'bg-gray-200'}`}
@@ -335,17 +470,17 @@ export default function ColorsPage() {
                       type="number"
                       min="0"
                       max="0.4"
-                      step="0.001"
+                      step="0.0001"
                       value={currentColors[editingColor]?.c ?? 0}
                       onChange={(e) => handleOklchChange(editingColor, 'c', Math.min(0.4, Math.max(0, parseFloat(e.target.value) || 0)))}
-                      className={`text-xs w-16 border rounded px-1 py-0.5 text-right font-mono ${isDarkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300'}`}
+                      className={`text-xs w-20 border rounded px-1 py-0.5 text-right font-mono ${isDarkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300'}`}
                     />
                   </div>
                   <input
                     type="range"
                     min="0"
                     max="0.4"
-                    step="0.001"
+                    step="0.0001"
                     value={currentColors[editingColor]?.c ?? 0}
                     onChange={(e) => handleOklchChange(editingColor, 'c', parseFloat(e.target.value))}
                     className={`w-full h-2 rounded-lg appearance-none cursor-pointer accent-blue-600 ${isDarkMode ? 'bg-gray-700' : 'bg-gray-200'}`}
@@ -384,17 +519,19 @@ export default function ColorsPage() {
                       type="number"
                       min="0"
                       max="360"
+                      step="0.0001"
                       value={currentColors[editingColor]?.h ?? 0}
-                      onChange={(e) => handleOklchChange(editingColor, 'h', Math.min(360, Math.max(0, parseInt(e.target.value) || 0)))}
-                      className={`text-xs w-16 border rounded px-1 py-0.5 text-right font-mono ${isDarkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300'}`}
+                      onChange={(e) => handleOklchChange(editingColor, 'h', Math.min(360, Math.max(0, parseFloat(e.target.value) || 0)))}
+                      className={`text-xs w-20 border rounded px-1 py-0.5 text-right font-mono ${isDarkMode ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300'}`}
                     />
                   </div>
                   <input
                     type="range"
                     min="0"
                     max="360"
+                    step="0.0001"
                     value={currentColors[editingColor]?.h ?? 0}
-                    onChange={(e) => handleOklchChange(editingColor, 'h', parseInt(e.target.value))}
+                    onChange={(e) => handleOklchChange(editingColor, 'h', parseFloat(e.target.value))}
                     className="w-full h-2 rounded-lg appearance-none cursor-pointer hue-range"
                   />
                 </div>
