@@ -1,3 +1,57 @@
+# AI Calendar
+
+AI-powered calendar management application
+
+## Before You Begin
+
+1. **Google Cloud Console Setup**: See [Google Cloud Setup Guide](GOOGLE_CLOUD_SETUP.md)
+   - Check your current Codespace's OAuth redirect URI:
+     ```bash
+     /workspaces/AI_calendar/scripts/show-redirect-uri.sh
+     ```
+2. **Environment Variables**: See section below
+
+## Environment Variables
+
+### Variables Required in Codespaces Secrets
+
+Only set these secrets in **Codespaces Secrets**:
+
+#### Required
+- `OPENAI_API_KEY`: OpenAI API key
+- `GOOGLE_CLIENT_ID`: Google OAuth client ID
+- `GOOGLE_CLIENT_SECRET`: Google OAuth client secret
+
+#### Optional (if needed)
+- `SESSION_SECRET`: Session encryption key (auto-generated if not set)
+- `GOOGLE_WEBHOOK_TOKEN`: Google Webhook authentication token
+- `NOTION_API_KEY`: Notion API key
+- `CONTEXT7_API_KEY`: Context7 API key
+
+### Auto-Configured Variables
+
+You **don't need to set** these variables. The `dev-run.sh` script sets them automatically:
+
+- `BACKEND_PUBLIC_BASE` - Backend public URL (auto-detected in Codespaces)
+- `FRONTEND_BASE_URL` - Frontend URL (auto-detected in Codespaces)
+- `GOOGLE_REDIRECT_URI` - OAuth redirect URI (auto-generated)
+- `GOOGLE_WEBHOOK_URL` - Webhook URL (auto-generated)
+- `CORS_ALLOW_ORIGINS` - CORS allowed origins (auto-configured)
+- `COOKIE_SECURE` - Cookie secure flag (Codespaces=1, local=0)
+- `NEXT_PUBLIC_API_BASE` - API base path (/api)
+- `NEXT_PUBLIC_BACKEND_DIRECT` - Backend direct URL
+- `ENABLE_GCAL` - Google Calendar enabled (default: 1)
+- `LLM_DEBUG` - LLM debug mode (default: 0)
+- `GOOGLE_TOKEN_FILE` - Google token file path
+- `GOOGLE_CALENDAR_ID` - Default calendar ID (default: primary)
+
+See [.env.example](.env.example) for more details.
+
+## Troubleshooting
+
+- **redirect_uri_mismatch error**: See [Redirect URI Troubleshooting Guide](TROUBLESHOOTING_REDIRECT_URI.md)
+- **Google Cloud setup**: See [Google Cloud Setup Guide](GOOGLE_CLOUD_SETUP.md)
+
 ## Quick start (build + run)
 
 Run the combined script to build the frontend and start the backend in one step:

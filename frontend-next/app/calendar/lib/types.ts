@@ -1,5 +1,28 @@
 export type CalendarEventSource = "local" | "google" | "google_task";
 
+export type GoogleTask = {
+  id: string;
+  title: string;
+  notes?: string | null;
+  due?: string | null;  // RFC 3339 timestamp
+  status: "needsAction" | "completed";
+  completed?: string | null;
+  updated?: string | null;
+};
+
+export type TaskPayload = {
+  title: string;
+  notes?: string | null;
+  due?: string | null;
+};
+
+export type TaskUpdate = {
+  title?: string | null;
+  notes?: string | null;
+  due?: string | null;
+  status?: "needsAction" | "completed" | null;
+};
+
 export type CalendarEvent = {
   id: number | string;
   title: string;

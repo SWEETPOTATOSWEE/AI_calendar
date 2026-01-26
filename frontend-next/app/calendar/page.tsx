@@ -12,6 +12,7 @@ import EventModal from "./components/EventModal";
 import AiAssistantModal from "./components/AiAssistantModal";
 import CalendarHeaderActions from "./components/CalendarHeaderActions";
 import ThemeTokenProvider from "./components/ThemeTokenProvider";
+import TaskModal from "./components/TaskModal";
 import {
   addDays,
   addMonths,
@@ -359,8 +360,11 @@ function CalendarPageInner() {
   const [nowSnapshot] = useState(() => new Date());
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [leftPanelOpen, setLeftPanelOpen] = useState(false);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  const [taskModalOpen, setTaskModalOpen] = useState(false);
+  const [tasks, setTasks] = useState<any[]>([]);
   const [sidebarScrollable, setSidebarScrollable] = useState(false);
   const [mobileScrollable, setMobileScrollable] = useState(false);
   const [sidebarAtTop, setSidebarAtTop] = useState(true);
@@ -379,6 +383,7 @@ function CalendarPageInner() {
   const monthPopupRef = useRef<HTMLDivElement | null>(null);
   const dayEventsPopupRef = useRef<HTMLDivElement | null>(null);
   const viewMenuRef = useRef<HTMLDivElement | null>(null);
+  const addMenuRef = useRef<HTMLDivElement | null>(null);
   const calendarSwipeRef = useRef<HTMLDivElement | null>(null);
   const swipeStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
   const skipDateClickRef = useRef(false);
@@ -426,6 +431,26 @@ function CalendarPageInner() {
 
   const viewAnchor = view === "month" ? currentMonth : selectedDate;
   const { state, actions, useGoogle } = useCalendarData(rangeStart, rangeEnd, viewAnchor);
+
+  // Load tasks from Google Tasks API
+  useEffect(() => {
+    if (!useGoogle) {
+      setTasks([]);
+      return;
+    }
+    const loadTasks = async () => {
+      try {
+        const { listTasks } = await import("./lib/api");
+        const data = await listTasks();
+        setTasks(data || []);
+      } catch (error) {
+        console.error("Failed to load tasks:", error);
+        setTasks([]);
+      }
+    };
+    loadTasks();
+  }, [useGoogle, state.refreshKey]);
+
   const ai = useAiAssistant({
     onApplied: actions.refresh,
     onAddApplied: (events) => {
@@ -752,7 +777,7 @@ function CalendarPageInner() {
   }, [state.indexes.byDate, selectedDate]);
 
   const monthCalendarEvents = useMemo(() => {
-    return state.allEvents.map((event) => {
+    const eventsList = state.allEvents.map((event) => {
       const colors = getMonthEventColor(event);
       const endForCalendar = (() => {
         if (!event.all_day) return event.end || undefined;
@@ -770,10 +795,30 @@ function CalendarPageInner() {
         backgroundColor: colors.bg,
         borderColor: colors.border,
         textColor: colors.text,
-        extendedProps: { raw: event },
+        extendedProps: { raw: event, isTask: false },
       };
     });
-  }, [state.allEvents]);
+
+    // Add tasks to calendar
+    const taskEvents = tasks.map((task) => {
+      const dueDate = task.due ? new Date(task.due) : null;
+      const dateStr = dueDate ? toISODate(dueDate) : toISODate(new Date());
+      return {
+        id: `task-${task.id}`,
+        title: task.title,
+        start: dateStr,
+        end: dateStr,
+        allDay: true,
+        backgroundColor: "transparent",
+        borderColor: "transparent",
+        textColor: "oklch(var(--text-primary))",
+        extendedProps: { raw: task, isTask: true },
+      };
+    });
+
+    return [...eventsList, ...taskEvents];
+  }, [state.allEvents, tasks]);
+
 
   useEffect(() => {
     if (view !== "month") {
@@ -955,6 +1000,23 @@ function CalendarPageInner() {
   }, [viewMenuOpen]);
 
   useEffect(() => {
+    if (!addMenuOpen) return;
+    const handleClick = (event: MouseEvent) => {
+      if (!addMenuRef.current || addMenuRef.current.contains(event.target as Node)) return;
+      setAddMenuOpen(false);
+    };
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setAddMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [addMenuOpen]);
+
+  useEffect(() => {
     const monthApi = monthCalendarRef.current?.getApi();
     const miniApi = miniCalendarRef.current?.getApi();
     if (!monthApi && !miniApi) return;
@@ -1024,16 +1086,8 @@ function CalendarPageInner() {
   })();
 
   const handleViewChange = (next: ViewMode) => {
-    const api = monthCalendarRef.current?.getApi();
-    const anchorDate = selectedDate;
-    if (api) {
-      const targetView =
-        next === "month" ? "dayGridMonth" : next === "week" ? "timeGridWeek" : "timeGridDay";
-      api.changeView(targetView, anchorDate);
-    }
     const target = next === "month" ? "/calendar" : `/calendar?view=${next}`;
-    setCurrentMonth(startOfMonth(anchorDate));
-    router.replace(target, { scroll: false });
+    router.push(target, { scroll: false });
   };
 
   const handlePrev = () => {
@@ -1595,19 +1649,45 @@ function CalendarPageInner() {
                 )}
               </div>
               <div className="flex gap-1">
-                <button
-                  className="flex items-center justify-center rounded-full size-9 hover:bg-bg-subtle transition-colors text-text-secondary"
-                  type="button"
-                  onClick={() => {
-                    setActiveEvent(null);
-                    setAiDraftEvent(null);
-                    setAiDraftIndex(null);
-                    openEventDrawer({ reset: true, showForm: true });
-                  }}
-                  aria-label="직접 추가"
-                >
-                  <Plus className="size-5" />
-                </button>
+                <div ref={addMenuRef} className="relative">
+                  <button
+                    className="flex items-center justify-center rounded-full size-9 hover:bg-bg-subtle transition-colors text-text-secondary"
+                    type="button"
+                    onClick={() => setAddMenuOpen((prev) => !prev)}
+                    aria-label="추가 메뉴"
+                    aria-haspopup="menu"
+                    aria-expanded={addMenuOpen}
+                  >
+                    <Plus className="size-5" />
+                  </button>
+                  {addMenuOpen && (
+                    <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-48 rounded-xl border border-border-subtle bg-bg-surface shadow-lg p-2 flex flex-col gap-1 z-50">
+                      <button
+                        className="w-full text-left px-4 py-2.5 rounded-lg hover:bg-bg-subtle transition-colors text-text-primary font-medium"
+                        type="button"
+                        onClick={() => {
+                          setAddMenuOpen(false);
+                          setActiveEvent(null);
+                          setAiDraftEvent(null);
+                          setAiDraftIndex(null);
+                          openEventDrawer({ reset: true, showForm: true });
+                        }}
+                      >
+                        일정 추가
+                      </button>
+                      <button
+                        className="w-full text-left px-4 py-2.5 rounded-lg hover:bg-bg-subtle transition-colors text-text-primary font-medium"
+                        type="button"
+                        onClick={() => {
+                          setAddMenuOpen(false);
+                          setTaskModalOpen(true);
+                        }}
+                      >
+                        할 일 추가
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <button
                   className="flex items-center justify-center rounded-full size-9 hover:bg-bg-subtle transition-colors text-text-secondary"
                   type="button"
@@ -1712,6 +1792,7 @@ function CalendarPageInner() {
                 )}
                 <div className="flex-1 min-h-0 overflow-visible">
                   <FullCalendar
+                    key={view}
                     ref={monthCalendarRef}
                     plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
                     initialView={
@@ -1787,6 +1868,53 @@ function CalendarPageInner() {
                       }
                     }}
                     eventContent={(arg) => {
+                      const isTask = arg.event.extendedProps?.isTask === true;
+                      
+                      if (isTask) {
+                        const task = arg.event.extendedProps.raw;
+                        const isCompleted = task?.status === "completed";
+                        return (
+                          <div 
+                            className="flex items-center gap-2 px-2 py-1 cursor-pointer"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              // Toggle task completion
+                              try {
+                                const { updateTask, listTasks } = await import("./lib/api");
+                                await updateTask(task.id, {
+                                  status: isCompleted ? "needsAction" : "completed",
+                                });
+                                const data = await listTasks();
+                                setTasks(data || []);
+                              } catch (error) {
+                                console.error("Failed to toggle task:", error);
+                              }
+                            }}
+                          >
+                            <div 
+                              className={`
+                                inline-flex items-center justify-center
+                                rounded-full size-4 shrink-0
+                                border-2 transition-all cursor-pointer
+                                ${isCompleted 
+                                  ? "bg-primary border-primary" 
+                                  : "bg-transparent border-border-subtle hover:border-primary"
+                                }
+                              `}
+                            >
+                              {isCompleted && (
+                                <svg className="size-2.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4">
+                                  <polyline points="20 6 9 17 4 12" />
+                                </svg>
+                              )}
+                            </div>
+                            <span className={`fc-event-title text-sm ${isCompleted ? "line-through opacity-60" : ""}`}>
+                              {arg.event.title}
+                            </span>
+                          </div>
+                        );
+                      }
+                      
                       const textColor = arg.event.textColor || "#2f5bd6";
                       const continued = !arg.isStart;
                       const timeText = arg.timeText?.replace(/(오전|오후)\s*/g, "").trim();
@@ -1859,6 +1987,13 @@ function CalendarPageInner() {
                       setDayEventsPopup(null);
                     }}
                     eventClick={(info) => {
+                      const isTask = info.event.extendedProps?.isTask === true;
+                      
+                      if (isTask) {
+                        // Task는 체크박스 클릭으로 처리되므로 여기서는 무시
+                        return;
+                      }
+                      
                       const target = state.allEvents.find((ev) => String(ev.id) === String(info.event.id));
                       if (info.event.start) setSelectedDate(info.event.start);
                       if (target) {
@@ -2279,6 +2414,82 @@ function CalendarPageInner() {
                   </div>
                 )}
               </div>
+
+              {/* Today's Tasks */}
+              {useGoogle && (
+                <div className="space-y-2 pt-2 border-t border-border-subtle">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-text-primary">
+                    <CalendarIcon className="size-3" />
+                    <span>오늘의 할 일 ({tasks.filter(t => {
+                      if (!t.due) return false;
+                      const dueDate = new Date(t.due);
+                      const today = new Date();
+                      return dueDate.toDateString() === today.toDateString();
+                    }).length})</span>
+                  </div>
+                  {tasks.filter(t => {
+                    if (!t.due) return false;
+                    const dueDate = new Date(t.due);
+                    const today = new Date();
+                    return dueDate.toDateString() === today.toDateString();
+                  }).length > 0 ? (
+                    <div className="space-y-1">
+                      {tasks.filter(t => {
+                        if (!t.due) return false;
+                        const dueDate = new Date(t.due);
+                        const today = new Date();
+                        return dueDate.toDateString() === today.toDateString();
+                      }).map(task => {
+                        const isCompleted = task.status === "completed";
+                        return (
+                          <div 
+                            key={task.id} 
+                            className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs bg-subtle"
+                          >
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  const { updateTask, listTasks } = await import("./lib/api");
+                                  await updateTask(task.id, {
+                                    status: isCompleted ? "needsAction" : "completed",
+                                  });
+                                  const data = await listTasks();
+                                  setTasks(data || []);
+                                } catch (error) {
+                                  console.error("Failed to toggle task:", error);
+                                }
+                              }}
+                              className={`
+                                inline-flex items-center justify-center
+                                rounded-full size-4 shrink-0
+                                border-2 transition-all cursor-pointer
+                                ${isCompleted 
+                                  ? "bg-primary border-primary" 
+                                  : "bg-transparent border-border-subtle hover:border-primary"
+                                }
+                              `}
+                            >
+                              {isCompleted && (
+                                <svg className="size-2.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4">
+                                  <polyline points="20 6 9 17 4 12" />
+                                </svg>
+                              )}
+                            </button>
+                            <span className={`flex-1 font-medium text-text-primary truncate ${isCompleted ? "line-through opacity-60" : ""}`}>
+                              {task.title}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-text-disabled text-center py-4">
+                      오늘 예정된 할 일이 없습니다
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -2704,6 +2915,21 @@ function CalendarPageInner() {
           }}
         />
       )}
+
+      <TaskModal
+        open={taskModalOpen}
+        onClose={() => setTaskModalOpen(false)}
+        onSubmit={async (task) => {
+          // Refresh tasks
+          try {
+            const { listTasks } = await import("./lib/api");
+            const data = await listTasks();
+            setTasks(data || []);
+          } catch (error) {
+            console.error("Failed to reload tasks:", error);
+          }
+        }}
+      />
     </div>
   );
 }

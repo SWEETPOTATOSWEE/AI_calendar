@@ -293,6 +293,28 @@ class InterruptRequest(BaseModel):
   request_id: Optional[str] = None
 
 
+class Task(BaseModel):
+  id: str
+  title: str
+  notes: Optional[str] = None
+  due: Optional[str] = None  # ISO datetime
+  status: str = "needsAction"  # "needsAction" or "completed"
+  completed: Optional[str] = None
+
+
+class TaskCreate(BaseModel):
+  title: str
+  notes: Optional[str] = None
+  due: Optional[str] = None
+
+
+class TaskUpdate(BaseModel):
+  title: Optional[str] = None
+  notes: Optional[str] = None
+  due: Optional[str] = None
+  status: Optional[str] = None
+
+
 # 메모리 저장
 events: List[Event] = []
 recurring_events: List[Dict[str, Any]] = []
@@ -5301,6 +5323,7 @@ async def delete_preview_groups(text: str,
 def google_login(request: Request):
   _log_debug("[GCAL] login start")
   redirect_uri = _resolve_google_redirect_uri(request)
+  print(f"[DEBUG] Google OAuth redirect_uri: {redirect_uri}")
   if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and redirect_uri):
     raise HTTPException(
         status_code=500,
@@ -5672,10 +5695,77 @@ def google_tasks(request: Request):
     raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
   try:
     service = get_google_tasks_service(session_id)
-    results = service.tasks().list(tasklist='@default').execute()
+    results = service.tasks().list(tasklist='@default', showCompleted=True, showHidden=True).execute()
     return results.get('items', [])
   except Exception as e:
     logger.exception("Google Tasks fetch error")
+    raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/google/tasks")
+def google_create_task(request: Request, task_data: TaskCreate):
+  session_id = get_google_session_id(request)
+  if not session_id:
+    raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
+  try:
+    service = get_google_tasks_service(session_id)
+    task = {
+      "title": task_data.title,
+    }
+    if task_data.notes:
+      task["notes"] = task_data.notes
+    if task_data.due:
+      task["due"] = task_data.due
+    result = service.tasks().insert(tasklist='@default', body=task).execute()
+    return result
+  except Exception as e:
+    logger.exception("Google Tasks create error")
+    raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/api/google/tasks/{task_id}")
+def google_update_task(request: Request, task_id: str, task_data: TaskUpdate):
+  session_id = get_google_session_id(request)
+  if not session_id:
+    raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
+  try:
+    service = get_google_tasks_service(session_id)
+    # 먼저 기존 task를 가져옵니다
+    task = service.tasks().get(tasklist='@default', task=task_id).execute()
+    
+    # 업데이트할 필드만 변경
+    if task_data.title is not None:
+      task["title"] = task_data.title
+    if task_data.notes is not None:
+      task["notes"] = task_data.notes
+    if task_data.due is not None:
+      task["due"] = task_data.due
+    if task_data.status is not None:
+      task["status"] = task_data.status
+      if task_data.status == "completed":
+        from datetime import datetime, timezone
+        task["completed"] = datetime.now(timezone.utc).isoformat()
+      elif "completed" in task:
+        del task["completed"]
+    
+    result = service.tasks().update(tasklist='@default', task=task_id, body=task).execute()
+    return result
+  except Exception as e:
+    logger.exception("Google Tasks update error")
+    raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/google/tasks/{task_id}")
+def google_delete_task(request: Request, task_id: str):
+  session_id = get_google_session_id(request)
+  if not session_id:
+    raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
+  try:
+    service = get_google_tasks_service(session_id)
+    service.tasks().delete(tasklist='@default', task=task_id).execute()
+    return {"ok": True}
+  except Exception as e:
+    logger.exception("Google Tasks delete error")
     raise HTTPException(status_code=500, detail=str(e))
 
 

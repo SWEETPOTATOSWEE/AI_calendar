@@ -27,7 +27,7 @@ import {
   Turtle,
   X,
 } from "lucide-react";
-import { formatShortDate, formatTimeRange, parseISODateTime } from "../lib/date";
+import { formatShortDate, formatTime, formatTimeRange, parseISODateTime } from "../lib/date";
 import {
   formatRecurrenceDateLabel,
   formatRecurrencePattern,
@@ -593,9 +593,9 @@ export default function AiAssistantModal({
                           <div ref={rangePopoverRef} className="absolute left-0 bottom-full mb-2 w-max rounded-2xl border border-border-subtle bg-canvas p-4 shadow-xl z-[100] space-y-3">
                             <p className="text-[11px] font-bold text-text-secondary uppercase tracking-wider">삭제 범위 설정</p>
                             <div className="flex items-center gap-2">
-                              <DatePopover value={view.startDate} onChange={handleStartDateChange} />
+                              <DatePopover label="시작일" value={view.startDate} onChange={handleStartDateChange} />
                               <span className="text-text-disabled">~</span>
-                              <DatePopover value={view.endDate} onChange={handleEndDateChange} />
+                              <DatePopover label="종료일" value={view.endDate} onChange={handleEndDateChange} />
                             </div>
                           </div>
                         )}

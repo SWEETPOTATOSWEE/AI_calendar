@@ -1,4 +1,4 @@
-import type { AuthStatus, CalendarEvent, EventPayload, RecurringEventPayload } from "./types";
+import type { AuthStatus, CalendarEvent, EventPayload, RecurringEventPayload, GoogleTask, TaskPayload, TaskUpdate } from "./types";
 
 type NlpPreviewResponse = Record<string, unknown>;
 type NlpDeletePreviewResponse = Record<string, unknown>;
@@ -395,4 +395,37 @@ export const exitAdmin = () => {
 export const logout = () => {
   const url = BACKEND_BASE ? backendUrl("/logout") : "/logout";
   window.location.href = url;
+};
+// -------------------------
+// Google Tasks API
+// -------------------------
+
+export const listTasks = async () => {
+  const url = apiUrl("/google/tasks");
+  const data = await fetchJson<any[]>(url, { method: "GET" });
+  return data || [];
+};
+
+export const createTask = async (task: { title: string; notes?: string | null; due?: string | null }) => {
+  const url = apiUrl("/google/tasks");
+  return fetchJson<any>(url, {
+    method: "POST",
+    body: JSON.stringify(task),
+  });
+};
+
+export const updateTask = async (
+  taskId: string,
+  updates: { title?: string | null; notes?: string | null; due?: string | null; status?: string | null }
+) => {
+  const url = apiUrl(`/google/tasks/${taskId}`);
+  return fetchJson<any>(url, {
+    method: "PATCH",
+    body: JSON.stringify(updates),
+  });
+};
+
+export const deleteTask = async (taskId: string) => {
+  const url = apiUrl(`/google/tasks/${taskId}`);
+  return fetchJson<{ ok: boolean }>(url, { method: "DELETE" });
 };
