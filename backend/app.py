@@ -5524,6 +5524,14 @@ def google_webhook(request: Request):
   return JSONResponse({"ok": True})
 
 
+# 이전 webhook URL 호환성을 위한 임시 엔드포인트 (자동 만료될 때까지)
+@app.post("/webhook/google")
+def google_webhook_legacy(request: Request):
+  """이전 URL로 등록된 watch를 위한 임시 엔드포인트. 24시간 후 자동 만료됨."""
+  # 단순히 200 OK를 반환하여 Google 서버 에러 방지
+  return JSONResponse({"ok": True, "deprecated": True})
+
+
 @app.get("/api/google/stream")
 async def google_stream(request: Request):
   session_id = get_google_session_id(request)

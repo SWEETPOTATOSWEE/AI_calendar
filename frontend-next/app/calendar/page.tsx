@@ -434,7 +434,7 @@ function CalendarPageInner() {
 
   // Load tasks from Google Tasks API
   useEffect(() => {
-    if (!useGoogle) {
+    if (!useGoogle || !state.authStatus?.has_token) {
       setTasks([]);
       return;
     }
@@ -449,7 +449,7 @@ function CalendarPageInner() {
       }
     };
     loadTasks();
-  }, [useGoogle, state.refreshKey]);
+  }, [useGoogle, state.refreshKey, state.authStatus?.has_token]);
 
   const ai = useAiAssistant({
     onApplied: actions.refresh,
@@ -2416,7 +2416,7 @@ function CalendarPageInner() {
               </div>
 
               {/* Today's Tasks */}
-              {useGoogle && (
+              {useGoogle && state.authStatus?.has_token && (
                 <div className="space-y-2 pt-2 border-t border-border-subtle">
                   <div className="flex items-center gap-2 text-xs font-semibold text-text-primary">
                     <CalendarIcon className="size-3" />

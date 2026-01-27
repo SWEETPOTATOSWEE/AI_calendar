@@ -5,19 +5,11 @@ type NlpDeletePreviewResponse = Record<string, unknown>;
 type NlpClassifyResponse = { type?: string };
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "/api").replace(/\/$/, "");
-const BACKEND_BASE = (process.env.NEXT_PUBLIC_BACKEND_BASE || (API_BASE.startsWith("http") ? new URL(API_BASE).origin : "")).replace(/\/$/, "");
+const BACKEND_BASE = (process.env.NEXT_PUBLIC_BACKEND_BASE || "").replace(/\/$/, "");
 
-// SSE 스트리밍을 위한 직접 백엔드 URL 가져오기 (Next.js rewrites 우회)
+// 서버 모드에서는 rewrites를 사용하므로 상대 경로 사용
 const getBackendDirectUrl = () => {
-  if (process.env.NEXT_PUBLIC_BACKEND_DIRECT) {
-    return process.env.NEXT_PUBLIC_BACKEND_DIRECT.replace(/\/$/, "");
-  }
-  if (BACKEND_BASE) {
-    return BACKEND_BASE;
-  }
-  if (typeof window !== "undefined") {
-    return window.location.origin;
-  }
+  // 서버 사이드 렌더링이나 브라우저에서 모두 빈 문자열 반환 (상대 경로 사용)
   return "";
 };
 
@@ -27,30 +19,18 @@ const buildUrl = (base: string, path: string) => {
 };
 
 const apiUrl = (path: string) => {
-  const url = buildUrl(API_BASE, path);
-  if (typeof window !== "undefined") {
-    const sp = new URLSearchParams(window.location.search);
-    if (sp.get("mode") === "google") {
-      return url + (url.includes("?") ? "&" : "?") + "mode=google";
-    }
-  }
+  // Next.js rewrites를 통해 프록시되므로 상대 경로 사용
+  const url = path.startsWith("/") ? path : `/${path}`;
+  console.log("[apiUrl] path:", path, "=> url:", url);
   return url;
 };
 
-// SSE 스트리밍용 URL (Next.js rewrites 우회)
+// SSE 스트리밍용 URL (Next.js rewrites 사용)
 const streamingUrl = (path: string) => {
-  const backendDirect = getBackendDirectUrl();
-  const url = buildUrl(backendDirect, path);
-  if (typeof window !== "undefined") {
-    const sp = new URLSearchParams(window.location.search);
-    if (sp.get("mode") === "google") {
-      return url + (url.includes("?") ? "&" : "?") + "mode=google";
-    }
-  }
-  return url;
+  return path.startsWith("/") ? path : `/${path}`;
 };
 
-const backendUrl = (path: string) => buildUrl(BACKEND_BASE, path);
+const backendUrl = (path: string) => path.startsWith("/") ? path : `/${path}`;
 
 const buildGoogleEventKey = (calendarId?: string | null, eventId?: string | number | null) => {
   if (!eventId) return "";
@@ -79,16 +59,23 @@ const fetchJson = async <T>(url: string, options?: RequestInit): Promise<T> => {
 };
 
 export const fetchAuthStatus = async (): Promise<AuthStatus> => {
-  return fetchJson<AuthStatus>(backendUrl("/auth/google/status"), { method: "GET" });
+  const url = apiUrl("/auth/google/status");
+  console.log("[fetchAuthStatus] URL:", url);
+  const status = await fetchJson<AuthStatus>(url, { method: "GET" });
+  console.log("[fetchAuthStatus] Status:", status);
+  return status;
 };
 
-export const getGoogleStreamUrl = () => apiUrl("/google/stream");
+export const getGoogleStreamUrl = () => apiUrl("/api/google/stream");
 
 export const listEvents = async (startDate: string, endDate: string, useGoogle: boolean) => {
+  console.log("[listEvents] useGoogle:", useGoogle, "startDate:", startDate, "endDate:", endDate);
   if (useGoogle) {
     const params = new URLSearchParams({ start_date: startDate, end_date: endDate });
-    const url = apiUrl(`/google/events?${params.toString()}`);
+    const url = apiUrl(`/api/google/events?${params.toString()}`);
+    console.log("[listEvents] Fetching Google events from:", url);
     const data = await fetchJson<CalendarEvent[]>(url, { method: "GET" });
+    console.log("[listEvents] Google events count:", data?.length || 0);
     return (data || []).map((event) => ({
       ...event,
       id: buildGoogleEventKey(event.calendar_id, event.google_event_id ?? event.id),
@@ -98,8 +85,10 @@ export const listEvents = async (startDate: string, endDate: string, useGoogle: 
   }
 
   const params = new URLSearchParams({ start_date: startDate, end_date: endDate });
-  const url = apiUrl(`/events?${params.toString()}`);
+  const url = apiUrl(`/api/events?${params.toString()}`);
+  console.log("[listEvents] Fetching local events from:", url);
   const data = await fetchJson<CalendarEvent[]>(url, { method: "GET" });
+  console.log("[listEvents] Local events count:", data?.length || 0);
   return (data || []).map((event) => ({
     ...event,
     source: "local" as const,
@@ -107,7 +96,7 @@ export const listEvents = async (startDate: string, endDate: string, useGoogle: 
 };
 
 export const listGoogleTasks = async () => {
-  const url = apiUrl("/google/tasks");
+  const url = apiUrl("/api/google/tasks");
   const data = await fetchJson<any[]>(url, { method: "GET" });
   return (data || []).map((task) => ({
     id: `task:${task.id}`,
@@ -122,7 +111,7 @@ export const listGoogleTasks = async () => {
 };
 
 export const createEvent = async (payload: EventPayload) => {
-  const url = apiUrl("/events");
+  const url = apiUrl("/api/events");
   const created = await fetchJson<CalendarEvent>(url, {
     method: "POST",
     body: JSON.stringify(payload),
@@ -136,7 +125,7 @@ export const updateEvent = async (event: CalendarEvent, payload: EventPayload) =
     if (event.calendar_id) params.set("calendar_id", event.calendar_id);
     const googleId = resolveGoogleEventId(event);
     const url = apiUrl(
-      `/google/events/${encodeURIComponent(googleId)}${params.toString() ? `?${params}` : ""}`
+      `/api/google/events/${encodeURIComponent(googleId)}${params.toString() ? `?${params}` : ""}`
     );
     return fetchJson<{ ok: boolean }>(url, {
       method: "PATCH",
@@ -144,7 +133,7 @@ export const updateEvent = async (event: CalendarEvent, payload: EventPayload) =
     });
   }
 
-  const url = apiUrl(`/events/${encodeURIComponent(String(event.id))}`);
+  const url = apiUrl(`/api/events/${encodeURIComponent(String(event.id))}`);
   const updated = await fetchJson<CalendarEvent>(url, {
     method: "PATCH",
     body: JSON.stringify(payload),
@@ -156,7 +145,7 @@ export const updateRecurringEvent = async (
   event: CalendarEvent,
   payload: RecurringEventPayload
 ) => {
-  const url = apiUrl(`/recurring-events/${encodeURIComponent(String(event.id))}`);
+  const url = apiUrl(`/api/recurring-events/${encodeURIComponent(String(event.id))}`);
   const { type: _type, ...body } = payload;
   const updated = await fetchJson<CalendarEvent>(url, {
     method: "PATCH",
@@ -166,7 +155,7 @@ export const updateRecurringEvent = async (
 };
 
 export const addRecurringException = async (event: CalendarEvent, date: string) => {
-  const url = apiUrl(`/recurring-events/${encodeURIComponent(String(event.id))}/exceptions`);
+  const url = apiUrl(`/api/recurring-events/${encodeURIComponent(String(event.id))}/exceptions`);
   return fetchJson<{ ok: boolean }>(url, {
     method: "POST",
     body: JSON.stringify({ date }),
@@ -179,12 +168,12 @@ export const deleteEvent = async (event: CalendarEvent) => {
     if (event.calendar_id) params.set("calendar_id", event.calendar_id);
     const googleId = resolveGoogleEventId(event);
     const url = apiUrl(
-      `/google/events/${encodeURIComponent(googleId)}${params.toString() ? `?${params}` : ""}`
+      `/api/google/events/${encodeURIComponent(googleId)}${params.toString() ? `?${params}` : ""}`
     );
     return fetchJson<{ ok: boolean }>(url, { method: "DELETE" });
   }
 
-  const url = apiUrl(`/events/${encodeURIComponent(String(event.id))}`);
+  const url = apiUrl(`/api/events/${encodeURIComponent(String(event.id))}`);
   return fetchJson<{ ok: boolean }>(url, { method: "DELETE" });
 };
 
@@ -192,13 +181,13 @@ export const deleteGoogleEventById = async (eventId: string, calendarId?: string
   const params = new URLSearchParams();
   if (calendarId) params.set("calendar_id", calendarId);
   const url = apiUrl(
-    `/google/events/${encodeURIComponent(eventId)}${params.toString() ? `?${params}` : ""}`
+    `/api/google/events/${encodeURIComponent(eventId)}${params.toString() ? `?${params}` : ""}`
   );
   return fetchJson<{ ok: boolean }>(url, { method: "DELETE" });
 };
 
 export const deleteEventsByIds = async (ids: number[]) => {
-  const url = apiUrl("/delete-by-ids");
+  const url = apiUrl("/api/delete-by-ids");
   return fetchJson<{ ok: boolean; deleted_ids: number[]; count: number }>(url, {
     method: "POST",
     body: JSON.stringify({ ids }),
@@ -206,7 +195,7 @@ export const deleteEventsByIds = async (ids: number[]) => {
 };
 
 export const listRecentEvents = async () => {
-  const url = apiUrl("/recent-events");
+  const url = apiUrl("/api/recent-events");
   const data = await fetchJson<CalendarEvent[]>(url, { method: "GET" });
   return (data || []).map((event) => ({ ...event, source: "local" as const }));
 };
@@ -219,7 +208,7 @@ export const previewNlp = async (
   request_id?: string,
   context_confirmed?: boolean
 ) => {
-  const url = apiUrl("/nlp-preview");
+  const url = apiUrl("/api/nlp-preview");
   return fetchJson<NlpPreviewResponse>(url, {
     method: "POST",
     body: JSON.stringify({ text, images, reasoning_effort, model, request_id, context_confirmed }),
@@ -310,7 +299,7 @@ export const previewNlpStream = async (
 };
 
 export const classifyNlp = async (text: string, has_images?: boolean, request_id?: string) => {
-  const url = apiUrl("/nlp-classify");
+  const url = apiUrl("/api/nlp-classify");
   return fetchJson<NlpClassifyResponse>(url, {
     method: "POST",
     body: JSON.stringify({ text, has_images, request_id }),
@@ -335,7 +324,7 @@ export const previewNlpDelete = async (
   request_id?: string,
   context_confirmed?: boolean
 ) => {
-  const url = apiUrl("/nlp-delete-preview");
+  const url = apiUrl("/api/nlp-delete-preview");
   return fetchJson<NlpDeletePreviewResponse>(url, {
     method: "POST",
     body: JSON.stringify({
@@ -357,7 +346,7 @@ export const applyNlpDelete = async (
   reasoning_effort?: string,
   model?: string
 ) => {
-  const url = apiUrl("/nlp-delete-events");
+  const url = apiUrl("/api/nlp-delete-events");
   return fetchJson<{ ok: boolean; deleted_ids: number[]; count: number }>(url, {
     method: "POST",
     body: JSON.stringify({ text, start_date, end_date, reasoning_effort, model }),
@@ -365,12 +354,12 @@ export const applyNlpDelete = async (
 };
 
 export const resetNlpContext = async () => {
-  const url = apiUrl("/nlp-context/reset");
+  const url = apiUrl("/api/nlp-context/reset");
   return fetchJson<{ ok: boolean }>(url, { method: "POST" });
 };
 
 export const interruptNlp = async (request_id?: string) => {
-  const url = apiUrl("/nlp-interrupt");
+  const url = apiUrl("/api/nlp-interrupt");
   return fetchJson<{ ok: boolean; cancelled?: number }>(url, {
     method: "POST",
     body: JSON.stringify({ request_id }),
@@ -401,13 +390,13 @@ export const logout = () => {
 // -------------------------
 
 export const listTasks = async () => {
-  const url = apiUrl("/google/tasks");
+  const url = apiUrl("/api/google/tasks");
   const data = await fetchJson<any[]>(url, { method: "GET" });
   return data || [];
 };
 
 export const createTask = async (task: { title: string; notes?: string | null; due?: string | null }) => {
-  const url = apiUrl("/google/tasks");
+  const url = apiUrl("/api/google/tasks");
   return fetchJson<any>(url, {
     method: "POST",
     body: JSON.stringify(task),
@@ -418,7 +407,7 @@ export const updateTask = async (
   taskId: string,
   updates: { title?: string | null; notes?: string | null; due?: string | null; status?: string | null }
 ) => {
-  const url = apiUrl(`/google/tasks/${taskId}`);
+  const url = apiUrl(`/api/google/tasks/${taskId}`);
   return fetchJson<any>(url, {
     method: "PATCH",
     body: JSON.stringify(updates),
@@ -426,6 +415,6 @@ export const updateTask = async (
 };
 
 export const deleteTask = async (taskId: string) => {
-  const url = apiUrl(`/google/tasks/${taskId}`);
+  const url = apiUrl(`/api/google/tasks/${taskId}`);
   return fetchJson<{ ok: boolean }>(url, { method: "DELETE" });
 };

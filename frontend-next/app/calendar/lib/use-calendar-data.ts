@@ -238,13 +238,18 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const cacheRef = useRef<Record<string, CachedYear>>({});
   const sseRef = useRef<EventSource | null>(null);
   const refreshTimerRef = useRef<number | null>(null);
   const refreshRangeRef = useRef<() => void>(() => {});
 
   const useGoogle = useMemo(
-    () => Boolean(authStatus?.enabled && authStatus?.has_token && !authStatus?.admin),
+    () => {
+      const result = Boolean(authStatus?.enabled && authStatus?.has_token && !authStatus?.admin);
+      console.log("[useCalendarData] useGoogle:", result, "authStatus:", authStatus);
+      return result;
+    },
     [authStatus]
   );
 
@@ -360,7 +365,7 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
   );
 
   const refresh = useCallback(async (force = false) => {
-    if (!rangeStart || !rangeEnd || authStatus === null) return;
+    if (!rangeStart || !rangeEnd || authLoading) return;
     setLoading(true);
     setError(null);
     try {
@@ -407,7 +412,7 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
     } finally {
       setLoading(false);
     }
-  }, [rangeStart, rangeEnd, activeKey, activeYear, activeMonth, useGoogle, updateCache, authStatus]);
+  }, [rangeStart, rangeEnd, activeKey, activeYear, activeMonth, useGoogle, updateCache, authLoading]);
 
   const refreshRange = useCallback(async () => {
     if (!rangeStart || !rangeEnd) return;
@@ -472,12 +477,19 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
 
   useEffect(() => {
     let mounted = true;
+    setAuthLoading(true);
     fetchAuthStatus()
       .then((status) => {
-        if (mounted) setAuthStatus(status);
+        if (mounted) {
+          setAuthStatus(status);
+          setAuthLoading(false);
+        }
       })
       .catch(() => {
-        if (mounted) setAuthStatus({ enabled: false, configured: false, has_token: false });
+        if (mounted) {
+          setAuthStatus({ enabled: false, configured: false, has_token: false });
+          setAuthLoading(false);
+        }
       });
     return () => {
       mounted = false;
