@@ -40,6 +40,8 @@ const apiBase = window.__API_BASE__ || "/api";
   let googleCacheDirty = false;
   let googleCacheGeneration = 0;
   let googleGlobalLoaderDepth = 0;
+  let googleSseSource = null;
+  let googleSseRefreshTimer = null;
   const recurrenceEndSelections = new Map();
   const localEventsCache = { start: null, end: null, items: [] };
   let localCacheDirty = true;
@@ -1370,6 +1372,41 @@ const apiBase = window.__API_BASE__ || "/api";
     if(calendar) calendar.refetchEvents();
     if(selectedDateStr) await loadEventListForDate(selectedDateStr);
     refreshRecentIfOpen();
+  }
+
+  function scheduleGoogleSseRefresh(){
+    if(googleSseRefreshTimer !== null) return;
+    googleSseRefreshTimer = window.setTimeout(async () => {
+      googleSseRefreshTimer = null;
+      try{
+        markGoogleCacheDirty();
+        await refreshAll();
+      }catch(err){
+        console.error("[SSE] refresh failed", err);
+      }
+    }, 600);
+  }
+
+  function initGoogleSse(){
+    if(!IS_GOOGLE_MODE) return;
+    if(googleSseSource){
+      googleSseSource.close();
+      googleSseSource = null;
+    }
+    const url = apiBase + "/google/stream";
+    try{
+      const source = new EventSource(url, { withCredentials: true });
+      googleSseSource = source;
+      const onSync = () => scheduleGoogleSseRefresh();
+      source.addEventListener("google_sync", onSync);
+      source.addEventListener("ready", onSync);
+      source.onmessage = onSync;
+      source.onerror = (err) => {
+        console.warn("[SSE] connection error", err);
+      };
+    }catch(err){
+      console.error("[SSE] init failed", err);
+    }
   }
 
   async function createEvent(e){
@@ -2855,6 +2892,7 @@ const apiBase = window.__API_BASE__ || "/api";
     syncSelectedDayHighlight();
     updateYearMonthLabel(calendar.getDate());
     setActiveView(calendar.view.type);
+    initGoogleSse();
 
     calendarEl.addEventListener("dblclick", (event) => {
       const target = event.target;

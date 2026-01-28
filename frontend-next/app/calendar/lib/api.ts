@@ -4,33 +4,17 @@ type NlpPreviewResponse = Record<string, unknown>;
 type NlpDeletePreviewResponse = Record<string, unknown>;
 type NlpClassifyResponse = { type?: string };
 
-const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "/api").replace(/\/$/, "");
-const BACKEND_BASE = (process.env.NEXT_PUBLIC_BACKEND_BASE || "").replace(/\/$/, "");
-
-// 서버 모드에서는 rewrites를 사용하므로 상대 경로 사용
-const getBackendDirectUrl = () => {
-  // 서버 사이드 렌더링이나 브라우저에서 모두 빈 문자열 반환 (상대 경로 사용)
-  return "";
-};
-
-const buildUrl = (base: string, path: string) => {
-  if (!base) return path;
-  return `${base}${path.startsWith("/") ? "" : "/"}${path}`;
-};
-
 const apiUrl = (path: string) => {
-  // Next.js rewrites를 통해 프록시되므로 상대 경로 사용
+  // 프론트 프록시 라우트를 통해 백엔드로 전달하므로 상대 경로 사용
   const url = path.startsWith("/") ? path : `/${path}`;
   console.log("[apiUrl] path:", path, "=> url:", url);
   return url;
 };
 
-// SSE 스트리밍용 URL (Next.js rewrites 사용)
+// SSE 스트리밍용 URL (프론트 프록시 라우트 사용)
 const streamingUrl = (path: string) => {
   return path.startsWith("/") ? path : `/${path}`;
 };
-
-const backendUrl = (path: string) => path.startsWith("/") ? path : `/${path}`;
 
 const buildGoogleEventKey = (calendarId?: string | null, eventId?: string | number | null) => {
   if (!eventId) return "";
@@ -367,23 +351,21 @@ export const interruptNlp = async (request_id?: string) => {
 };
 
 export const loginGoogle = () => {
-  const url = BACKEND_BASE ? backendUrl("/auth/google/login") : "/auth/google/login";
-  window.location.href = url;
+  // 항상 프론트엔드 프록시 라우트를 통해 백엔드로 전달
+  // 브라우저가 8000 포트를 직접 열지 않도록 하여 Codespaces 보안 경고 방지
+  window.location.href = "/auth/google/login";
 };
 
 export const enterAdmin = () => {
-  const url = BACKEND_BASE ? backendUrl("/admin") : "/admin";
-  window.location.href = url;
+  window.location.href = "/admin";
 };
 
 export const exitAdmin = () => {
-  const url = BACKEND_BASE ? backendUrl("/admin/exit") : "/admin/exit";
-  window.location.href = url;
+  window.location.href = "/admin/exit";
 };
 
 export const logout = () => {
-  const url = BACKEND_BASE ? backendUrl("/logout") : "/logout";
-  window.location.href = url;
+  window.location.href = "/logout";
 };
 // -------------------------
 // Google Tasks API
