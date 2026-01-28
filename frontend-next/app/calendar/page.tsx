@@ -11,6 +11,7 @@ import "./fullcalendar.css";
 import EventModal from "./components/EventModal";
 import AiAssistantModal from "./components/AiAssistantModal";
 import CalendarHeaderActions from "./components/CalendarHeaderActions";
+import CalendarSearchPanel from "./components/CalendarSearchPanel";
 import ThemeTokenProvider from "./components/ThemeTokenProvider";
 import TaskModal from "./components/TaskModal";
 import {
@@ -30,10 +31,9 @@ import {
   toISODate,
   toISODateTime,
 } from "./lib/date";
-import type { CalendarEvent, EventRecurrence, RecurringEventPayload } from "./lib/types";
+import type { CalendarEvent, EventRecurrence, RecurringEventPayload, GoogleTask } from "./lib/types";
 import { useCalendarData } from "./lib/use-calendar-data";
 import { useAiAssistant, type AddPreviewItem } from "./lib/use-ai-assistant";
-import { DatePopover } from "./components/DatePopover";
 import {
   Bell,
   Calendar as CalendarIcon,
@@ -52,9 +52,7 @@ import {
   RotateCcw,
   Search,
   Sparkles,
-  Trash2,
   X,
-  Undo2,
 } from "lucide-react";
 
 type ViewMode = "month" | "week" | "day";
@@ -75,6 +73,16 @@ type DayEventsPopup = {
   align: MonthPopupAlign;
   anchorTop: number;
   anchorBottom: number;
+};
+type SearchFilters = {
+  title: string;
+  attendees: string;
+  location: string;
+  exclude: string;
+  startDate: string;
+  endDate: string;
+  rangeStart: string;
+  rangeEnd: string;
 };
 
 const VIEW_LABELS: Record<ViewMode, string> = {
@@ -339,8 +347,7 @@ function CalendarPageInner() {
   const [dayEventsPopup, setDayEventsPopup] = useState<DayEventsPopup | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchAdvancedOpen, setSearchAdvancedOpen] = useState(false);
-  const [searchAdvancedHeight, setSearchAdvancedHeight] = useState(0);
-  const [searchFilters, setSearchFilters] = useState(() => {
+  const [searchFilters, setSearchFilters] = useState<SearchFilters>(() => {
     const baseDate = new Date();
     return {
       title: "",
@@ -355,7 +362,6 @@ function CalendarPageInner() {
   });
   const [searchResults, setSearchResults] = useState<CalendarEvent[]>([]);
   const [searchResultsOpen, setSearchResultsOpen] = useState(false);
-  const [searchResultsHeight, setSearchResultsHeight] = useState(0);
   const lastSearchKeyRef = useRef<string | null>(null);
   const [nowSnapshot] = useState(() => new Date());
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
@@ -364,7 +370,8 @@ function CalendarPageInner() {
   const [leftPanelOpen, setLeftPanelOpen] = useState(false);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
-  const [tasks, setTasks] = useState<any[]>([]);
+  const [composeMode, setComposeMode] = useState<"event" | "task">("event");
+  const [tasks, setTasks] = useState<GoogleTask[]>([]);
   const [sidebarScrollable, setSidebarScrollable] = useState(false);
   const [mobileScrollable, setMobileScrollable] = useState(false);
   const [sidebarAtTop, setSidebarAtTop] = useState(true);
@@ -378,8 +385,6 @@ function CalendarPageInner() {
   const monthCalendarRef = useRef<FullCalendar | null>(null);
   const miniCalendarRef = useRef<FullCalendar | null>(null);
   const mobileMenuRef = useRef<HTMLDivElement | null>(null);
-  const searchAdvancedRef = useRef<HTMLDivElement | null>(null);
-  const searchResultsPanelRef = useRef<HTMLDivElement | null>(null);
   const monthPopupRef = useRef<HTMLDivElement | null>(null);
   const dayEventsPopupRef = useRef<HTMLDivElement | null>(null);
   const viewMenuRef = useRef<HTMLDivElement | null>(null);
@@ -442,7 +447,7 @@ function CalendarPageInner() {
       try {
         const { listTasks } = await import("./lib/api");
         const data = await listTasks();
-        setTasks(data || []);
+        setTasks((data || []) as GoogleTask[]);
       } catch (error) {
         console.error("Failed to load tasks:", error);
         setTasks([]);
@@ -450,6 +455,20 @@ function CalendarPageInner() {
     };
     loadTasks();
   }, [useGoogle, state.refreshKey, state.authStatus?.has_token]);
+
+  const toggleTaskStatus = async (task: GoogleTask) => {
+    const isCompleted = task.status === "completed";
+    try {
+      const { updateTask, listTasks } = await import("./lib/api");
+      await updateTask(task.id, {
+        status: isCompleted ? "needsAction" : "completed",
+      });
+      const data = await listTasks();
+      setTasks((data || []) as GoogleTask[]);
+    } catch (error) {
+      console.error("Failed to toggle task:", error);
+    }
+  };
 
   const ai = useAiAssistant({
     onApplied: actions.refresh,
@@ -512,6 +531,18 @@ function CalendarPageInner() {
     });
   }, [todayEvents]);
 
+  const todayKey = new Date().toDateString();
+  const todayTasks = useMemo(() => {
+    if (tasks.length === 0) return [];
+    return tasks.filter((task) => {
+      if (!task.due) return false;
+      const dueDate = new Date(task.due);
+      return dueDate.toDateString() === todayKey;
+    });
+  }, [tasks, todayKey]);
+
+  const showTasksPanel = Boolean(useGoogle && state.authStatus?.has_token);
+
   const handleCreate = async (payload: Parameters<typeof actions.create>[0]) => {
     const created = await actions.create(payload);
     return created;
@@ -529,6 +560,7 @@ function CalendarPageInner() {
   const openAiDrawer = () => {
     setSearchOpen(false);
     setModalOpen(false);
+    setTaskModalOpen(false);
     if (!isMobile) {
       setRightPanelOpen(true);
     }
@@ -536,7 +568,9 @@ function CalendarPageInner() {
   };
 
   const openEventDrawer = (options?: { reset?: boolean; showForm?: boolean }) => {
+    setComposeMode("event");
     setSearchOpen(false);
+    setTaskModalOpen(false);
     if (options?.reset) {
       resetEventForm();
     }
@@ -563,6 +597,29 @@ function CalendarPageInner() {
     setSearchOpen(false);
     setSearchResultsOpen(false);
     setSearchAdvancedOpen(false);
+    setTaskModalOpen(false);
+  };
+
+  const openTaskDrawer = () => {
+    setComposeMode("task");
+    setSearchOpen(false);
+    setModalOpen(false);
+    ai.close();
+    setTaskModalOpen(true);
+    if (!isMobile) {
+      setRightPanelOpen(true);
+    } else {
+      setRightPanelOpen(false);
+    }
+  };
+
+  const handleComposeModeChange = (mode: "event" | "task") => {
+    if (mode === composeMode) return;
+    if (mode === "event") {
+      openEventDrawer({ showForm: true });
+      return;
+    }
+    openTaskDrawer();
   };
 
   const onSearchKeyDown = (e: React.KeyboardEvent) => {
@@ -572,204 +629,44 @@ function CalendarPageInner() {
     }
   };
 
-  const searchUI = (
-    <div className="flex h-full flex-col overflow-hidden min-h-0">
-      {isMobile && (
-        <div className="flex items-center justify-between px-3 pt-3 pb-2">
-          <h3 className="text-[18px] font-semibold text-text-primary">일정 검색</h3>
-          <button
-            type="button"
-            className="flex size-9 items-center justify-center rounded-full hover:bg-bg-subtle transition-colors text-text-secondary"
-            onClick={closeEventDrawer}
-            aria-label="닫기"
-          >
-            <X className="size-5" />
-          </button>
-        </div>
-      )}
-      <div className="px-3 py-2">
-        <div className="flex items-center gap-2 rounded-xl border border-border-subtle bg-bg-canvas px-3 py-1.5 shadow-sm">
-          <Search className="size-4 text-text-secondary" />
-          <input
-            className="flex-1 bg-transparent text-[13px] text-text-primary focus:outline-none placeholder:text-text-disabled"
-            placeholder="일정 키워드 입력"
-            value={searchFilters.title}
-            onChange={(event) =>
-              setSearchFilters((prev) => ({ ...prev, title: event.target.value }))
-            }
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                void handleBasicSearch();
-              }
-            }}
-            aria-label="기본 검색어"
-          />
-          <button
-            type="button"
-            className={`flex size-7 items-center justify-center rounded-lg transition-colors hover:bg-bg-subtle ${
-              searchAdvancedOpen ? "text-token-primary bg-bg-subtle" : "text-text-secondary"
-            }`}
-            onClick={() => setSearchAdvancedOpen((prev) => !prev)}
-            aria-label="고급 검색 토글"
-            aria-expanded={searchAdvancedOpen}
-          >
-            <ChevronDown
-              className={`size-4 transition-transform ${searchAdvancedOpen ? "rotate-180" : ""}`}
-            />
-          </button>
-        </div>
-      </div>
+  const handleSearchFiltersChange = (next: Partial<SearchFilters>) => {
+    setSearchFilters((prev) => ({ ...prev, ...next }));
+  };
 
-      {searchAdvancedOpen && (
-        <div className="px-3 pb-4 border-b border-border-subtle animate-in slide-in-from-top-1 duration-200">
-          <div className="space-y-3 pt-1">
-            <div className="space-y-1">
-              <div className="text-[11px] font-medium text-text-secondary px-1">참석자</div>
-              <input
-                className="w-full rounded-lg border border-border-subtle bg-bg-canvas px-3 py-1.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-token-primary/20"
-                type="text"
-                placeholder="참석자, 주최자 입력"
-                value={searchFilters.attendees}
-                onChange={(event) =>
-                  setSearchFilters((prev) => ({ ...prev, attendees: event.target.value }))
-                }
-                onKeyDown={onSearchKeyDown}
-              />
-            </div>
-            <div className="space-y-1">
-              <div className="text-[11px] font-medium text-text-secondary px-1">장소</div>
-              <input
-                className="w-full rounded-lg border border-border-subtle bg-bg-canvas px-3 py-1.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-token-primary/20"
-                type="text"
-                placeholder="위치 또는 회의실"
-                value={searchFilters.location}
-                onChange={(event) =>
-                  setSearchFilters((prev) => ({ ...prev, location: event.target.value }))
-                }
-                onKeyDown={onSearchKeyDown}
-              />
-            </div>
-            <div className="space-y-1">
-              <div className="text-[11px] font-medium text-text-secondary px-1">제외할 검색어</div>
-              <input
-                className="w-full rounded-lg border border-border-subtle bg-bg-canvas px-3 py-1.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-token-primary/20"
-                type="text"
-                placeholder="제외할 키워드"
-                value={searchFilters.exclude}
-                onChange={(event) =>
-                  setSearchFilters((prev) => ({ ...prev, exclude: event.target.value }))
-                }
-                onKeyDown={onSearchKeyDown}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div className="space-y-1">
-                <div className="text-[11px] font-medium text-text-secondary px-1">시작일</div>
-                <DatePopover
-                  className="w-full"
-                  value={searchFilters.startDate}
-                  onChange={(val) =>
-                    setSearchFilters((prev) => ({ ...prev, startDate: val }))
-                  }
-                  label="시작일"
-                  icon={<CalendarIcon className="size-3.5" />}
-                  placeholder="시작일"
-                />
-              </div>
-              <div className="space-y-1">
-                <div className="text-[11px] font-medium text-text-secondary px-1">종료일</div>
-                <DatePopover
-                  className="w-full"
-                  value={searchFilters.endDate}
-                  onChange={(val) =>
-                    setSearchFilters((prev) => ({ ...prev, endDate: val }))
-                  }
-                  label="종료일"
-                  icon={<CalendarIcon className="size-3.5" />}
-                  placeholder="종료일"
-                />
-              </div>
-            </div>
-            <div className="flex justify-end items-center pt-2">
-              <button
-                type="button"
-                className="text-[11px] text-text-tertiary hover:text-text-secondary transition-colors inline-flex items-center gap-1"
-                onClick={() => {
-                  setSearchFilters((prev) => ({
-                    ...prev,
-                    attendees: "",
-                    location: "",
-                    exclude: "",
-                    startDate: "",
-                    endDate: "",
-                  }));
-                }}
-              >
-                <Undo2 className="size-3" /> 필터 초기화
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+  const resetSearchAdvancedFilters = () => {
+    setSearchFilters((prev) => ({
+      ...prev,
+      attendees: "",
+      location: "",
+      exclude: "",
+      startDate: "",
+      endDate: "",
+    }));
+  };
 
-      <div className="flex-1 overflow-y-auto px-3 py-2 pb-10">
-        {searchResultsOpen && (
-          searchResults.length === 0 ? (
-            <div className="py-10 text-center text-xs text-text-tertiary">
-              검색 결과가 없습니다.
-            </div>
-          ) : (
-            (() => {
-              const groups: Record<string, typeof searchResults> = {};
-              searchResults.forEach((event) => {
-                const date = getEventStartDate(event.start);
-                const key = date ? formatSearchDate(date) : "날짜 미지정";
-                if (!groups[key]) groups[key] = [];
-                groups[key].push(event);
-              });
-
-              return Object.entries(groups).map(([dateLabel, events], gIndex) => (
-                <div key={`group-${dateLabel}-${gIndex}`} className="mb-4">
-                  <div className="px-1 mb-1 text-[13px] font-medium text-text-primary border-b border-border-subtle pb-1">
-                    {dateLabel}
-                  </div>
-                  <div className="space-y-0.5">
-                    {events.map((event, index) => {
-                      const colorId = (event as CalendarEvent).color_id || "default";
-                      const colorData =
-                        MONTH_EVENT_COLOR_MAP[colorId] || DEFAULT_MONTH_EVENT_COLOR;
-                      const accentColor = colorData.border;
-                      return (
-                        <div
-                          key={`search-result-drawer-${event.id}-${index}`}
-                          className="group flex items-center gap-2 rounded-md px-2 py-1.5 text-[14px] text-text-primary hover:bg-bg-subtle transition-colors cursor-pointer"
-                          onClick={() => focusSearchResult(event)}
-                        >
-                          <div
-                            className="w-[3px] self-stretch my-0.5 rounded-full shrink-0"
-                            style={{ backgroundColor: accentColor }}
-                          />
-                          <div className="flex-1 flex flex-col min-w-0">
-                            <div className="font-medium truncate">{event.title}</div>
-                            {event.location && (
-                              <div className="text-[12px] text-text-secondary truncate">
-                                {event.location}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ));
-            })()
-          )
-        )}
-      </div>
-    </div>
+  const searchPanelFilters = useMemo(
+    () => ({
+      title: searchFilters.title,
+      attendees: searchFilters.attendees,
+      location: searchFilters.location,
+      exclude: searchFilters.exclude,
+      startDate: searchFilters.startDate,
+      endDate: searchFilters.endDate,
+    }),
+    [
+      searchFilters.title,
+      searchFilters.attendees,
+      searchFilters.location,
+      searchFilters.exclude,
+      searchFilters.startDate,
+      searchFilters.endDate,
+    ]
   );
+
+  const getSearchResultAccentColor = (event: CalendarEvent) => {
+    const colorId = event.color_id || "default";
+    return (MONTH_EVENT_COLOR_MAP[colorId] || DEFAULT_MONTH_EVENT_COLOR).border;
+  };
 
   const selectedEvents = useMemo(() => {
     const key = toISODate(selectedDate);
@@ -966,26 +863,8 @@ function CalendarPageInner() {
   }, [mobileMenuOpen]);
 
   useEffect(() => {
-    if (!searchAdvancedRef.current) return;
-    if (searchAdvancedOpen) {
-      setSearchAdvancedHeight(searchAdvancedRef.current.scrollHeight);
-    } else {
-      setSearchAdvancedHeight(0);
-    }
-  }, [searchAdvancedOpen]);
-
-  useEffect(() => {
     searchResultsCacheRef.current = searchResults;
   }, [searchResults]);
-
-  useEffect(() => {
-    if (!searchResultsPanelRef.current) return;
-    if (searchResultsOpen) {
-      setSearchResultsHeight(searchResultsPanelRef.current.scrollHeight);
-    } else {
-      setSearchResultsHeight(0);
-    }
-  }, [searchResultsOpen, searchResults.length]);
 
   useEffect(() => {
     if (!viewMenuOpen) return;
@@ -1680,7 +1559,7 @@ function CalendarPageInner() {
                         type="button"
                         onClick={() => {
                           setAddMenuOpen(false);
-                          setTaskModalOpen(true);
+                          openTaskDrawer();
                         }}
                       >
                         할 일 추가
@@ -1702,6 +1581,7 @@ function CalendarPageInner() {
                   onClick={() => {
                     setSearchOpen(true);
                     setModalOpen(false);
+                    setTaskModalOpen(false);
                     if (!isMobile) {
                       setRightPanelOpen(true);
                     }
@@ -1871,24 +1751,15 @@ function CalendarPageInner() {
                       const isTask = arg.event.extendedProps?.isTask === true;
                       
                       if (isTask) {
-                        const task = arg.event.extendedProps.raw;
-                        const isCompleted = task?.status === "completed";
+                        const task = arg.event.extendedProps.raw as GoogleTask | undefined;
+                        if (!task) return null;
+                        const isCompleted = task.status === "completed";
                         return (
                           <div 
                             className="flex items-center gap-2 px-2 py-1 cursor-pointer"
-                            onClick={async (e) => {
+                            onClick={(e) => {
                               e.stopPropagation();
-                              // Toggle task completion
-                              try {
-                                const { updateTask, listTasks } = await import("./lib/api");
-                                await updateTask(task.id, {
-                                  status: isCompleted ? "needsAction" : "completed",
-                                });
-                                const data = await listTasks();
-                                setTasks(data || []);
-                              } catch (error) {
-                                console.error("Failed to toggle task:", error);
-                              }
+                              void toggleTaskStatus(task);
                             }}
                           >
                             <div 
@@ -2416,30 +2287,15 @@ function CalendarPageInner() {
               </div>
 
               {/* Today's Tasks */}
-              {useGoogle && state.authStatus?.has_token && (
+              {showTasksPanel && (
                 <div className="space-y-2 pt-2 border-t border-border-subtle">
                   <div className="flex items-center gap-2 text-xs font-semibold text-text-primary">
                     <CalendarIcon className="size-3" />
-                    <span>오늘의 할 일 ({tasks.filter(t => {
-                      if (!t.due) return false;
-                      const dueDate = new Date(t.due);
-                      const today = new Date();
-                      return dueDate.toDateString() === today.toDateString();
-                    }).length})</span>
+                    <span>오늘의 할 일 ({todayTasks.length})</span>
                   </div>
-                  {tasks.filter(t => {
-                    if (!t.due) return false;
-                    const dueDate = new Date(t.due);
-                    const today = new Date();
-                    return dueDate.toDateString() === today.toDateString();
-                  }).length > 0 ? (
+                  {todayTasks.length > 0 ? (
                     <div className="space-y-1">
-                      {tasks.filter(t => {
-                        if (!t.due) return false;
-                        const dueDate = new Date(t.due);
-                        const today = new Date();
-                        return dueDate.toDateString() === today.toDateString();
-                      }).map(task => {
+                      {todayTasks.map((task) => {
                         const isCompleted = task.status === "completed";
                         return (
                           <div 
@@ -2448,17 +2304,8 @@ function CalendarPageInner() {
                           >
                             <button
                               type="button"
-                              onClick={async () => {
-                                try {
-                                  const { updateTask, listTasks } = await import("./lib/api");
-                                  await updateTask(task.id, {
-                                    status: isCompleted ? "needsAction" : "completed",
-                                  });
-                                  const data = await listTasks();
-                                  setTasks(data || []);
-                                } catch (error) {
-                                  console.error("Failed to toggle task:", error);
-                                }
+                              onClick={() => {
+                                void toggleTaskStatus(task);
                               }}
                               className={`
                                 inline-flex items-center justify-center
@@ -2533,189 +2380,21 @@ function CalendarPageInner() {
           )}
           <div className="flex-1 overflow-hidden min-h-0">
             {searchOpen ? (
-              <div className="flex h-full flex-col overflow-hidden min-h-0">
-                <div className="px-3 py-2">
-                  <div className="flex items-center gap-2 rounded-xl border border-border-subtle bg-bg-canvas px-3 py-1.5 shadow-sm">
-                    <Search className="size-4 text-text-secondary" />
-                    <input
-                      className="flex-1 bg-transparent text-[13px] text-text-primary focus:outline-none placeholder:text-text-disabled"
-                      placeholder="일정 키워드 입력"
-                      value={searchFilters.title}
-                      onChange={(event) =>
-                        setSearchFilters((prev) => ({ ...prev, title: event.target.value }))
-                      }
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          void handleBasicSearch();
-                        }
-                      }}
-                      aria-label="기본 검색어"
-                    />
-                    <button
-                      type="button"
-                      className={`flex size-7 items-center justify-center rounded-lg transition-colors hover:bg-bg-subtle ${
-                        searchAdvancedOpen ? "text-token-primary bg-bg-subtle" : "text-text-secondary"
-                      }`}
-                      onClick={() => setSearchAdvancedOpen((prev) => !prev)}
-                      aria-label="고급 검색 토글"
-                      aria-expanded={searchAdvancedOpen}
-                    >
-                      <ChevronDown
-                        className={`size-4 transition-transform ${searchAdvancedOpen ? "rotate-180" : ""}`}
-                      />
-                    </button>
-                  </div>
-                </div>
-
-                {searchAdvancedOpen && (
-                  <div className="px-3 pb-4 border-b border-border-subtle animate-in slide-in-from-top-1 duration-200">
-                    <div className="space-y-3 pt-1">
-                      <div className="space-y-1">
-                        <div className="text-[11px] font-medium text-text-secondary px-1">참석자</div>
-                        <input
-                          className="w-full rounded-lg border border-border-subtle bg-bg-canvas px-3 py-1.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-token-primary/20"
-                          type="text"
-                          placeholder="참석자, 주최자 입력"
-                          value={searchFilters.attendees}
-                          onChange={(event) =>
-                            setSearchFilters((prev) => ({ ...prev, attendees: event.target.value }))
-                          }
-                          onKeyDown={onSearchKeyDown}
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <div className="text-[11px] font-medium text-text-secondary px-1">장소</div>
-                        <input
-                          className="w-full rounded-lg border border-border-subtle bg-bg-canvas px-3 py-1.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-token-primary/20"
-                          type="text"
-                          placeholder="위치 또는 회의실"
-                          value={searchFilters.location}
-                          onChange={(event) =>
-                            setSearchFilters((prev) => ({ ...prev, location: event.target.value }))
-                          }
-                          onKeyDown={onSearchKeyDown}
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <div className="text-[11px] font-medium text-text-secondary px-1">제외할 검색어</div>
-                        <input
-                          className="w-full rounded-lg border border-border-subtle bg-bg-canvas px-3 py-1.5 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-token-primary/20"
-                          type="text"
-                          placeholder="제외할 키워드"
-                          value={searchFilters.exclude}
-                          onChange={(event) =>
-                            setSearchFilters((prev) => ({ ...prev, exclude: event.target.value }))
-                          }
-                          onKeyDown={onSearchKeyDown}
-                        />
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="space-y-1">
-                          <div className="text-[11px] font-medium text-text-secondary px-1">시작일</div>
-                          <DatePopover
-                            className="w-full"
-                            value={searchFilters.startDate}
-                            onChange={(val) =>
-                              setSearchFilters((prev) => ({ ...prev, startDate: val }))
-                            }
-                            label="시작일"
-                            icon={<CalendarIcon className="size-3.5" />}
-                            placeholder="시작일"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <div className="text-[11px] font-medium text-text-secondary px-1">종료일</div>
-                          <DatePopover
-                            className="w-full"
-                            value={searchFilters.endDate}
-                            onChange={(val) =>
-                              setSearchFilters((prev) => ({ ...prev, endDate: val }))
-                            }
-                            label="종료일"
-                            icon={<CalendarIcon className="size-3.5" />}
-                            placeholder="종료일"
-                          />
-                        </div>
-                      </div>
-                      <div className="flex justify-end items-center pt-2">
-                        <button
-                          type="button"
-                          className="text-[11px] text-text-tertiary hover:text-text-secondary transition-colors inline-flex items-center gap-1"
-                          onClick={() => {
-                            setSearchFilters((prev) => ({
-                              ...prev,
-                              attendees: "",
-                              location: "",
-                              exclude: "",
-                              startDate: "",
-                              endDate: "",
-                            }));
-                          }}
-                        >
-                          <Undo2 className="size-3" /> 필터 초기화
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex-1 overflow-y-auto px-3 py-2 pb-10">
-                  {searchResultsOpen && (
-                    searchResults.length === 0 ? (
-                      <div className="py-10 text-center text-xs text-text-tertiary">
-                        검색 결과가 없습니다.
-                      </div>
-                    ) : (
-                      (() => {
-                        const groups: Record<string, typeof searchResults> = {};
-                        searchResults.forEach((event) => {
-                          const date = getEventStartDate(event.start);
-                          const key = date ? formatSearchDate(date) : "날짜 미지정";
-                          if (!groups[key]) groups[key] = [];
-                          groups[key].push(event);
-                        });
-
-                        return Object.entries(groups).map(([dateLabel, events], gIndex) => (
-                          <div key={`group-${dateLabel}-${gIndex}`} className="mb-4">
-                            <div className="px-1 mb-1 text-[13px] font-medium text-text-primary border-b border-border-subtle pb-1">
-                              {dateLabel}
-                            </div>
-                            <div className="space-y-0.5">
-                              {events.map((event, index) => {
-                                const colorId = (event as CalendarEvent).color_id || "default";
-                                const colorData =
-                                  MONTH_EVENT_COLOR_MAP[colorId] || DEFAULT_MONTH_EVENT_COLOR;
-                                const accentColor = colorData.border;
-                                return (
-                                  <div
-                                    key={`search-result-drawer-${event.id}-${index}`}
-                                    className="group flex items-center gap-2 rounded-md px-2 py-1.5 text-[14px] text-text-primary hover:bg-bg-subtle transition-colors cursor-pointer"
-                                    onClick={() => focusSearchResult(event)}
-                                  >
-                                    <div
-                                      className="w-[3px] self-stretch my-0.5 rounded-full shrink-0"
-                                      style={{ backgroundColor: accentColor }}
-                                    />
-                                    <div className="flex-1 flex flex-col min-w-0">
-                                      <div className="font-medium truncate">{event.title}</div>
-                                      {event.location && (
-                                        <div className="text-[12px] text-text-secondary truncate">
-                                          {event.location}
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        ));
-                      })()
-                    )
-                  )}
-                </div>
-              </div>
+              <CalendarSearchPanel
+                filters={searchPanelFilters}
+                advancedOpen={searchAdvancedOpen}
+                onToggleAdvanced={() => setSearchAdvancedOpen((prev) => !prev)}
+                onChangeFilters={handleSearchFiltersChange}
+                onResetAdvancedFilters={resetSearchAdvancedFilters}
+                onBasicSearch={handleBasicSearch}
+                onKeyDownAdvanced={onSearchKeyDown}
+                searchResultsOpen={searchResultsOpen}
+                searchResults={searchResults}
+                onFocusResult={focusSearchResult}
+                getEventStartDate={getEventStartDate}
+                formatSearchDate={formatSearchDate}
+                getResultAccentColor={getSearchResultAccentColor}
+              />
             ) : ai.open ? (
               <AiAssistantModal
                 assistant={ai}
@@ -2730,11 +2409,31 @@ function CalendarPageInner() {
                   openEventDrawer({ reset: true, showForm: true });
                 }}
               />
+            ) : taskModalOpen && !isMobile ? (
+              <TaskModal
+                open={taskModalOpen}
+                variant="drawer"
+                showCloseButton={false}
+                composeMode={composeMode}
+                onComposeModeChange={handleComposeModeChange}
+                onClose={closeEventDrawer}
+                onSubmit={async (task) => {
+                  try {
+                    const { listTasks } = await import("./lib/api");
+                    const data = await listTasks();
+                    setTasks((data || []) as GoogleTask[]);
+                  } catch (error) {
+                    console.error("Failed to reload tasks:", error);
+                  }
+                }}
+              />
             ) : (
               <EventModal
                 open={modalOpen}
                 variant="drawer"
                 showCloseButton={false}
+                composeMode={composeMode}
+                onComposeModeChange={handleComposeModeChange}
                 resetKey={eventFormResetKey}
                 event={aiDraftEvent ?? activeEvent}
                 forceCreate={Boolean(aiDraftEvent)}
@@ -2817,8 +2516,43 @@ function CalendarPageInner() {
       {/* 모바일 전체화면 모달 */}
       {isMobile && searchOpen && (
         <div className="fixed inset-0 z-[999] bg-bg-surface">
-          {searchUI}
+          <CalendarSearchPanel
+            showHeader={true}
+            onClose={closeEventDrawer}
+            filters={searchPanelFilters}
+            advancedOpen={searchAdvancedOpen}
+            onToggleAdvanced={() => setSearchAdvancedOpen((prev) => !prev)}
+            onChangeFilters={handleSearchFiltersChange}
+            onResetAdvancedFilters={resetSearchAdvancedFilters}
+            onBasicSearch={handleBasicSearch}
+            onKeyDownAdvanced={onSearchKeyDown}
+            searchResultsOpen={searchResultsOpen}
+            searchResults={searchResults}
+            onFocusResult={focusSearchResult}
+            getEventStartDate={getEventStartDate}
+            formatSearchDate={formatSearchDate}
+            getResultAccentColor={getSearchResultAccentColor}
+          />
         </div>
+      )}
+      {isMobile && taskModalOpen && (
+        <TaskModal
+          open={taskModalOpen}
+          variant="modal"
+          showCloseButton={true}
+          composeMode={composeMode}
+          onComposeModeChange={handleComposeModeChange}
+          onClose={closeEventDrawer}
+          onSubmit={async (task) => {
+            try {
+              const { listTasks } = await import("./lib/api");
+              const data = await listTasks();
+              setTasks((data || []) as GoogleTask[]);
+            } catch (error) {
+              console.error("Failed to reload tasks:", error);
+            }
+          }}
+        />
       )}
       {isMobile && ai.open && (
         <AiAssistantModal
@@ -2840,6 +2574,8 @@ function CalendarPageInner() {
           open={modalOpen}
           variant="modal"
           showCloseButton={true}
+          composeMode={composeMode}
+          onComposeModeChange={handleComposeModeChange}
           resetKey={eventFormResetKey}
           event={aiDraftEvent ?? activeEvent}
           forceCreate={Boolean(aiDraftEvent)}
@@ -2916,20 +2652,6 @@ function CalendarPageInner() {
         />
       )}
 
-      <TaskModal
-        open={taskModalOpen}
-        onClose={() => setTaskModalOpen(false)}
-        onSubmit={async (task) => {
-          // Refresh tasks
-          try {
-            const { listTasks } = await import("./lib/api");
-            const data = await listTasks();
-            setTasks(data || []);
-          } catch (error) {
-            console.error("Failed to reload tasks:", error);
-          }
-        }}
-      />
     </div>
   );
 }

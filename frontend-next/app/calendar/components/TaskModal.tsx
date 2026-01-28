@@ -1,22 +1,56 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { X } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Calendar, FileText, X } from "lucide-react";
 import { createTask, updateTask } from "../lib/api";
 import type { GoogleTask } from "../lib/types";
+import { DatePopover } from "./DatePopover";
+
+const COMPOSE_TABS = ["event", "task"] as const;
+type ComposeMode = typeof COMPOSE_TABS[number];
+const COMPOSE_LABELS: Record<ComposeMode, string> = {
+  event: "일정",
+  task: "할 일",
+};
 
 type TaskModalProps = {
   open: boolean;
   onClose: () => void;
   onSubmit: (task: GoogleTask) => void;
   initialTask?: GoogleTask | null;
+  variant?: "modal" | "drawer";
+  showCloseButton?: boolean;
+  composeMode?: ComposeMode;
+  onComposeModeChange?: (mode: ComposeMode) => void;
 };
 
-export default function TaskModal({ open, onClose, onSubmit, initialTask }: TaskModalProps) {
+export default function TaskModal({
+  open,
+  onClose,
+  onSubmit,
+  initialTask,
+  variant = "modal",
+  showCloseButton,
+  composeMode = "task",
+  onComposeModeChange,
+}: TaskModalProps) {
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
   const [due, setDue] = useState("");
   const [loading, setLoading] = useState(false);
+  const isDrawer = variant === "drawer";
+  const shouldShowClose = showCloseButton ?? !isDrawer;
+  const [descriptionMultiline, setDescriptionMultiline] = useState(false);
+  const descriptionRef = useRef<HTMLTextAreaElement | null>(null);
+  const composeTabIndex = COMPOSE_TABS.indexOf(composeMode);
+  const composeToggleStyle = useMemo(
+    () =>
+      ({
+        "--seg-count": String(COMPOSE_TABS.length),
+        "--seg-index": String(composeTabIndex),
+      }) as CSSProperties,
+    [composeTabIndex]
+  );
 
   useEffect(() => {
     if (open) {
@@ -31,6 +65,24 @@ export default function TaskModal({ open, onClose, onSubmit, initialTask }: Task
       }
     }
   }, [open, initialTask]);
+
+  const resizeDescription = () => {
+    if (!descriptionRef.current) return;
+    const lineHeight = parseFloat(getComputedStyle(descriptionRef.current).lineHeight || "0") || 22;
+    const maxHeight = lineHeight * 12;
+    descriptionRef.current.style.height = "auto";
+    const nextHeight = Math.min(descriptionRef.current.scrollHeight, maxHeight);
+    descriptionRef.current.style.height = `${nextHeight}px`;
+    descriptionRef.current.style.overflowY =
+      descriptionRef.current.scrollHeight > maxHeight ? "auto" : "hidden";
+    const isLong = descriptionRef.current.scrollHeight > lineHeight * 1.6;
+    const isShort = descriptionRef.current.scrollHeight < lineHeight * 1.2;
+    setDescriptionMultiline((prev) => (prev ? !isShort : isLong));
+  };
+
+  useLayoutEffect(() => {
+    resizeDescription();
+  }, [notes]);
 
   const handleSubmit = async () => {
     if (!title.trim()) {
@@ -67,85 +119,152 @@ export default function TaskModal({ open, onClose, onSubmit, initialTask }: Task
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/30" onClick={onClose} />
-      <div className="relative w-full max-w-md bg-bg-surface rounded-2xl shadow-2xl p-6 m-4 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-semibold text-text-primary">
-            {initialTask ? "할 일 수정" : "할 일 추가"}
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-bg-subtle transition-colors text-text-secondary"
-            aria-label="닫기"
+    <div
+      className={
+        isDrawer
+          ? "flex h-full flex-col"
+          : "fixed inset-0 z-[999] flex items-center justify-center bg-black/40 md:px-4"
+      }
+    >
+      <div
+        className={
+          isDrawer
+            ? "flex h-full flex-col bg-bg-surface"
+            : "w-full h-full md:h-auto md:max-w-2xl md:rounded-2xl bg-bg-surface border border-border-subtle shadow-xl flex flex-col"
+        }
+      >
+        <div
+          className={
+            isDrawer
+              ? "flex items-center justify-between px-3 py-3 border-b border-border-subtle"
+              : "flex items-center justify-between px-6 py-4 border-b border-border-subtle shrink-0"
+          }
+        >
+          <div
+            className="relative flex items-center rounded-full bg-bg-subtle p-1 text-xs segmented-toggle"
+            style={composeToggleStyle}
           >
-            <X className="size-5" />
-          </button>
-        </div>
-
-        <div className="flex flex-col gap-4">
-          <div>
-            <label htmlFor="task-title" className="block text-sm font-medium text-text-primary mb-1.5">
-              제목 *
-            </label>
-            <input
-              id="task-title"
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-border-subtle bg-bg-canvas text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary"
-              placeholder="할 일 제목"
-              autoFocus
-            />
+            <span className="segmented-indicator">
+              <span
+                key={composeMode}
+                className="view-indicator-pulse block h-full w-full rounded-full bg-bg-surface shadow-sm"
+              />
+            </span>
+            {COMPOSE_TABS.map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                className={`relative z-10 flex-1 px-3 py-1 text-[14px] transition-all ${
+                  composeMode === tab
+                    ? "text-text-brand !font-bold"
+                    : "text-text-secondary font-medium hover:text-text-brand"
+                }`}
+                onClick={() => onComposeModeChange?.(tab)}
+              >
+                {COMPOSE_LABELS[tab]}
+              </button>
+            ))}
           </div>
-
-          <div>
-            <label htmlFor="task-notes" className="block text-sm font-medium text-text-primary mb-1.5">
-              설명
-            </label>
-            <textarea
-              id="task-notes"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-border-subtle bg-bg-canvas text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary resize-none"
-              placeholder="할 일 설명"
-              rows={4}
-            />
-          </div>
-
-          <div>
-            <label htmlFor="task-due" className="block text-sm font-medium text-text-primary mb-1.5">
-              마감일
-            </label>
-            <input
-              id="task-due"
-              type="date"
-              value={due ? due.split("T")[0] : ""}
-              onChange={(e) => {
-                if (e.target.value) {
-                  setDue(`${e.target.value}T00:00:00Z`);
-                } else {
-                  setDue("");
-                }
-              }}
-              className="w-full px-3 py-2 rounded-lg border border-border-subtle bg-bg-canvas text-text-primary focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-          </div>
-
-          <div className="flex gap-2 mt-2">
+          {shouldShowClose && (
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 px-4 py-2.5 rounded-lg border border-border-subtle bg-bg-canvas text-text-primary font-medium hover:bg-bg-subtle transition-colors"
+              className="p-1.5 rounded-lg hover:bg-bg-subtle transition-colors text-text-secondary"
+              aria-label="닫기"
+            >
+              <X className="size-5" />
+            </button>
+          )}
+        </div>
+
+        <div
+          className={
+            isDrawer
+              ? "flex-1 px-3 py-3 space-y-4 overflow-y-auto"
+              : "flex-1 md:flex-none px-6 py-5 space-y-4 overflow-y-auto md:max-h-[70vh]"
+          }
+        >
+          <div className="rounded-lg border border-border-subtle bg-bg-canvas">
+            <div className="flex min-h-12 items-center px-4">
+              <label htmlFor="task-title" className="sr-only">
+                제목
+              </label>
+              <input
+                id="task-title"
+                type="text"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                className="h-10 w-full -translate-y-[1px] appearance-none border-none bg-transparent py-0 text-[15px] leading-none font-medium text-text-primary placeholder:text-[15px] placeholder:font-normal placeholder:text-text-disabled focus:outline-none focus:ring-0"
+                placeholder="제목"
+                autoComplete="off"
+                autoFocus
+              />
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-border-subtle bg-bg-canvas">
+            <div
+              className={`flex min-h-12 gap-2 px-4 py-2 ${
+                descriptionMultiline ? "items-start" : "items-center"
+              }`}
+            >
+              <FileText className={`size-4 text-text-disabled ${descriptionMultiline ? "mt-1" : ""}`} />
+              <label className="sr-only">설명</label>
+              <textarea
+                ref={descriptionRef}
+                rows={1}
+                className="w-full resize-none border-none bg-transparent text-[15px] font-medium text-text-primary placeholder:text-[15px] placeholder:font-normal placeholder:text-text-disabled focus:outline-none focus:ring-0"
+                placeholder="설명"
+                value={notes}
+                onChange={(event) => setNotes(event.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-border-subtle bg-bg-canvas">
+            <div className="flex h-12 items-center px-4 py-2">
+              <span className="w-7 shrink-0 text-[14px] font-medium text-text-primary">마감</span>
+              <label className="sr-only">마감 날짜</label>
+              <div className="flex items-center gap-2 ml-auto">
+                <DatePopover
+                  label="마감 날짜"
+                  icon={<Calendar className="w-4 h-4" />}
+                  value={due ? due.split("T")[0] : ""}
+                  onChange={(value) => {
+                    if (value) {
+                      setDue(`${value}T00:00:00Z`);
+                    } else {
+                      setDue("");
+                    }
+                  }}
+                  placeholder="날짜 선택"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div
+          className={
+            isDrawer
+              ? "flex items-center justify-between px-3 py-3 border-t border-border-subtle"
+              : "flex items-center justify-between px-6 py-4 border-t border-border-subtle shrink-0"
+          }
+        >
+          <span />
+          <div className="flex gap-2">
+            <button
+              className="px-4 py-2 rounded-lg border border-border-subtle text-[14px] font-semibold text-text-primary"
+              onClick={onClose}
+              type="button"
               disabled={loading}
             >
               취소
             </button>
             <button
-              type="button"
+              className="px-4 py-2 rounded-lg bg-bg-brand text-[14px] font-semibold text-white disabled:opacity-50"
               onClick={handleSubmit}
-              className="flex-1 px-4 py-2.5 rounded-lg bg-primary text-white font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+              type="button"
               disabled={loading || !title.trim()}
             >
               {loading ? "저장 중..." : initialTask ? "수정" : "추가"}

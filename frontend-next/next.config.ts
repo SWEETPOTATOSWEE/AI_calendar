@@ -6,32 +6,7 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
-  async rewrites() {
-    const backendBase = process.env.BACKEND_BASE_URL || "http://localhost:8000";
-    return [
-      {
-        source: "/api/:path*",
-        destination: `${backendBase}/api/:path*`,
-      },
-      {
-        source: "/auth/:path*",
-        destination: `${backendBase}/auth/:path*`,
-      },
-      {
-        source: "/admin",
-        destination: `${backendBase}/admin`,
-      },
-      {
-        source: "/admin/exit",
-        destination: `${backendBase}/admin/exit`,
-      },
-      {
-        source: "/logout",
-        destination: `${backendBase}/logout`,
-      },
-    ];
-  },
+  // rewrites 제거: app router의 프록시 라우트에서 처리
 };
 
 export default nextConfig;
-
