@@ -63,7 +63,12 @@ const REMINDER_OPTIONS = [
   { label: "1일 전", value: 1440 },
 ];
 
-const EVENT_MODAL_TABS = ["basic", "advanced"] as const;
+const COMPOSE_TABS = ["event", "task"] as const;
+type ComposeMode = typeof COMPOSE_TABS[number];
+const COMPOSE_LABELS: Record<ComposeMode, string> = {
+  event: "일정",
+  task: "할 일",
+};
 
 const COLOR_OPTIONS = [
   { id: "default", label: "블루", chip: "bg-token-primary" },
@@ -259,6 +264,8 @@ export type EventModalProps = {
   variant?: "modal" | "drawer";
   showCloseButton?: boolean;
   resetKey?: number;
+  composeMode?: ComposeMode;
+  onComposeModeChange?: (mode: ComposeMode) => void;
   onClose: () => void;
   onCancel?: () => void;
   onCreate: (payload: EventPayload) => Promise<CalendarEvent | void | null>;
@@ -674,6 +681,8 @@ export default function EventModal({
   variant = "modal",
   showCloseButton = true,
   resetKey = 0,
+  composeMode = "event",
+  onComposeModeChange,
   onClose,
   onCancel = onClose,
   onCreate,
@@ -687,18 +696,18 @@ export default function EventModal({
   const [stableEvent, setStableEvent] = useState<CalendarEvent | null>(event ?? null);
   const [stableDefaultDate, setStableDefaultDate] = useState<Date | null>(defaultDate ?? null);
   const [form, setForm] = useState(() => buildInitialState(event, defaultDate));
-  const [activeTab, setActiveTab] = useState<"basic" | "advanced">("basic");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [showAllColors, setShowAllColors] = useState(false);
   const [descriptionMultiline, setDescriptionMultiline] = useState(false);
   const [deleteMenuOpen, setDeleteMenuOpen] = useState(false);
-  const activeTabIndex = EVENT_MODAL_TABS.indexOf(activeTab);
-  const tabToggleStyle = useMemo(
+  const composeTabIndex = COMPOSE_TABS.indexOf(composeMode);
+  const composeToggleStyle = useMemo(
     () =>
       ({
-        "--seg-count": String(EVENT_MODAL_TABS.length),
-        "--seg-index": String(activeTabIndex),
+        "--seg-count": String(COMPOSE_TABS.length),
+        "--seg-index": String(composeTabIndex),
       }) as CSSProperties,
-    [activeTabIndex]
+    [composeTabIndex]
   );
   const isEdit = Boolean(stableEvent) && !forceCreate;
   const isRecurring = !forceCreate && stableEvent?.recur === "recurring";
@@ -710,7 +719,7 @@ export default function EventModal({
     setStableEvent(nextEvent);
     setStableDefaultDate(nextDefaultDate);
     setForm(buildInitialState(nextEvent, nextDefaultDate));
-    setActiveTab("basic");
+    setAdvancedOpen(false);
     setShowAllColors(false);
     setDeleteMenuOpen(false);
   };
@@ -958,31 +967,28 @@ export default function EventModal({
           }
         >
           <div className="flex items-center gap-3">
-            <h3 className="text-[18px] font-semibold text-text-primary">
-              {isEdit ? "일정 수정" : "새 일정"}
-            </h3>
             <div
               className="relative flex items-center rounded-full bg-bg-subtle p-1 text-xs segmented-toggle"
-              style={tabToggleStyle}
+              style={composeToggleStyle}
             >
               <span className="segmented-indicator">
                 <span
-                  key={activeTab}
+                  key={composeMode}
                   className="view-indicator-pulse block h-full w-full rounded-full bg-bg-surface shadow-sm"
                 />
               </span>
-              {EVENT_MODAL_TABS.map((tab) => (
+              {COMPOSE_TABS.map((tab) => (
                 <button
                   key={tab}
                   type="button"
                   className={`relative z-10 flex-1 px-3 py-1 text-[14px] transition-all ${
-                    activeTab === tab
+                    composeMode === tab
                       ? "text-text-brand !font-bold"
                       : "text-text-secondary font-medium hover:text-text-brand"
                   }`}
-                  onClick={() => setActiveTab(tab)}
+                  onClick={() => onComposeModeChange?.(tab)}
                 >
-                  {tab === "basic" ? "기본" : "고급"}
+                  {COMPOSE_LABELS[tab]}
                 </button>
               ))}
             </div>
@@ -1004,14 +1010,13 @@ export default function EventModal({
               : "flex-1 md:flex-none px-6 py-5 space-y-4 overflow-y-auto md:max-h-[70vh]"
           }
         >
-          {activeTab === "basic" && (
-            <>
               <div className="rounded-lg border border-border-subtle bg-bg-canvas">
                 <div className="flex min-h-12 items-center px-4">
                   <label className="sr-only">제목</label>
                   <input
                     className="h-10 w-full -translate-y-[1px] appearance-none border-none bg-transparent py-0 text-[15px] leading-none font-medium text-text-primary placeholder:text-[15px] placeholder:font-normal placeholder:text-text-disabled focus:outline-none focus:ring-0"
                     placeholder="제목"
+                    autoComplete="off"
                     value={form.title}
                     onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
                   />
@@ -1581,10 +1586,20 @@ export default function EventModal({
                   )}
                 </div>
               )}
+              <div className="flex items-center gap-2 px-1">
+                <p className="text-[14px] font-medium text-text-primary">고급</p>
+                <button
+                  type="button"
+                  className="flex size-6 items-center justify-center text-text-disabled hover:text-token-primary disabled:opacity-50"
+                  onClick={() => setAdvancedOpen((prev) => !prev)}
+                  aria-label={advancedOpen ? "고급 옵션 접기" : "고급 옵션 펼치기"}
+                >
+                  {advancedOpen ? <ChevronUp className="size-5" /> : <ChevronDown className="size-5" />}
+                </button>
+              </div>
             </>
-          )}
 
-          {activeTab === "advanced" && (
+          {advancedOpen && (
             <>
               <div className="rounded-lg border border-border-subtle bg-bg-canvas">
                 <div

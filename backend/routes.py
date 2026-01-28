@@ -1177,8 +1177,6 @@ async def nlp_preview_stream(body: NaturalText, request: Request, response: Resp
                                                     use_google_context)
     gcal_session_id = get_google_session_id(request)
 
-    print(f"[SSE STREAM] Starting stream for request_id={request_id}, google_mode={use_google_context}, session_id={session_id}")
-
     async def event_generator():
       chunk_count = 0
       try:
@@ -1194,7 +1192,6 @@ async def nlp_preview_stream(body: NaturalText, request: Request, response: Resp
             is_google=use_google_context
         ):
           if await request.is_disconnected():
-            print(f"[SSE STREAM] Client disconnected at chunk {chunk_count}")
             break
 
           chunk_count += 1
@@ -1204,16 +1201,12 @@ async def nlp_preview_stream(body: NaturalText, request: Request, response: Resp
             processed = _post_process_nlp_preview_result(chunk["data"])
             processed["request_id"] = request_id
             event_data = _format_sse_event("data", processed)
-            print(f"[SSE STREAM] Chunk {chunk_count}: Sending final data event, size={len(event_data)} bytes")
             yield event_data
           else:
             event_data = _format_sse_event(event_type, chunk)
-            print(f"[SSE STREAM] Chunk {chunk_count}: Sending {event_type} event, size={len(event_data)} bytes")
             yield event_data
             
-        print(f"[SSE STREAM] Stream completed successfully, total chunks: {chunk_count}")
       except Exception as e:
-        print(f"[SSE STREAM] Error in stream: {e}")
         yield _format_sse_event("error", {"detail": str(e)})
 
     return StreamingResponse(
@@ -1225,7 +1218,6 @@ async def nlp_preview_stream(body: NaturalText, request: Request, response: Resp
       }
     )
   except Exception as e:
-    print(f"[SSE STREAM] Failed to start stream: {e}")
     raise HTTPException(status_code=502,
                         detail=f"Preview NLP stream error: {str(e)}")
 
