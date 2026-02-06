@@ -1,0 +1,302 @@
+<header>
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="app-icon-slot" role="img" aria-label="앱 아이콘 자리"></div>
+      <div class="divider"></div>
+
+      <div class="ym-label" id="ym-label"></div>
+
+      <div class="nav-group" role="group" aria-label="달력 이동">
+        <button class="nav-btn is-circle" id="cal-prev" type="button" aria-label="이전"><span aria-hidden="true">←</span></button>
+        <button class="nav-btn" id="cal-today" type="button"><span>오늘</span></button>
+        <button class="nav-btn is-circle" id="cal-next" type="button" aria-label="다음"><span aria-hidden="true">→</span></button>
+      </div>
+    </div>
+
+    <div class="topbar-right">
+      <div class="event-search" role="search">
+        <div class="event-search-field">
+          <input type="text" id="event-search-input" placeholder="이벤트 검색" aria-label="이벤트 검색" />
+          <button type="button" class="event-search-settings-btn" id="event-search-settings-btn" aria-label="검색 범위 설정">
+            <svg class="icon" aria-hidden="true">
+              <use href="/phosphor-sprite.svg#faders-horizontal"></use>
+            </svg>
+          </button>
+        </div>
+        <button type="button" id="event-search-btn" aria-label="이벤트 검색">
+          <svg class="icon" aria-hidden="true">
+            <use href="/phosphor-sprite.svg#magnifying-glass"></use>
+          </svg>
+        </button>
+        <div class="event-search-popover" id="event-search-popover" role="dialog" aria-label="검색 범위 설정">
+          <div class="popover-title">검색 범위 설정</div>
+          <button type="button" class="popover-close" id="event-search-range-close" aria-label="닫기">✕</button>
+          <div class="popover-row">
+            <span>이전</span>
+            <input type="number" id="event-search-range-back" min="0" max="10" value="1" inputmode="numeric" />
+            <span>년</span>
+          </div>
+          <div class="popover-row">
+            <span>이후</span>
+            <input type="number" id="event-search-range-forward" min="0" max="10" value="1" inputmode="numeric" />
+            <span>년</span>
+          </div>
+          <div class="popover-actions">
+            <button type="button" id="event-search-range-apply" aria-label="적용">✓</button>
+          </div>
+        </div>
+      </div>
+      <div class="view-switch" role="tablist" aria-label="뷰 전환">
+        <span class="view-switch-indicator" aria-hidden="true"></span>
+        <button class="view-btn" type="button" data-cal-view="year" id="cal-view-year"><span>년</span></button>
+        <button class="view-btn active" type="button" data-cal-view="timeGridWeek" id="cal-view-week"><span>주</span></button>
+        <button class="view-btn" type="button" data-cal-view="timeGridDay" id="cal-view-day"><span>일</span></button>
+      </div>
+
+      <button type="button" class="primary-btn icon-btn circle-btn" id="undo-last-btn" disabled aria-label="되돌리기" title="되돌리기">
+        <svg class="icon" aria-hidden="true">
+          <use href="/phosphor-sprite.svg#arrow-u-up-left"></use>
+        </svg>
+        <span class="icon-badge is-hidden" id="undo-count-badge" aria-hidden="true"></span>
+      </button>
+      <button class="header-btn icon-btn circle-btn" id="recent-added-btn" type="button" aria-label="최근 추가한 일정" title="최근 추가한 일정">
+        <svg class="icon" aria-hidden="true">
+          <use href="/phosphor-sprite.svg#clock-counter-clockwise"></use>
+        </svg>
+      </button>
+      <div class="header-actions">__HEADER_ACTIONS__</div>
+      <button class="menu-btn" id="tool-menu-btn" type="button" aria-label="도구 열기">
+        <svg class="icon" aria-hidden="true">
+          <use href="/phosphor-sprite.svg#list"></use>
+        </svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<div class="app">
+  <!-- Calendar LEFT -->
+  <main>
+    <div id="calendar-container">
+      <div class="calendar-shell topbar-block" id="calendar-shell">
+        <div class="month-label" id="month-label"></div>
+        <div class="calendar-main-content">
+          <div id="calendar"></div>
+          <div id="events-main-slot">
+            <div class="panel calendar-events-panel" id="events-list">
+              <ul id="events-ul"></ul>
+            </div>
+          </div>
+        </div>
+        <div id="global-loading-overlay" aria-hidden="true">
+          <div class="global-loading-box">
+            <div class="global-loading-text">불러오는 중..</div>
+          </div>
+        </div>
+      </div>
+      <div id="year-view" aria-label="연간 달력">
+        <div class="year-grid" id="year-grid"></div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Utilities RIGHT -->
+  <aside id="sidebar">
+    <div id="events-side-slot" class="calendar-events-slot"></div>
+
+    <div class="panel composer topbar-block">
+      <div class="nlp-chat" id="nlp-chat"></div>
+      <div class="composer-input-wrap">
+        <div class="composer-left">
+          <button type="button" class="attach-btn" id="nlp-attach-btn" aria-label="이미지 첨부">
+            <svg class="icon" aria-hidden="true">
+              <use href="/phosphor-sprite.svg#image"></use>
+            </svg>
+          </button>
+
+          <label class="seg-toggle" title="추가/삭제 전환">
+            <input type="checkbox" id="nlp-mode-toggle"/>
+            <span class="seg add" aria-label="추가">
+              <svg class="icon" aria-hidden="true">
+                <use href="/phosphor-sprite.svg#plus"></use>
+              </svg>
+            </span>
+            <span class="seg del" aria-label="삭제">
+              <svg class="icon" aria-hidden="true">
+                <use href="/phosphor-sprite.svg#trash"></use>
+              </svg>
+            </span>
+          </label>
+        </div>
+
+        <textarea
+          id="nlp-unified-text"
+          placeholder="어떤 일정이든 입력하세요"
+          rows="1"
+        ></textarea>
+
+        <div class="inline-action">
+          <button
+            type="button"
+            id="nlp-action-btn"
+            class="Btn mode-add scale-1"
+            aria-label="문장으로 일정 추가/삭제"
+            title="실행"
+          >
+            <div class="sign">
+              <svg class="icon" aria-hidden="true">
+                <use href="/phosphor-sprite.svg#arrow-up"></use>
+              </svg>
+            </div>
+          </button>
+
+          <div class="loader-wrapper scale-0" id="nlp-unified-loader">
+            <div class="loader"></div>
+          </div>
+        </div>
+      </div>
+      <input type="file" id="nlp-image-input" accept="image/*" multiple hidden>
+      <div class="image-attachments" id="nlp-image-attachments"></div>
+
+      <div class="scope-controls" id="delete-scope-controls">
+        <div class="scope-title">삭제 범위 (최대 1년)</div>
+        <div class="scope-row">
+          <input type="date" id="delete-scope-start" aria-label="삭제 범위 시작">
+          <span style="font-weight:900;">~</span>
+          <input type="date" id="delete-scope-end" aria-label="삭제 범위 종료">
+        </div>
+      </div>
+
+      <div class="reasoning-controls" id="reasoning-effort-control">
+        <label for="reasoning-effort-select">추론 강도</label>
+        <select id="reasoning-effort-select">
+          <option value="low">낮음</option>
+          <option value="medium">보통</option>
+          <option value="high">높음</option>
+        </select>
+      </div>
+
+    </div>
+
+  </aside>
+</div>
+
+<div class="tool-overlay" id="tool-overlay" aria-hidden="true"></div>
+<aside class="tool-drawer" id="tool-drawer" aria-hidden="true">
+  <div class="tool-drawer-head">
+    <div class="tool-drawer-title">도구</div>
+    <button class="tool-close" id="tool-close-btn" type="button" aria-label="닫기">✕</button>
+  </div>
+  <div class="tool-drawer-body">
+    <a class="tool-link" href="/settings">설정</a>
+    <a class="tool-link" href="/logout">로그아웃</a>
+  </div>
+</aside>
+
+<!-- Confirm Modal -->
+<div id="confirm-overlay">
+  <div id="confirm-modal" role="dialog" aria-modal="true">
+    <div class="cm-head">
+      <div>
+        <div class="cm-title" id="confirm-title"></div>
+        <div class="cm-desc" id="confirm-desc"></div>
+      </div>
+      <button class="cm-x" id="confirm-close" type="button">✕</button>
+    </div>
+
+    <div class="cm-body">
+      <div id="confirm-list"></div>
+    </div>
+
+    <div class="cm-foot">
+      <button class="cm-btn" id="confirm-cancel" type="button">취소</button>
+      <button class="cm-btn primary" id="confirm-ok" type="button">적용</button>
+    </div>
+  </div>
+</div>
+
+<div id="event-modal-overlay">
+  <div id="event-modal" role="dialog" aria-modal="true">
+    <div class="event-modal-head">
+      <div>
+        <div class="event-modal-title" id="event-modal-title"></div>
+        <div class="event-modal-sub" id="event-modal-sub"></div>
+      </div>
+      <button type="button" id="event-modal-close" aria-label="닫기">✕</button>
+    </div>
+    <div class="event-modal-body">
+      <div class="event-field">
+        <label for="event-modal-input-title">제목</label>
+        <input type="text" id="event-modal-input-title" />
+      </div>
+      <div class="event-field">
+        <label>시작</label>
+        <div class="event-field-row">
+          <input type="date" id="event-modal-input-start-date" />
+          <input type="time" id="event-modal-input-start-time" />
+        </div>
+      </div>
+      <div class="event-field">
+        <label>종료</label>
+        <div class="event-field-row">
+          <input type="date" id="event-modal-input-end-date" />
+          <input type="time" id="event-modal-input-end-time" />
+        </div>
+      </div>
+      <div class="event-field">
+        <label for="event-modal-input-location">장소</label>
+        <input type="text" id="event-modal-input-location" />
+      </div>
+      <div class="event-field">
+        <label for="event-modal-input-notes">메모</label>
+        <textarea id="event-modal-input-notes" rows="2" placeholder="참고사항을 기록하세요"></textarea>
+      </div>
+    </div>
+    <div class="event-modal-foot">
+      <button type="button" class="danger" id="event-modal-delete">삭제</button>
+      <div class="event-modal-actions">
+        <button type="button" id="event-modal-cancel">취소</button>
+        <button type="button" class="primary" id="event-modal-save">저장</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Recent Added Modal -->
+<div id="recent-overlay">
+  <div id="recent-modal" role="dialog" aria-modal="true">
+    <div class="recent-head">
+      <div>
+        <div class="recent-title">최근 추가한 일정</div>
+        <div class="recent-meta" id="recent-desc">최근 14일 저장</div>
+      </div>
+      <button class="recent-close" id="recent-close" type="button">닫기</button>
+    </div>
+    <div class="recent-body" id="recent-list"></div>
+    <div class="recent-foot">
+      <button class="recent-close" id="recent-cancel" type="button">닫기</button>
+    </div>
+  </div>
+</div>
+
+<div id="image-editor-overlay" aria-hidden="true">
+  <div class="image-editor-modal" role="dialog" aria-modal="true">
+    <div class="image-editor-head">
+      <div class="image-editor-title">이미지 가리기</div>
+      <div class="image-editor-meta">드래그해서 검은 박스를 그려 민감한 정보를 가릴 수 있습니다.</div>
+    </div>
+    <div class="image-editor-canvas">
+      <div class="image-editor-canvas-inner">
+        <canvas id="image-editor-canvas"></canvas>
+        <canvas id="image-editor-selection"></canvas>
+      </div>
+    </div>
+    <div class="image-editor-foot">
+      <button type="button" id="image-editor-undo">되돌리기</button>
+      <div class="spacer"></div>
+      <button type="button" id="image-editor-cancel">취소</button>
+      <button type="button" class="primary" id="image-editor-apply">적용</button>
+    </div>
+  </div>
+</div>
+<div id="toast-stack" aria-live="polite" aria-atomic="true"></div>

@@ -1,0 +1,150 @@
+INFO:     Will watch for changes in these directories: ['/workspaces/AI_calendar']
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [5511] using StatReload
+INFO:     Started server process [5513]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+OPENAI_API_KEY: True
+ENABLE_GCAL: 1
+GOOGLE_CLIENT_ID: True
+GOOGLE_REDIRECT_URI: https://didactic-space-chainsaw-r44475w95594h5j6p-3000.app.github.dev/auth/google/callback
+PWD: /workspaces/AI_calendar
+INFO:     59.29.108.132:0 - "GET / HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /_next/static/chunks/4bd1b696-67e30520d621c4dd.js HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /_next/static/chunks/webpack-347748125c37728d.js HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /_next/static/chunks/main-app-4abbaf5ee902ac0e.js HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /_next/static/css/3e31de1eec544387.css HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /_next/static/chunks/794-e5caf06cfcb20e1f.js HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /favicon.ico?603d046c9a6fdfbb HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /auth/google/status HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /api/events?start_date=2025-01-01&end_date=2025-12-31 HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /api/events?start_date=2026-01-01&end_date=2026-12-31 HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /auth/google/status HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /api/events?start_date=2025-01-01&end_date=2025-12-31 HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /api/events?start_date=2026-01-01&end_date=2026-12-31 HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /auth/google/status HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /api/events?start_date=2025-01-01&end_date=2025-12-31 HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /api/events?start_date=2026-01-01&end_date=2026-12-31 HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /api/events?start_date=2025-01-01&end_date=2025-12-31 HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /auth/google/status HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /auth/google/status HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /api/events?start_date=2025-01-01&end_date=2025-12-31 HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /api/events?start_date=2026-01-01&end_date=2026-12-31 HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /api/events?start_date=2025-01-01&end_date=2025-12-31 HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /auth/google/status HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /api/events?start_date=2026-01-01&end_date=2026-12-31 HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /api/recent-events HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /auth/google/status HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /api/events?start_date=2025-01-01&end_date=2025-12-31 HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /api/events?start_date=2026-01-01&end_date=2026-12-31 HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /auth/google/status HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /api/events?start_date=2025-01-01&end_date=2025-12-31 HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /api/events?start_date=2026-01-01&end_date=2026-12-31 HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /auth/google/status HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /api/events?start_date=2025-01-01&end_date=2025-12-31 HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /api/events?start_date=2026-01-01&end_date=2026-12-31 HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /auth/google/status HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /api/events?start_date=2025-01-01&end_date=2025-12-31 HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /api/events?start_date=2026-01-01&end_date=2026-12-31 HTTP/1.1" 200 OK
+[LLM DEBUG] kind: parse
+[LLM DEBUG] input_text: 문장: 내일 아침 9시에 운동 일정 추가해줘
+[LLM DEBUG] system_prompt(head): 너는 한국어 일정 문장을 구조화하는 파서다. 반드시 JSON 한 개만 반환한다. 설명 금지.\n기준 정보:\n- 기준 날짜: 2025-12-26\n- 시간대: Asia/Seoul\n\n출력 스키마:\n{\n  "needs_context": true | false,\n  "days_before": number,\n  "days_after": number,\n  "need_more_information": tru
+[LLM DEBUG] raw_content: {
+  "needs_context": false,
+  "days_before": 0,
+  "days_after": 1,
+  "need_more_information": false,
+  "content": "",
+  "items": [
+    {
+      "type": "single",
+      "title": "운동",
+      "start": "2025-12-27T09:00",
+      "end": null,
+      "location": null
+    }
+  ]
+}
+[LLM DEBUG] latency_ms: 4590.7 ms
+[LLM DEBUG] usage: prompt=905, completion=357, total=1262, cached_prompt=None
+[LLM DEBUG] cost: $0.000188 ≈ ₩0 (model=gpt-5-nano)
+INFO:     59.29.108.132:0 - "POST /api/nlp-preview HTTP/1.1" 200 OK
+[LLM DEBUG] kind: parse
+[LLM DEBUG] input_text: 문장: 1시간동안 할거야
+[LLM DEBUG] system_prompt(head): 너는 한국어 일정 문장을 구조화하는 파서다. 반드시 JSON 한 개만 반환한다. 설명 금지.\n기준 정보:\n- 기준 날짜: 2025-12-26\n- 시간대: Asia/Seoul\n\n출력 스키마:\n{\n  "needs_context": true | false,\n  "days_before": number,\n  "days_after": number,\n  "need_more_information": tru
+[LLM DEBUG] raw_content: {
+  "needs_context": false,
+  "days_before": 0,
+  "days_after": 0,
+  "need_more_information": true,
+  "content": "**다음 중 시작 시각을 알려주세요.**\n- 시작 시간(예: 14:30) 또는 구체적 시각이 필요합니다.\n- 시작 날짜가 오늘(2025-12-26)인지, 아니면 다른 날짜인지 알려주세요.\n- 같은 시간대 Asia/Seoul로 설정하면 될까요?",
+  "items": []
+}
+[LLM DEBUG] latency_ms: 5680.1 ms
+[LLM DEBUG] usage: prompt=900, completion=701, total=1601, cached_prompt=None
+[LLM DEBUG] cost: $0.000325 ≈ ₩0 (model=gpt-5-nano)
+INFO:     59.29.108.132:0 - "POST /api/nlp-preview HTTP/1.1" 200 OK
+[LLM DEBUG] kind: parse
+[LLM DEBUG] input_text: 문장: 9시에 한다니까
+[LLM DEBUG] system_prompt(head): 너는 한국어 일정 문장을 구조화하는 파서다. 반드시 JSON 한 개만 반환한다. 설명 금지.\n기준 정보:\n- 기준 날짜: 2025-12-26\n- 시간대: Asia/Seoul\n\n출력 스키마:\n{\n  "needs_context": true | false,\n  "days_before": number,\n  "days_after": number,\n  "need_more_information": tru
+[LLM DEBUG] raw_content: {
+  "needs_context": false,
+  "days_before": 0,
+  "days_after": 0,
+  "need_more_information": false,
+  "content": "",
+  "items": [
+    {
+      "type": "single",
+      "title": "일정",
+      "start": "2025-12-26T09:00",
+      "end": null,
+      "location": null
+    }
+  ]
+}
+[LLM DEBUG] latency_ms: 6411.8 ms
+[LLM DEBUG] usage: prompt=898, completion=677, total=1575, cached_prompt=None
+[LLM DEBUG] cost: $0.000316 ≈ ₩0 (model=gpt-5-nano)
+INFO:     59.29.108.132:0 - "POST /api/nlp-preview HTTP/1.1" 200 OK
+[LLM DEBUG] kind: parse
+[LLM DEBUG] input_text: 문장: 다음주 월요일에 있는 공학수학 수업 바로 뒤에 1시간동안 스터디 추가해줘
+[LLM DEBUG] system_prompt(head): 너는 한국어 일정 문장을 구조화하는 파서다. 반드시 JSON 한 개만 반환한다. 설명 금지.\n기준 정보:\n- 기준 날짜: 2025-12-26\n- 시간대: Asia/Seoul\n\n출력 스키마:\n{\n  "needs_context": true | false,\n  "days_before": number,\n  "days_after": number,\n  "need_more_information": tru
+[LLM DEBUG] raw_content: {
+  "needs_context": false,
+  "days_before": 0,
+  "days_after": 0,
+  "need_more_information": true,
+  "content": "**다음주 월요일(2025-12-29)의 공학수학 수업 시간 정보를 알려주세요.**\n\n- 1) 수업 시작 시각은 몇 시인가요? \n- 2) 수업 장소가 어디인가요? \n- 3) 스터디는 어디에서 몇 시부터 얼마 동안 진행하면 될까요? (다음주 월요일 수업 직후 1시간로 계산)"
+,
+  "items": []
+}
+[LLM DEBUG] latency_ms: 6384.3 ms
+[LLM DEBUG] usage: prompt=918, completion=661, total=1579, cached_prompt=None
+[LLM DEBUG] cost: $0.000310 ≈ ₩0 (model=gpt-5-nano)
+INFO:     59.29.108.132:0 - "POST /api/nlp-preview HTTP/1.1" 200 OK
+[LLM DEBUG] kind: parse
+[LLM DEBUG] input_text: 문장: 다음주 월요일에 있는 공학수학 수업 바로 뒤에 1시간동안 스터디 추가해줘 15시
+[LLM DEBUG] system_prompt(head): 너는 한국어 일정 문장을 구조화하는 파서다. 반드시 JSON 한 개만 반환한다. 설명 금지.\n기준 정보:\n- 기준 날짜: 2025-12-26\n- 시간대: Asia/Seoul\n\n출력 스키마:\n{\n  "needs_context": true | false,\n  "days_before": number,\n  "days_after": number,\n  "need_more_information": tru
+[LLM DEBUG] raw_content: {
+  "needs_context": false,
+  "days_before": 0,
+  "days_after": 0,
+  "need_more_information": false,
+  "content": "",
+  "items": [
+    {
+      "type": "single",
+      "title": "스터디",
+      "start": "2025-12-29T15:00",
+      "end": "2025-12-29T16:00",
+      "location": null
+    }
+  ]
+}
+[LLM DEBUG] latency_ms: 8511.3 ms
+[LLM DEBUG] usage: prompt=921, completion=815, total=1736, cached_prompt=None
+[LLM DEBUG] cost: $0.000372 ≈ ₩1 (model=gpt-5-nano)
+INFO:     59.29.108.132:0 - "POST /api/nlp-preview HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "POST /api/nlp-apply-add HTTP/1.1" 200 OK
+INFO:     59.29.108.132:0 - "GET /api/recent-events HTTP/1.1" 200 OK

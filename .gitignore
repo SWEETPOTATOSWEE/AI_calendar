@@ -1,0 +1,11 @@
+__pycache__/
+google_token.json
+gcal_tokens/
+.mcp/
+.vscode/
+dev.log
+logs/
+events_data.json
+.env
+.env.local
+.env.*.local

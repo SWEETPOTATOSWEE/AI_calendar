@@ -1,0 +1,426 @@
+@config "../tailwind.config.ts";
+@import "tailwindcss";
+
+/* Minimal functional defaults; visual design will be reintroduced later. */
+body {
+  margin: 0;
+  font-family: "Noto Sans KR", "Inter", sans-serif;
+}
+
+
+:root {
+  --icon-size: 18px;
+  --control-h: 34px;
+  --popover-radius: 1.25rem;
+  --popover-scale: 0.8;
+  --popover-translate: 12px;
+  --popover-duration-in: 180ms;
+  --popover-duration-out: 140ms;
+  --popover-ease-in: cubic-bezier(0.2, 0.65, 0.58, 1.18);
+  --popover-ease-out: ease-in;
+  --seg-ease: cubic-bezier(0.43, 0.66, 0.34, 1.3);
+  --seg-duration: 300ms;
+  --seg-inset: 0.25rem;
+  --seg-pad: 0.5rem;
+
+  /* Default OKLCH Fallbacks (Light Mode Baseline) */
+  --bg-canvas: 98.5% 0 0;
+  --bg-surface: 96.5% 0 0;
+  --bg-subtle: 93.5% 0.008 250;
+  --text-primary: 22% 0.03 250;
+  --text-secondary: 42% 0.02 250;
+  --text-disabled: 62% 0.015 250;
+  --border-subtle: 86% 0.01 250;
+  --border-strong: 72% 0.015 250;
+  --primary: 55% 0.18 255;
+  --primary-hover: 50% 0.18 255;
+  --primary-low: 92% 0.05 255;
+  --success: 62% 0.16 145;
+  --error: 60% 0.2 25;
+  --warning: 75% 0.16 85;
+  --info: 62% 0.13 240;
+  --overlay: 20% 0 0;
+  --focus: 65% 0.2 255;
+}
+
+.dark {
+  /* Default OKLCH Fallbacks (Dark Mode Baseline) */
+  --bg-canvas: 14% 0.01 250;
+  --bg-surface: 18% 0.01 250;
+  --bg-subtle: 22% 0.015 250;
+  --text-primary: 95% 0.01 250;
+  --text-secondary: 78% 0.01 250;
+  --text-disabled: 60% 0.01 250;
+  --border-subtle: 30% 0.015 250;
+  --border-strong: 42% 0.015 250;
+  --primary: 68% 0.18 255;
+  --primary-hover: 72% 0.18 255;
+  --primary-low: 30% 0.08 255;
+  --success: 70% 0.16 145;
+  --error: 68% 0.2 25;
+  --warning: 80% 0.16 85;
+  --info: 72% 0.13 240;
+  --overlay: 5% 0 0;
+  --focus: 80% 0.2 255;
+}
+
+svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+.icon {
+  display: block;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  fill: currentColor;
+}
+
+.topbar,
+.topbar-left,
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.topbar {
+  justify-content: space-between;
+  padding: 10px 14px;
+}
+
+.header-actions-layer {
+  display: flex;
+  align-items: center;
+  z-index: 1;
+  will-change: transform, opacity;
+}
+
+.nav-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.nav-btn {
+  height: var(--control-h);
+  padding: 0 10px;
+}
+
+.nav-btn.is-circle,
+.icon-btn,
+.menu-btn,
+#event-search-btn,
+.event-search-settings-btn {
+  width: var(--control-h);
+  height: var(--control-h);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.view-btn,
+.header-btn {
+  height: var(--control-h);
+  padding: 0 12px;
+}
+
+.event-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+}
+
+#confirm-overlay,
+#event-modal-overlay,
+#recent-overlay,
+#image-editor-overlay,
+#global-loading-overlay,
+.tool-overlay,
+.tool-drawer,
+.event-search-field,
+#year-view {
+  display: none;
+}
+
+#confirm-overlay.active,
+#event-modal-overlay.active,
+#recent-overlay.active,
+#image-editor-overlay.active,
+#global-loading-overlay.active,
+.tool-overlay.active,
+.tool-drawer.active,
+.event-search.is-open .event-search-field,
+#year-view.active {
+  display: block;
+}
+
+.event-search.is-open .event-search-field {
+  display: flex;
+}
+
+.event-search-popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  opacity: 0 !important;
+  visibility: hidden !important;
+  transform: translateY(-8px) !important;
+  pointer-events: none !important;
+  transition:
+    opacity 180ms ease,
+    transform 200ms ease;
+}
+
+.event-search.is-range-open .event-search-popover {
+  opacity: 1 !important;
+  visibility: visible !important;
+  transform: translateY(0) !important;
+  pointer-events: auto !important;
+}
+
+#calendar-container.is-year-view #calendar {
+  display: none;
+}
+
+#calendar {
+  min-height: 600px;
+}
+
+.toast {
+  display: none;
+}
+
+.toast.show {
+  display: block;
+}
+
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.truncate-2-lines {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.popover-surface {
+  border-radius: var(--popover-radius);
+}
+
+.popover-animate {
+  --popover-origin-x: center;
+  --popover-origin-y: top;
+  --popover-translate-x: 0px;
+  --popover-translate-y: calc(var(--popover-translate) * -1);
+  transform-origin: var(--popover-origin-x) var(--popover-origin-y);
+  animation:
+    popover-in var(--popover-duration-in) var(--popover-ease-in) both,
+    popover-fade-in var(--popover-duration-in) ease both;
+}
+
+.popover-animate[data-side="bottom"] {
+  --popover-origin-y: top;
+  --popover-translate-x: 0px;
+  --popover-translate-y: calc(var(--popover-translate) * -1);
+}
+
+.popover-animate[data-side="top"] {
+  --popover-origin-y: bottom;
+  --popover-translate-x: 0px;
+  --popover-translate-y: var(--popover-translate);
+}
+
+.popover-animate[data-side="left"] {
+  --popover-origin-x: right;
+  --popover-origin-y: center;
+  --popover-translate-x: var(--popover-translate);
+  --popover-translate-y: 0px;
+}
+
+.popover-animate[data-side="right"] {
+  --popover-origin-x: left;
+  --popover-origin-y: center;
+  --popover-translate-x: calc(var(--popover-translate) * -1);
+  --popover-translate-y: 0px;
+}
+
+.popover-animate[data-side="bottom"][data-align="start"],
+.popover-animate[data-side="top"][data-align="start"] {
+  --popover-origin-x: left;
+}
+
+.popover-animate[data-side="bottom"][data-align="end"],
+.popover-animate[data-side="top"][data-align="end"] {
+  --popover-origin-x: right;
+}
+
+.popover-animate[data-side="left"][data-align="start"],
+.popover-animate[data-side="right"][data-align="start"] {
+  --popover-origin-y: top;
+}
+
+.popover-animate[data-side="left"][data-align="end"],
+.popover-animate[data-side="right"][data-align="end"] {
+  --popover-origin-y: bottom;
+}
+
+.popover-animate.is-closing {
+  animation:
+    popover-out var(--popover-duration-out) var(--popover-ease-out) both,
+    popover-fade-out var(--popover-duration-out) ease both;
+  pointer-events: none;
+}
+
+@keyframes popover-in {
+  from {
+    transform: translate(var(--popover-translate-x), var(--popover-translate-y))
+      scale(var(--popover-scale));
+  }
+  to {
+    transform: translate(0, 0) scale(1);
+  }
+}
+
+@keyframes popover-out {
+  from {
+    transform: translate(0, 0) scale(1);
+  }
+  to {
+    transform: translate(var(--popover-translate-x), var(--popover-translate-y))
+      scale(var(--popover-scale));
+  }
+}
+
+@keyframes popover-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes popover-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.segmented-toggle {
+  position: relative;
+}
+
+.segmented-indicator {
+  position: absolute;
+  top: var(--seg-inset);
+  bottom: var(--seg-inset);
+  left: var(--seg-inset);
+  width: calc((100% - var(--seg-pad)) / var(--seg-count, 1));
+  transform: translateX(calc(var(--seg-index, 0) * 100%));
+  transition: transform var(--seg-duration) var(--seg-ease);
+  pointer-events: none;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #334155;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+.month-shell .rounded {
+  border-radius: 1rem;
+}
+
+.month-shell .rounded-lg {
+  border-radius: 1.5rem;
+}
+
+.month-shell .rounded-xl {
+  border-radius: 2rem;
+}
+
+.month-shell .rounded-2xl {
+  border-radius: 2.5rem;
+}
+
+.month-shell .rounded-full {
+  border-radius: 9999px;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes view-indicator-pulse {
+  0%,
+  100% {
+    transform: scaleY(1);
+  }
+  50% {
+    transform: scaleY(0.8);
+  }
+}
+
+.animate-fade-up {
+  animation: fade-up 0.7s ease forwards;
+}
+
+.animate-float {
+  animation: float 8s ease-in-out infinite;
+}
+
+.view-indicator-pulse {
+  transform-origin: center;
+  animation: view-indicator-pulse 220ms ease-out;
+}
