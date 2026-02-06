@@ -1597,10 +1597,8 @@ export default function EventModal({
                   {advancedOpen ? <ChevronUp className="size-5" /> : <ChevronDown className="size-5" />}
                 </button>
               </div>
-            </>
-
-          {advancedOpen && (
-            <>
+              {advancedOpen && (
+                <>
               <div className="rounded-lg border border-border-subtle bg-bg-canvas">
                 <div
                   className={`flex min-h-12 gap-2 px-4 py-2 ${
@@ -1691,8 +1689,8 @@ export default function EventModal({
                   />
                 </div>
               </div>
-            </>
-          )}
+                </>
+              )}
         </div>
         <div
           className={

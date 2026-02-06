@@ -52,30 +52,17 @@ export const fetchAuthStatus = async (): Promise<AuthStatus> => {
 
 export const getGoogleStreamUrl = () => apiUrl("/api/google/stream");
 
-export const listEvents = async (startDate: string, endDate: string, useGoogle: boolean) => {
-  console.log("[listEvents] useGoogle:", useGoogle, "startDate:", startDate, "endDate:", endDate);
-  if (useGoogle) {
-    const params = new URLSearchParams({ start_date: startDate, end_date: endDate });
-    const url = apiUrl(`/api/google/events?${params.toString()}`);
-    console.log("[listEvents] Fetching Google events from:", url);
-    const data = await fetchJson<CalendarEvent[]>(url, { method: "GET" });
-    console.log("[listEvents] Google events count:", data?.length || 0);
-    return (data || []).map((event) => ({
-      ...event,
-      id: buildGoogleEventKey(event.calendar_id, event.google_event_id ?? event.id),
-      source: "google" as const,
-      google_event_id: event.google_event_id ? String(event.google_event_id) : String(event.id || ""),
-    }));
-  }
-
+export const listEvents = async (startDate: string, endDate: string, _useGoogle?: boolean) => {
   const params = new URLSearchParams({ start_date: startDate, end_date: endDate });
-  const url = apiUrl(`/api/events?${params.toString()}`);
-  console.log("[listEvents] Fetching local events from:", url);
+  const url = apiUrl(`/api/google/events?${params.toString()}`);
+  console.log("[listEvents] Fetching Google events from:", url);
   const data = await fetchJson<CalendarEvent[]>(url, { method: "GET" });
-  console.log("[listEvents] Local events count:", data?.length || 0);
+  console.log("[listEvents] Google events count:", data?.length || 0);
   return (data || []).map((event) => ({
     ...event,
-    source: "local" as const,
+    id: buildGoogleEventKey(event.calendar_id, event.google_event_id ?? event.id),
+    source: "google" as const,
+    google_event_id: event.google_event_id ? String(event.google_event_id) : String(event.id || ""),
   }));
 };
 
@@ -100,64 +87,48 @@ export const createEvent = async (payload: EventPayload) => {
     method: "POST",
     body: JSON.stringify(payload),
   });
-  return { ...created, source: "local" as const };
+  const googleId = created.google_event_id ? String(created.google_event_id) : String(created.id || "");
+  return {
+    ...created,
+    id: googleId || created.id,
+    source: "google" as const,
+    google_event_id: googleId || created.google_event_id || null,
+  };
 };
 
 export const updateEvent = async (event: CalendarEvent, payload: EventPayload) => {
-  if (event.source === "google") {
-    const params = new URLSearchParams();
-    if (event.calendar_id) params.set("calendar_id", event.calendar_id);
-    const googleId = resolveGoogleEventId(event);
-    const url = apiUrl(
-      `/api/google/events/${encodeURIComponent(googleId)}${params.toString() ? `?${params}` : ""}`
-    );
-    return fetchJson<{ ok: boolean }>(url, {
-      method: "PATCH",
-      body: JSON.stringify(payload),
-    });
-  }
-
-  const url = apiUrl(`/api/events/${encodeURIComponent(String(event.id))}`);
-  const updated = await fetchJson<CalendarEvent>(url, {
+  const params = new URLSearchParams();
+  if (event.calendar_id) params.set("calendar_id", event.calendar_id);
+  const googleId = resolveGoogleEventId(event);
+  const url = apiUrl(
+    `/api/google/events/${encodeURIComponent(googleId)}${params.toString() ? `?${params}` : ""}`
+  );
+  return fetchJson<{ ok: boolean }>(url, {
     method: "PATCH",
     body: JSON.stringify(payload),
   });
-  return { ...updated, source: "local" as const };
 };
 
 export const updateRecurringEvent = async (
   event: CalendarEvent,
   payload: RecurringEventPayload
 ) => {
-  const url = apiUrl(`/api/recurring-events/${encodeURIComponent(String(event.id))}`);
-  const { type: _type, ...body } = payload;
-  const updated = await fetchJson<CalendarEvent>(url, {
-    method: "PATCH",
-    body: JSON.stringify(body),
-  });
-  return { ...updated, source: "local" as const };
+  const _ = { event, payload };
+  throw new Error("Recurring events are not supported in Google-only mode.");
 };
 
 export const addRecurringException = async (event: CalendarEvent, date: string) => {
-  const url = apiUrl(`/api/recurring-events/${encodeURIComponent(String(event.id))}/exceptions`);
-  return fetchJson<{ ok: boolean }>(url, {
-    method: "POST",
-    body: JSON.stringify({ date }),
-  });
+  const _ = { event, date };
+  throw new Error("Recurring events are not supported in Google-only mode.");
 };
 
 export const deleteEvent = async (event: CalendarEvent) => {
-  if (event.source === "google") {
-    const params = new URLSearchParams();
-    if (event.calendar_id) params.set("calendar_id", event.calendar_id);
-    const googleId = resolveGoogleEventId(event);
-    const url = apiUrl(
-      `/api/google/events/${encodeURIComponent(googleId)}${params.toString() ? `?${params}` : ""}`
-    );
-    return fetchJson<{ ok: boolean }>(url, { method: "DELETE" });
-  }
-
-  const url = apiUrl(`/api/events/${encodeURIComponent(String(event.id))}`);
+  const params = new URLSearchParams();
+  if (event.calendar_id) params.set("calendar_id", event.calendar_id);
+  const googleId = resolveGoogleEventId(event);
+  const url = apiUrl(
+    `/api/google/events/${encodeURIComponent(googleId)}${params.toString() ? `?${params}` : ""}`
+  );
   return fetchJson<{ ok: boolean }>(url, { method: "DELETE" });
 };
 
@@ -171,17 +142,19 @@ export const deleteGoogleEventById = async (eventId: string, calendarId?: string
 };
 
 export const deleteEventsByIds = async (ids: number[]) => {
-  const url = apiUrl("/api/delete-by-ids");
-  return fetchJson<{ ok: boolean; deleted_ids: number[]; count: number }>(url, {
-    method: "POST",
-    body: JSON.stringify({ ids }),
-  });
+  const _ = ids;
+  throw new Error("Local delete is not supported in Google-only mode.");
 };
 
 export const listRecentEvents = async () => {
   const url = apiUrl("/api/recent-events");
   const data = await fetchJson<CalendarEvent[]>(url, { method: "GET" });
-  return (data || []).map((event) => ({ ...event, source: "local" as const }));
+  return (data || []).map((event) => ({
+    ...event,
+    source: "google" as const,
+    google_event_id: event.google_event_id ? String(event.google_event_id) : String(event.id || ""),
+    id: buildGoogleEventKey(event.calendar_id, event.google_event_id ?? event.id),
+  }));
 };
 
 export const previewNlp = async (
@@ -296,7 +269,12 @@ export const applyNlpAdd = async (items: Record<string, unknown>[]) => {
     method: "POST",
     body: JSON.stringify({ items }),
   });
-  return (data || []).map((event) => ({ ...event, source: "local" as const }));
+  return (data || []).map((event) => ({
+    ...event,
+    source: "google" as const,
+    google_event_id: event.google_event_id ? String(event.google_event_id) : String(event.id || ""),
+    id: event.google_event_id ? String(event.google_event_id) : String(event.id || ""),
+  }));
 };
 
 export const previewNlpDelete = async (
@@ -354,14 +332,6 @@ export const loginGoogle = () => {
   // 항상 프론트엔드 프록시 라우트를 통해 백엔드로 전달
   // 브라우저가 8000 포트를 직접 열지 않도록 하여 Codespaces 보안 경고 방지
   window.location.href = "/auth/google/login";
-};
-
-export const enterAdmin = () => {
-  window.location.href = "/admin";
-};
-
-export const exitAdmin = () => {
-  window.location.href = "/admin/exit";
 };
 
 export const logout = () => {

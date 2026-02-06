@@ -319,7 +319,7 @@ const buildAiDraftEvent = (item: AddPreviewItem, fallbackDate: Date): CalendarEv
     color_id: item.color_id ?? null,
     recurrence,
     all_day: Boolean(item.all_day),
-    source: "local",
+    source: "google",
   };
 };
 
@@ -476,11 +476,8 @@ function CalendarPageInner() {
       actions.ingest(events);
     },
     onDeleteApplied: (ids) => {
-      if (useGoogle) {
-        actions.refresh(true);
-        return;
-      }
-      actions.removeByIds(ids);
+      const _ = ids;
+      actions.refresh(true);
     },
   });
 
@@ -1896,7 +1893,7 @@ function CalendarPageInner() {
                             start,
                             end,
                             all_day: segment.event.allDay,
-                            source: "local",
+                            source: "google",
                           } as CalendarEvent;
                         })
                         .filter((event): event is CalendarEvent => Boolean(event));

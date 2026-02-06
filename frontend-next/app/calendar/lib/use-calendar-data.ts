@@ -12,7 +12,6 @@ import {
   listGoogleTasks,
   updateEvent,
   updateRecurringEvent,
-  addRecurringException,
 } from "./api";
 import { addDays, parseISODateTime, toISODate } from "./date";
 
@@ -175,13 +174,6 @@ const buildIndexes = (events: CalendarEvent[]): CachedYear => {
   return { events: sorted, indexes };
 };
 
-const buildGoogleEventId = (event: CalendarEvent) => {
-  const rawId = event.google_event_id ?? event.id;
-  if (!rawId) return "";
-  if (!event.calendar_id) return String(rawId);
-  return `${event.calendar_id}::${rawId}`;
-};
-
 const buildTempId = () => `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 const eventOverlapsRange = (event: CalendarEvent, rangeStart: string, rangeEnd: string) => {
@@ -246,7 +238,7 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
 
   const useGoogle = useMemo(
     () => {
-      const result = Boolean(authStatus?.enabled && authStatus?.has_token && !authStatus?.admin);
+      const result = Boolean(authStatus?.enabled && authStatus?.has_token);
       console.log("[useCalendarData] useGoogle:", result, "authStatus:", authStatus);
       return result;
     },
@@ -289,11 +281,8 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
     return new Date().getMonth() + 1;
   }, [rangeStart, rangeEnd, viewAnchor]);
 
-  const activeKey = useMemo(
-    () => `${useGoogle ? "google" : "local"}:${activeYear}`,
-    [useGoogle, activeYear]
-  );
-  const activePrefix = useMemo(() => `${useGoogle ? "google" : "local"}:`, [useGoogle]);
+  const activeKey = useMemo(() => `google:${activeYear}`, [activeYear]);
+  const activePrefix = useMemo(() => "google:", []);
 
   const buildAllEvents = useCallback(() => {
     const seen = new Set<string>();
@@ -366,6 +355,12 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
 
   const refresh = useCallback(async (force = false) => {
     if (!rangeStart || !rangeEnd || authLoading) return;
+    if (!useGoogle) {
+      setEvents([]);
+      setIndexes(emptyIndexes());
+      setAllEvents([]);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -376,7 +371,7 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
         setAllEvents(buildAllEvents());
         const adjacentYear = getPrefetchYear(activeYear, activeMonth);
         if (adjacentYear) {
-          const adjacentKey = `${useGoogle ? "google" : "local"}:${adjacentYear}`;
+          const adjacentKey = `google:${adjacentYear}`;
           if (!cacheRef.current[adjacentKey]) {
             const { start: adjStart, end: adjEnd } = getYearRange(adjacentYear);
             fetchEventsWithTasks(adjStart, adjEnd, adjacentYear)
@@ -396,7 +391,7 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
       setAllEvents(buildAllEvents());
       const adjacentYear = getPrefetchYear(activeYear, activeMonth);
       if (adjacentYear) {
-        const adjacentKey = `${useGoogle ? "google" : "local"}:${adjacentYear}`;
+        const adjacentKey = `google:${adjacentYear}`;
         if (!cacheRef.current[adjacentKey]) {
           const { start: adjStart, end: adjEnd } = getYearRange(adjacentYear);
           fetchEventsWithTasks(adjStart, adjEnd, adjacentYear)
@@ -416,6 +411,12 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
 
   const refreshRange = useCallback(async () => {
     if (!rangeStart || !rangeEnd) return;
+    if (!useGoogle) {
+      setEvents([]);
+      setIndexes(emptyIndexes());
+      setAllEvents([]);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -433,7 +434,7 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
         if (year) yearsInRange.add(year);
       });
 
-      const prefix = useGoogle ? "google" : "local";
+      const prefix = "google";
       const missingYears: number[] = [];
       yearsInRange.forEach((year) => {
         const key = `${prefix}:${year}`;
@@ -560,30 +561,29 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
         color_id: payload.color_id ?? null,
         recurrence: payload.recurrence ?? null,
         all_day: payload.all_day,
-        source: useGoogle ? "google" : "local",
+        source: "google",
         google_event_id: null,
         calendar_id: null,
       };
       const optimisticYear = toYearFromIso(optimistic.start) ?? activeYear;
-      const optimisticKey = `${optimistic.source}:${optimisticYear}`;
+      const optimisticKey = `google:${optimisticYear}`;
       upsertEvent(optimisticKey, optimistic);
       try {
         const created = await createEvent(payload);
         removeEvent(optimisticKey, optimistic);
         const localYear = toYearFromIso(created.start) ?? activeYear;
-        const localKey = `local:${localYear}`;
-        upsertEvent(localKey, { ...created, source: "local" }, optimistic.source === "local" ? optimistic : undefined);
-
-        if (useGoogle && created.google_event_id) {
-          const googleKey = `google:${localYear}`;
-          const googleId = created.google_event_id;
-          upsertEvent(googleKey, {
+        const googleKey = `google:${localYear}`;
+        const googleId = created.google_event_id ?? String(created.id || "");
+        upsertEvent(
+          googleKey,
+          {
             ...created,
             id: created.calendar_id ? `${created.calendar_id}::${googleId}` : googleId,
             google_event_id: googleId,
             source: "google",
-          }, optimistic.source === "google" ? optimistic : undefined);
-        }
+          },
+          optimistic
+        );
         return created;
       } catch (err) {
         const message = err instanceof Error ? err.message : "일정 생성에 실패했습니다.";
@@ -594,7 +594,7 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
         setLoading(false);
       }
     },
-    [activeYear, removeEvent, upsertEvent, useGoogle]
+    [activeYear, removeEvent, upsertEvent]
   );
 
   const handleUpdate = useCallback(
@@ -662,16 +662,8 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
       setLoading(true);
       setError(null);
       try {
-        if (useGoogle) {
-          throw new Error("Google 모드에서는 반복 일정을 수정할 수 없습니다.");
-        }
-        const startDate = event.start?.split("T")[0];
-        if (!startDate) {
-          throw new Error("일정 시작 날짜를 찾을 수 없습니다.");
-        }
-        await addRecurringException(event, startDate);
-        cacheRef.current = {};
-        await refresh(true);
+        const _ = event;
+        throw new Error("반복 일정은 Google-only 모드에서 지원하지 않습니다.");
       } catch (err) {
         const message = err instanceof Error ? err.message : "반복 일정 삭제에 실패했습니다.";
         setError(message);
@@ -679,7 +671,7 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
         setLoading(false);
       }
     },
-    [refresh, useGoogle]
+    [refresh]
   );
 
   const handleCreateRecurring = useCallback(
@@ -688,17 +680,7 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
       setError(null);
       try {
         const created = await applyNlpAdd([payload as unknown as Record<string, unknown>]);
-        const years = new Set<number>();
-        created.forEach((item) => {
-          const year = toYearFromIso(item.start) ?? activeYear;
-          years.add(year);
-        });
-        for (const year of years) {
-          const { start, end } = getYearRange(year);
-          const data = await fetchEventsWithTasks(start, end, year);
-          const key = `${useGoogle ? "google" : "local"}:${year}`;
-          updateCache(key, buildIndexes(data));
-        }
+        await refresh(true);
         return created;
       } catch (err) {
         const message = err instanceof Error ? err.message : "반복 일정 생성에 실패했습니다.";
@@ -708,7 +690,7 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
         setLoading(false);
       }
     },
-    [activeYear, updateCache, useGoogle]
+    [refresh]
   );
 
   const handleRemove = useCallback(
@@ -720,12 +702,9 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
       removeEvent(key, event);
       try {
         await deleteEvent(event);
-        const shouldRefresh = useGoogle || event.recur === "recurring" || Boolean(event.recurrence);
-        if (shouldRefresh) {
-          cacheRef.current = {};
-          await refresh(true);
-          return;
-        }
+        cacheRef.current = {};
+        await refresh(true);
+        return;
       } catch (err) {
         const message = err instanceof Error ? err.message : "일정 삭제에 실패했습니다.";
         upsertEvent(key, event);
@@ -734,62 +713,29 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
         setLoading(false);
       }
     },
-    [activeYear, refresh, removeEvent, upsertEvent, useGoogle]
+    [activeYear, refresh, removeEvent, upsertEvent]
   );
 
   const ingestEvents = useCallback(
     (items: CalendarEvent[]) => {
-      if (useGoogle) {
-        refresh(true);
-        return;
-      }
-      const hasRecurring = items.some(
-        (event) => event.recur === "recurring" || Boolean(event.recurrence)
-      );
-      if (hasRecurring) {
-        refresh(true);
-        return;
-      }
-      items.forEach((event) => {
-        const year = toYearFromIso(event.start) ?? activeYear;
-        const localKey = `local:${year}`;
-        const localEvent = event.source ? event : { ...event, source: "local" as const };
-        upsertEvent(localKey, localEvent);
-        if (useGoogle && event.google_event_id) {
-          const googleKey = `google:${year}`;
-          upsertEvent(googleKey, {
-            ...event,
-            id: buildGoogleEventId(event),
-            google_event_id: event.google_event_id,
-            source: "google",
-          });
-        }
-      });
+      const _ = items;
+      refresh(true);
     },
-    [activeYear, refresh, upsertEvent, useGoogle]
+    [refresh]
   );
 
   const removeByIds = useCallback(
     (ids: Array<string | number>) => {
-      if (ids.length === 0) return;
-      const idSet = new Set(ids.map((val) => normalizeId(val)));
-      Object.entries(cacheRef.current).forEach(([key, cache]) => {
-        if (!key.startsWith("local:")) return;
-        cache.events.forEach((event) => {
-          if (idSet.has(normalizeId(event.id))) {
-            removeEvent(key, event);
-          }
-        });
-      });
+      const _ = ids;
     },
-    [removeEvent]
+    []
   );
 
   const ensureRangeLoaded = useCallback(
     async (searchStart: string, searchEnd: string) => {
       const years = getYearsInRange(searchStart, searchEnd);
       if (!years.length) return buildAllEvents();
-      const prefix = useGoogle ? "google" : "local";
+      const prefix = "google";
       const missing = years.filter((year) => !cacheRef.current[`${prefix}:${year}`]);
       if (!missing.length) return buildAllEvents();
       await Promise.all(
@@ -802,7 +748,7 @@ export const useCalendarData = (rangeStart: string, rangeEnd: string, viewAnchor
       );
       return buildAllEvents();
     },
-    [buildAllEvents, updateCache, useGoogle]
+    [buildAllEvents, updateCache]
   );
 
   const state: CalendarDataState = { events, allEvents, indexes, loading, error, authStatus };

@@ -30,8 +30,6 @@ GCAL_SCOPES = [
     "https://www.googleapis.com/auth/tasks",
 ]
 
-ADMIN_COOKIE_NAME = "admin"
-ADMIN_COOKIE_VALUE = "1"
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
 GOOGLE_TOKEN_DIR = pathlib.Path(

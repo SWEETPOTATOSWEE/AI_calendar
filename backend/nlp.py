@@ -174,6 +174,11 @@ async def create_events_from_natural_text_core(
                                                  transparency=ev.get("transparency"),
                                                  meeting_url=ev.get("meeting_url"),
                                                  timezone_value=ev.get("timezone"))
+      if is_google and not google_event_id:
+        raise HTTPException(status_code=502, detail="Google event 생성 실패")
+
+    if is_google and ev.get("source_type") != "single":
+      continue
 
     created.append(
         store_event(title=title,
@@ -192,7 +197,12 @@ async def create_events_from_natural_text_core(
                     timezone_value=ev.get("timezone")))
 
   for rec_item in recurring_items:
-    gcal_create_recurring_event(rec_item, session_id=session_id)
+    if is_google:
+      rec_id = gcal_create_recurring_event(rec_item, session_id=session_id)
+      if not rec_id:
+        raise HTTPException(status_code=502, detail="Google recurring event 생성 실패")
+    else:
+      gcal_create_recurring_event(rec_item, session_id=session_id)
 
   return created
 
@@ -406,6 +416,8 @@ def apply_add_items_core(items: List[Dict[str, Any]],
                                                  meeting_url=item.get("meeting_url"),
                                                  timezone_value=item.get("timezone"),
                                                  color_id=item.get("color_id"))
+      if session_id and not google_event_id:
+        raise HTTPException(status_code=502, detail="Google event 생성 실패")
       if session_id and google_event_id:
         touched_google = True
 
@@ -497,6 +509,8 @@ def apply_add_items_core(items: List[Dict[str, Any]],
       google_recur_id: Optional[str] = None
       if full_recurring:
         google_recur_id = gcal_create_recurring_event(item, session_id=session_id)
+        if session_id and not google_recur_id:
+          raise HTTPException(status_code=502, detail="Google recurring event 생성 실패")
         if session_id and google_recur_id:
           touched_google = True
         start_date_value = item.get("start_date")
@@ -537,6 +551,8 @@ def apply_add_items_core(items: List[Dict[str, Any]],
                                                     meeting_url=item.get("meeting_url"),
                                                     timezone_value=item.get("timezone"),
                                                     color_id=item.get("color_id"))
+        if session_id and not google_single_id:
+          raise HTTPException(status_code=502, detail="Google event 생성 실패")
         if session_id and google_single_id:
           touched_google = True
         created.append(

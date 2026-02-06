@@ -36,8 +36,6 @@ from .config import (
     OAUTH_STATE_MAX_AGE_SECONDS,
     COOKIE_SECURE,
     FRONTEND_BASE_URL,
-    ADMIN_COOKIE_NAME,
-    ADMIN_COOKIE_VALUE,
     SEOUL,
     GOOGLE_RECENT_DAYS,
 )
@@ -60,37 +58,6 @@ google_events_cache: Dict[str, Dict[str, Dict[str, Any]]] = {}
 context_cache: Dict[str, Dict[str, Any]] = {}
 oauth_state_store: Dict[str, Dict[str, Any]] = {}
 google_sse_subscribers: Dict[str, List[asyncio.Queue]] = {}
-
-# -------------------------
-# Google Calendar 유틸
-# -------------------------
-def is_admin(request: Request) -> bool:
-  return request.cookies.get(ADMIN_COOKIE_NAME) == ADMIN_COOKIE_VALUE
-
-
-def is_google_mode_active(request: Request, has_token: Optional[bool] = None) -> bool:
-  if is_admin(request) or not ENABLE_GCAL:
-    return False
-
-  # URL 쿼리 파라미터 또는 쿠키에서 명시적인 모드 확인을 우선함
-  mode_param = request.query_params.get("mode")
-  mode_cookie = request.cookies.get("calendar_mode")
-
-  # 명시적으로 google 모드가 아니면 False (로컬 모드 유지)
-  if mode_param == "local" or mode_cookie == "local":
-    return False
-
-  # 명시적으로 google 모드거나, 토큰이 있는 경우 google 모드로 간주 (하위 호환)
-  if mode_param == "google" or mode_cookie == "google":
-    token_present = load_gcal_token_for_request(
-        request) is not None if has_token is None else has_token
-    return bool(token_present)
-
-  # 기본적으로 토큰이 있으면 google 모드 (하위 호환)
-  token_present = load_gcal_token_for_request(
-      request) is not None if has_token is None else has_token
-  return bool(token_present)
-
 
 def is_gcal_configured() -> bool:
   return bool(ENABLE_GCAL and GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET
@@ -467,7 +434,7 @@ def _context_cache_key_for_session_mode(session_id: Optional[str],
   base = _context_cache_key_for_session(session_id)
   if not base:
     return None
-  return f"{base}:{'google' if use_google else 'local'}"
+  return f"{base}:google"
 
 
 def _get_context_cache(cache_key: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -501,13 +468,20 @@ def _should_use_cached_context(text: str) -> bool:
 
 
 def get_google_session_id(request: Request) -> Optional[str]:
-  if is_admin(request) or not ENABLE_GCAL:
+  if not ENABLE_GCAL:
     return None
   session_id = _get_session_id(request)
   if not session_id:
     return None
   if load_gcal_token_for_session(session_id) is None:
     return None
+  return session_id
+
+
+def require_google_session_id(request: Request) -> str:
+  session_id = get_google_session_id(request)
+  if not session_id:
+    raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
   return session_id
 
 
@@ -762,13 +736,6 @@ def _build_gcal_event_body(title: Optional[str],
                            meeting_url: Optional[str] = None,
                            timezone_value: Optional[str] = None,
                            color_id: Optional[str] = None) -> Dict[str, Any]:
-  if not isinstance(start_iso, str) or not ISO_DATETIME_RE.match(start_iso):
-    raise ValueError("Invalid start time for Google Calendar update.")
-
-  use_all_day = bool(all_day)
-  if all_day is None:
-    use_all_day = is_all_day_span(start_iso, end_iso)
-
   body: Dict[str, Any] = {}
   if title is not None:
     body["summary"] = title
@@ -796,21 +763,34 @@ def _build_gcal_event_body(title: Optional[str],
     elif isinstance(color_id, str) and color_id.strip().lower() in {"default", ""}:
       body["colorId"] = None
 
-  if use_all_day:
-    start_date, end_exclusive = _compute_all_day_bounds(start_iso, end_iso)
-    body["start"] = {"date": start_date.strftime("%Y-%m-%d")}
-    body["end"] = {"date": end_exclusive.strftime("%Y-%m-%d")}
-  else:
-    start_dt = datetime.strptime(start_iso,
-                                 "%Y-%m-%dT%H:%M").replace(tzinfo=SEOUL)
-    if end_iso:
-      end_dt = datetime.strptime(end_iso,
-                                 "%Y-%m-%dT%H:%M").replace(tzinfo=SEOUL)
+  if start_iso is not None:
+    if not isinstance(start_iso, str) or not ISO_DATETIME_RE.match(start_iso):
+      raise ValueError("Invalid start time for Google Calendar update.")
+
+    use_all_day = bool(all_day)
+    if all_day is None:
+      use_all_day = is_all_day_span(start_iso, end_iso)
+
+    if use_all_day:
+      start_date, end_exclusive = _compute_all_day_bounds(start_iso, end_iso)
+      body["start"] = {"date": start_date.strftime("%Y-%m-%d")}
+      body["end"] = {"date": end_exclusive.strftime("%Y-%m-%d")}
     else:
-      end_dt = start_dt + timedelta(hours=1)
-    tz_value = timezone_value or "Asia/Seoul"
-    body["start"] = {"dateTime": start_dt.isoformat(), "timeZone": tz_value}
-    body["end"] = {"dateTime": end_dt.isoformat(), "timeZone": tz_value}
+      start_dt = datetime.strptime(start_iso,
+                                   "%Y-%m-%dT%H:%M").replace(tzinfo=SEOUL)
+      if end_iso:
+        end_dt = datetime.strptime(end_iso,
+                                   "%Y-%m-%dT%H:%M").replace(tzinfo=SEOUL)
+      else:
+        end_dt = start_dt + timedelta(hours=1)
+      tz_value = timezone_value or "Asia/Seoul"
+      body["start"] = {"dateTime": start_dt.isoformat(), "timeZone": tz_value}
+      body["end"] = {"dateTime": end_dt.isoformat(), "timeZone": tz_value}
+  else:
+    if end_iso is not None:
+      raise ValueError("end requires start for Google Calendar update.")
+    if all_day is not None:
+      raise ValueError("all_day requires start for Google Calendar update.")
   return body
 
 
@@ -1165,7 +1145,10 @@ def _fetch_google_events_raw(service,
                              range_start: date,
                              range_end: date,
                              calendar_id: str,
-                             sync_token: Optional[str] = None
+                             sync_token: Optional[str] = None,
+                             query: Optional[str] = None,
+                             max_results: Optional[int] = None,
+                             order_by: Optional[str] = None
                              ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
   time_min = datetime(range_start.year,
                       range_start.month,
@@ -1192,11 +1175,15 @@ def _fetch_google_events_raw(service,
         "timeMin": time_min.isoformat(),
         "timeMax": time_max.isoformat(),
     }
+    if query:
+      params["q"] = query
+    if isinstance(max_results, int) and max_results > 0:
+      params["maxResults"] = max_results
     if sync_token:
       params["syncToken"] = sync_token
       params["showDeleted"] = True
     else:
-      params["orderBy"] = "startTime"
+      params["orderBy"] = order_by or "startTime"
 
     request = service.events().list(**params)
     try:
@@ -1218,6 +1205,84 @@ def _fetch_google_events_raw(service,
       break
 
   return events_data, next_sync_token
+
+
+def _normalize_gcal_items(raw_items: List[Dict[str, Any]],
+                          range_start: date,
+                          range_end: date,
+                          calendar_id: Optional[str]) -> List[Dict[str, Any]]:
+  items: List[Dict[str, Any]] = []
+  for raw in raw_items:
+    if not isinstance(raw, dict):
+      continue
+    if raw.get("status") == "cancelled":
+      continue
+    normalized = _normalize_gcal_event(raw, calendar_id)
+    if not normalized:
+      continue
+    if _event_in_date_range(normalized, range_start, range_end):
+      items.append(normalized)
+  return items
+
+
+def fetch_google_events_between_with_options(
+    range_start: date,
+    range_end: date,
+    session_id: str,
+    *,
+    calendar_id: Optional[str] = None,
+    query: Optional[str] = None,
+    limit: Optional[int] = None,
+    all_day: Optional[bool] = None,
+) -> List[Dict[str, Any]]:
+  if not is_gcal_configured():
+    raise HTTPException(status_code=400,
+                        detail="Google Calendar 연동이 설정되지 않았습니다.")
+  if not session_id:
+    raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
+
+  try:
+    service = get_gcal_service(session_id)
+  except Exception as exc:
+    raise HTTPException(status_code=502,
+                        detail=f"Google Calendar 인증에 실패했습니다: {exc}") from exc
+
+  calendar_ids: List[str] = []
+  if calendar_id:
+    calendar_ids = [calendar_id]
+  else:
+    try:
+      calendars = list_google_calendars(session_id)
+    except Exception as exc:
+      raise HTTPException(status_code=502,
+                          detail=f"Google Calendar 목록 조회 실패: {exc}") from exc
+    calendar_ids = [item["id"] for item in calendars if isinstance(item, dict)]
+
+  if not calendar_ids:
+    return []
+
+  items: List[Dict[str, Any]] = []
+  max_results = limit if isinstance(limit, int) and limit > 0 else None
+
+  for cal_id in calendar_ids:
+    raw_items, _ = _fetch_google_events_raw(service,
+                                            range_start,
+                                            range_end,
+                                            cal_id,
+                                            query=query,
+                                            max_results=max_results)
+    items.extend(_normalize_gcal_items(raw_items, range_start, range_end, cal_id))
+    if max_results and len(items) >= max_results:
+      break
+
+  if all_day is not None:
+    items = [item for item in items if bool(item.get("all_day")) == all_day]
+
+  items.sort(key=lambda ev: ev.get("start") or "")
+  if max_results:
+    items = items[:max_results]
+
+  return items
 
 
 def _apply_gcal_items_to_cache(cache: Dict[str, Dict[str, Any]],

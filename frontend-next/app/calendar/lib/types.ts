@@ -1,4 +1,4 @@
-export type CalendarEventSource = "local" | "google" | "google_task";
+export type CalendarEventSource = "google" | "google_task";
 
 export type GoogleTask = {
   id: string;
@@ -52,7 +52,6 @@ export type AuthStatus = {
   enabled: boolean;
   configured: boolean;
   has_token: boolean;
-  admin?: boolean;
   photo_url?: string | null;
 };
 
