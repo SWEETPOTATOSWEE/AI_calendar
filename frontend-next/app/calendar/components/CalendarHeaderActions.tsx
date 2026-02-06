@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { User } from "lucide-react";
 import type { AuthStatus } from "../lib/types";
-import { enterAdmin, exitAdmin, loginGoogle, logout } from "../lib/api";
+import { loginGoogle, logout } from "../lib/api";
 
 type CalendarHeaderActionsProps = {
   status: AuthStatus | null;
@@ -18,7 +18,6 @@ export default function CalendarHeaderActions({
 }: CalendarHeaderActionsProps) {
   const googleEnabled = Boolean(status?.enabled && status?.configured);
   const hasToken = Boolean(status?.has_token);
-  const isAdmin = Boolean(status?.admin);
   const containerClassName = className ?? "flex items-center gap-2";
   const buttonSuffix = buttonClassName ? ` ${buttonClassName}` : "";
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
@@ -56,7 +55,7 @@ export default function CalendarHeaderActions({
 
   return (
     <div className={containerClassName}>
-      {googleEnabled && !hasToken && !isAdmin && (
+      {googleEnabled && !hasToken && (
         <button
           className={`px-3 py-1 rounded-full text-sm font-semibold border border-token-primary/30 text-token-primary hover:bg-token-primary/10${buttonSuffix}`}
           type="button"
@@ -111,24 +110,6 @@ export default function CalendarHeaderActions({
             </div>
           )}
         </div>
-      )}
-      {!hasToken && !isAdmin && (
-        <button
-          className={`px-3 py-1 rounded-full text-sm font-semibold border border-border-subtle text-text-primary hover:bg-bg-subtle${buttonSuffix}`}
-          type="button"
-          onClick={enterAdmin}
-        >
-          관리자
-        </button>
-      )}
-      {isAdmin && (
-        <button
-          className={`px-3 py-1 rounded-full text-sm font-semibold border border-border-subtle text-text-primary hover:bg-bg-subtle${buttonSuffix}`}
-          type="button"
-          onClick={exitAdmin}
-        >
-          관리자 해제
-        </button>
       )}
     </div>
   );

@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from "react";
 import type { CalendarEvent } from "./types";
-import { deleteEventsByIds, deleteGoogleEventById } from "./api";
+import { deleteGoogleEventById } from "./api";
 
 export const useUndoStack = (onAfterUndo?: () => void) => {
   const [stack, setStack] = useState<CalendarEvent[][]>([]);
@@ -17,10 +17,6 @@ export const useUndoStack = (onAfterUndo?: () => void) => {
     const batch = stack[stack.length - 1];
     setStack((prev) => prev.slice(0, -1));
 
-    const localIds = batch
-      .filter((event) => event.source === "local" && typeof event.id === "number")
-      .map((event) => event.id as number);
-
     const googleIds = batch
       .filter((event) => event.source === "google")
       .map((event) => ({
@@ -28,10 +24,6 @@ export const useUndoStack = (onAfterUndo?: () => void) => {
         calendarId: event.calendar_id ?? null,
       }))
       .filter((item) => Boolean(item.eventId));
-
-    if (localIds.length) {
-      await deleteEventsByIds(localIds);
-    }
 
     const seen = new Set<string>();
     for (const item of googleIds) {

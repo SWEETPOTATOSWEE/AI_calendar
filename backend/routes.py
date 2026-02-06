@@ -12,8 +12,6 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse, JSONResponse, HTMLResponse, StreamingResponse
 
 from .config import (
-    ADMIN_COOKIE_NAME,
-    ADMIN_COOKIE_VALUE,
     SESSION_COOKIE_NAME,
     OAUTH_STATE_COOKIE_NAME,
     SESSION_COOKIE_MAX_AGE_SECONDS,
@@ -25,9 +23,6 @@ from .config import (
     GOOGLE_REDIRECT_URI,
     GCAL_SCOPES,
     API_BASE,
-    ISO_DATE_RE,
-    SEOUL,
-    UNDO_RETENTION_DAYS,
 )
 from .models import (
     Event,
@@ -46,7 +41,6 @@ from .models import (
     TaskUpdate,
 )
 from .frontend import (
-    START_HTML,
     CALENDAR_HTML_TEMPLATE,
     SETTINGS_HTML,
     LOGIN_HTML,
@@ -55,45 +49,32 @@ from .utils import (
     _log_debug,
     _parse_scope_dates,
     _normalize_google_timestamp,
-    _parse_created_at,
     _now_iso_minute,
     _coerce_patch_start,
     _coerce_patch_end,
     _clean_optional_str,
-    _normalize_end_datetime,
     is_all_day_span,
-    _normalize_exception_date,
     _normalize_color_id,
     _validate_image_payload,
 )
-from . import state
 from .state import (
     store_event,
-    store_recurring_event,
-    _find_recurring_event,
-    _delete_recurring_event,
-    _recurring_definition_to_event,
-    _collect_local_recurring_occurrences,
-    _decode_occurrence_id,
-    _list_local_events_for_api,
-    delete_events_by_ids,
-    _save_events_to_disk,
 )
 from .recurrence import _resolve_recurrence, _normalize_recurrence_dict
 from .gcal import (
-    is_admin,
-    is_google_mode_active,
     is_gcal_configured,
     load_gcal_token_for_request,
     load_gcal_token_for_session,
     save_gcal_token_for_session,
     clear_gcal_token_for_session,
     get_google_session_id,
+    require_google_session_id,
     get_google_tasks_service,
     get_google_userinfo,
     list_google_calendars,
     ensure_gcal_watches,
     fetch_google_events_between,
+    fetch_google_events_between_with_options,
     fetch_recent_google_events,
     refresh_google_cache_for_calendar,
     gcal_create_single_event,
@@ -115,7 +96,6 @@ from .gcal import (
     _resolve_google_redirect_uri,
     _get_session_id,
     _new_session_id,
-    _ensure_session_id,
     _new_oauth_state,
     _store_oauth_state,
     _pop_oauth_state,
@@ -285,7 +265,6 @@ def google_callback(request: Request):
 
   # ✅ 성공 시 달력으로 이동
   resp = RedirectResponse(_frontend_url("/calendar"))
-  resp.delete_cookie(ADMIN_COOKIE_NAME, path="/")
   _set_cookie(resp,
               SESSION_COOKIE_NAME,
               session_id,
@@ -308,7 +287,6 @@ def google_status(request: Request):
       "enabled": ENABLE_GCAL,
       "configured": is_gcal_configured(),
       "has_token": token_data is not None,
-      "admin": is_admin(request),
       "photo_url": photo_url,
   }
 
@@ -398,19 +376,12 @@ async def google_stream(request: Request):
 # -------------------------
 @router.get("/admin")
 def enter_admin():
-  resp = RedirectResponse(_frontend_url("/calendar"))
-  resp.set_cookie(ADMIN_COOKIE_NAME,
-                  ADMIN_COOKIE_VALUE,
-                  httponly=True,
-                  samesite="lax")
-  return resp
+  raise HTTPException(status_code=410, detail="Admin mode is disabled.")
 
 
 @router.get("/admin/exit")
 def exit_admin():
-  resp = RedirectResponse(_frontend_url("/"))
-  resp.delete_cookie(ADMIN_COOKIE_NAME)
-  return resp
+  raise HTTPException(status_code=410, detail="Admin mode is disabled.")
 
 
 @router.get("/logout")
@@ -421,7 +392,6 @@ def logout(request: Request):
   clear_gcal_token_for_session(session_id)
   _clear_google_cache(session_id)
   resp = RedirectResponse(_frontend_url("/"))
-  resp.delete_cookie(ADMIN_COOKIE_NAME, path="/")
   _delete_cookie(resp, SESSION_COOKIE_NAME)
   _delete_cookie(resp, OAUTH_STATE_COOKIE_NAME)
   return resp
@@ -430,47 +400,17 @@ def logout(request: Request):
 # -------------------------
 # API 엔드포인트
 # -------------------------
-@router.get("/api/events", response_model=List[Event])
+@router.get("/api/events")
 def list_events(request: Request,
                 start_date: Optional[str] = Query(None),
                 end_date: Optional[str] = Query(None)):
-  if is_google_mode_active(request):
-    return []
-  scope = _parse_scope_dates(start_date, end_date, require=False, max_days=3650)
-  items = _list_local_events_for_api(scope=scope)
-  items.sort(key=lambda ev: ev.start)
-  return items
-
-
-def _format_recent_local_event(ev: Event) -> Dict[str, Any]:
-  return {
-      "id": ev.id,
-      "title": ev.title,
-      "start": ev.start,
-      "end": ev.end,
-      "location": ev.location,
-      "all_day": ev.all_day,
-      "created_at": ev.created_at,
-      "source": "local",
-      "google_event_id": ev.google_event_id,
-  }
-
-
-def _format_recent_recurring_event(rec: Dict[str, Any]) -> Dict[str, Any]:
-  start_time = rec.get("time") or "00:00"
-  start_value = f"{rec['start_date']}T{start_time}"
-  return {
-      "id": rec["id"],
-      "title": rec["title"],
-      "start": start_value,
-      "end": None,
-      "location": rec.get("location"),
-      "all_day": not bool(rec.get("time")),
-      "created_at": rec.get("created_at"),
-      "source": "local",
-      "google_event_id": rec.get("google_event_id"),
-      "recurrence": rec.get("recurrence"),
-  }
+  session_id = require_google_session_id(request)
+  scope = _parse_scope_dates(start_date,
+                             end_date,
+                             require=True,
+                             max_days=3650,
+                             label="조회")
+  return fetch_google_events_between(scope[0], scope[1], session_id)
 
 
 def _format_recent_google_event(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -491,35 +431,26 @@ def _format_recent_google_event(item: Dict[str, Any]) -> Dict[str, Any]:
 
 @router.get("/api/recent-events")
 def list_recent_events(request: Request):
-  session_id = get_google_session_id(request)
-  if session_id:
-    try:
-      data = fetch_recent_google_events(session_id)
-      formatted = [_format_recent_google_event(item) for item in data]
-      return formatted[:200]
-    except HTTPException:
-      raise
-    except Exception as exc:
-      raise HTTPException(status_code=502,
-                          detail=f"Google recent events 실패: {exc}") from exc
-
-  cutoff = datetime.now(SEOUL) - timedelta(days=UNDO_RETENTION_DAYS)
-  recent = [
-      _format_recent_local_event(e)
-      for e in state.events
-      if _parse_created_at(e.created_at) >= cutoff
-  ]
-  for rec in state.recurring_events:
-    if _parse_created_at(rec.get("created_at")) >= cutoff:
-      recent.append(_format_recent_recurring_event(rec))
-  recent.sort(key=lambda ev: _parse_created_at(ev.get("created_at")), reverse=True)
-  return recent[:200]
+  session_id = require_google_session_id(request)
+  try:
+    data = fetch_recent_google_events(session_id)
+    formatted = [_format_recent_google_event(item) for item in data]
+    return formatted[:200]
+  except HTTPException:
+    raise
+  except Exception as exc:
+    raise HTTPException(status_code=502,
+                        detail=f"Google recent events 실패: {exc}") from exc
 
 
 @router.get("/api/google/events")
 def google_events(request: Request,
                   start_date: str = Query(..., alias="start_date"),
-                  end_date: str = Query(..., alias="end_date")):
+                  end_date: str = Query(..., alias="end_date"),
+                  query: Optional[str] = Query(None, alias="query"),
+                  calendar_id: Optional[str] = Query(None, alias="calendar_id"),
+                  all_day: Optional[bool] = Query(None, alias="all_day"),
+                  limit: Optional[int] = Query(None, alias="limit")):
   scope = _parse_scope_dates(start_date,
                              end_date,
                              require=True,
@@ -528,6 +459,14 @@ def google_events(request: Request,
   session_id = get_google_session_id(request)
   if not session_id:
     raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
+  if query or calendar_id or all_day is not None or (isinstance(limit, int) and limit > 0):
+    return fetch_google_events_between_with_options(scope[0],
+                                                    scope[1],
+                                                    session_id,
+                                                    calendar_id=calendar_id,
+                                                    query=query,
+                                                    limit=limit,
+                                                    all_day=all_day)
   return fetch_google_events_between(scope[0], scope[1], session_id)
 
 
@@ -654,8 +593,16 @@ def google_update_event_api(request: Request,
     raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
 
   start_iso = _coerce_patch_start(payload.start)
-  if not start_iso:
-    raise HTTPException(status_code=400, detail="시작 시각은 필수입니다.")
+  if payload.start is None:
+    start_iso = None
+    if payload.end is not None:
+      raise HTTPException(status_code=400,
+                          detail="종료 시각을 변경하려면 시작 시각이 필요합니다.")
+    if payload.all_day is not None:
+      raise HTTPException(status_code=400,
+                          detail="종일 일정 변경에는 시작 시각이 필요합니다.")
+  elif not start_iso:
+    raise HTTPException(status_code=400, detail="시작 시각 형식이 잘못되었습니다.")
 
   end_iso = None
   if payload.end is not None:
@@ -749,9 +696,9 @@ def google_update_event_api(request: Request,
 
 @router.post("/api/events", response_model=Event)
 def create_event(request: Request, event_in: EventCreate):
+  session_id = require_google_session_id(request)
   google_event_id: Optional[str] = None
   detected_all_day = event_in.all_day
-  session_id = get_google_session_id(request)
   if detected_all_day is None:
     detected_all_day = is_all_day_span(event_in.start, event_in.end)
   try:
@@ -767,11 +714,15 @@ def create_event(request: Request, event_in: EventCreate):
                                                meeting_url=event_in.meeting_url,
                                                timezone_value=event_in.timezone,
                                                color_id=event_in.color_id)
-    if session_id and google_event_id:
-      _clear_google_cache(session_id)
-      _emit_google_sse(session_id, "google_sync", {})
-  except Exception:
-    _log_debug("[GCAL] /api/events create: 실패 (무시)")
+  except Exception as exc:
+    raise HTTPException(status_code=502,
+                        detail=f"Google event 생성 실패: {exc}") from exc
+
+  if not google_event_id:
+    raise HTTPException(status_code=502, detail="Google event 생성 실패")
+
+  _clear_google_cache(session_id)
+  _emit_google_sse(session_id, "google_sync", {})
 
   return store_event(
       title=event_in.title,
@@ -795,254 +746,24 @@ def create_event(request: Request, event_in: EventCreate):
 
 @router.delete("/api/events/{event_id}")
 def delete_event(event_id: int):
-  deleted = delete_events_by_ids([event_id])
-  if not deleted:
-    raise HTTPException(status_code=404, detail="일정을 찾을 수 없습니다.")
-  return {"ok": True, "deleted": deleted}
+  raise HTTPException(status_code=410, detail="로컬 모드가 제거되었습니다.")
 
 
 @router.patch("/api/events/{event_id}", response_model=Event)
 def update_event(request: Request, event_id: int, payload: EventUpdate):
-  recurrence_id = _decode_occurrence_id(event_id)
-  if recurrence_id:
-    raise HTTPException(status_code=400, detail="반복 일정은 개별 수정할 수 없습니다.")
-  if _find_recurring_event(event_id):
-    raise HTTPException(status_code=400, detail="반복 일정은 개별 수정할 수 없습니다.")
-
-  target = next((e for e in state.events if e.id == event_id), None)
-  if target is None:
-    raise HTTPException(status_code=404, detail="일정을 찾을 수 없습니다.")
-
-  new_title = target.title
-  if payload.title is not None:
-    new_title = payload.title.strip()
-    if not new_title:
-      raise HTTPException(status_code=400, detail="제목을 입력해 주세요.")
-
-  new_start = target.start
-  if payload.start is not None:
-    new_start = _coerce_patch_start(payload.start)
-    if not new_start:
-      raise HTTPException(status_code=400, detail="시작 시각 형식이 잘못되었습니다.")
-
-  new_end = target.end
-  if payload.end is not None:
-    new_end = _coerce_patch_end(payload.end)
-
-  location_provided = payload.location is not None
-  new_location = target.location
-  if location_provided:
-    new_location = _clean_optional_str(payload.location)
-
-  description_provided = payload.description is not None
-  new_description = target.description
-  if description_provided:
-    new_description = _clean_optional_str(payload.description)
-
-  attendees_provided = payload.attendees is not None
-  new_attendees = target.attendees
-  if attendees_provided:
-    cleaned_attendees: List[str] = []
-    if isinstance(payload.attendees, list):
-      for item in payload.attendees:
-        if not isinstance(item, str):
-          continue
-        cleaned = item.strip()
-        if cleaned:
-          cleaned_attendees.append(cleaned)
-    new_attendees = cleaned_attendees
-
-  reminders_provided = payload.reminders is not None
-  new_reminders = target.reminders
-  if reminders_provided:
-    cleaned_reminders: List[int] = []
-    if isinstance(payload.reminders, list):
-      for item in payload.reminders:
-        try:
-          val = int(item)
-        except Exception:
-          continue
-        if val >= 0:
-          cleaned_reminders.append(val)
-    new_reminders = cleaned_reminders
-
-  visibility_provided = payload.visibility is not None
-  new_visibility = target.visibility
-  if visibility_provided:
-    new_visibility = payload.visibility
-
-  transparency_provided = payload.transparency is not None
-  new_transparency = target.transparency
-  if transparency_provided:
-    new_transparency = payload.transparency
-
-  color_provided = payload.color_id is not None
-  new_color_id = target.color_id
-  if color_provided:
-    new_color_id = _normalize_color_id(payload.color_id)
-
-  meeting_url_provided = payload.meeting_url is not None
-  new_meeting_url = target.meeting_url
-  if meeting_url_provided:
-    new_meeting_url = _clean_optional_str(payload.meeting_url)
-
-  timezone_provided = payload.timezone is not None
-  new_timezone = target.timezone
-  if timezone_provided:
-    new_timezone = payload.timezone or "Asia/Seoul"
-
-  if not new_start:
-    raise HTTPException(status_code=400, detail="시작 시각을 설정할 수 없습니다.")
-
-  new_all_day = payload.all_day
-  if new_all_day is None:
-    new_all_day = is_all_day_span(new_start, new_end)
-
-  session_id = get_google_session_id(request)
-  if target.google_event_id and session_id:
-    try:
-      gcal_location = None
-      if location_provided:
-        gcal_location = "" if new_location is None else new_location
-      gcal_description = None
-      if description_provided:
-        gcal_description = "" if new_description is None else new_description
-      gcal_attendees = new_attendees if attendees_provided else None
-      gcal_reminders = new_reminders if reminders_provided else None
-      gcal_visibility = new_visibility if visibility_provided else None
-      gcal_transparency = new_transparency if transparency_provided else None
-      gcal_meeting_url = new_meeting_url if meeting_url_provided else None
-      gcal_timezone = new_timezone if timezone_provided else None
-      gcal_color_id = payload.color_id if color_provided else None
-      gcal_update_event(target.google_event_id,
-                        new_title,
-                        new_start,
-                        new_end,
-                        gcal_location,
-                        bool(new_all_day),
-                        session_id=session_id,
-                        description=gcal_description,
-                        attendees=gcal_attendees,
-                        reminders=gcal_reminders,
-                        visibility=gcal_visibility,
-                        transparency=gcal_transparency,
-                        meeting_url=gcal_meeting_url,
-                        timezone_value=gcal_timezone,
-                        color_id=gcal_color_id)
-    except Exception as exc:
-      _log_debug(f"[GCAL] local event update failed: {exc}")
-
-  target.title = new_title
-  target.start = new_start
-  target.end = new_end
-  target.location = new_location
-  target.description = new_description
-  target.attendees = new_attendees
-  target.reminders = new_reminders
-  target.visibility = new_visibility
-  target.transparency = new_transparency
-  target.meeting_url = new_meeting_url
-  target.timezone = new_timezone
-  target.color_id = new_color_id
-  target.all_day = bool(new_all_day)
-  _save_events_to_disk()
-  return target
+  raise HTTPException(status_code=410, detail="로컬 모드가 제거되었습니다.")
 
 
 @router.patch("/api/recurring-events/{event_id}", response_model=Event)
 def update_recurring_event(request: Request, event_id: int, payload: RecurringEventUpdate):
-  if is_google_mode_active(request):
-    raise HTTPException(status_code=400, detail="Google 모드에서는 반복 일정을 수정할 수 없습니다.")
-
-  recurrence_id = _decode_occurrence_id(event_id) or event_id
-  target = _find_recurring_event(recurrence_id)
-  if target is None:
-    raise HTTPException(status_code=404, detail="반복 일정을 찾을 수 없습니다.")
-
-  title_value = payload.title.strip()
-  if not title_value:
-    raise HTTPException(status_code=400, detail="제목을 입력해 주세요.")
-
-  start_date_value = payload.start_date.strip()
-  if not ISO_DATE_RE.match(start_date_value):
-    raise HTTPException(status_code=400, detail="시작 날짜 형식이 잘못되었습니다.")
-
-  recurrence_item = {"recurrence": payload.recurrence.model_dump()}
-  recurrence_spec = _resolve_recurrence(recurrence_item)
-  if not recurrence_spec:
-    raise HTTPException(status_code=400, detail="반복 규칙을 확인해 주세요.")
-
-  location_value = _clean_optional_str(payload.location)
-  description_value = _clean_optional_str(payload.description)
-  meeting_url_value = _clean_optional_str(payload.meeting_url)
-  timezone_value = payload.timezone or "Asia/Seoul"
-  color_value = _normalize_color_id(payload.color_id)
-
-  attendees_value: Optional[List[str]] = None
-  if payload.attendees is not None:
-    cleaned: List[str] = []
-    for item in payload.attendees:
-      if isinstance(item, str):
-        trimmed = item.strip()
-        if trimmed:
-          cleaned.append(trimmed)
-    attendees_value = cleaned
-
-  reminders_value: Optional[List[int]] = None
-  if payload.reminders is not None:
-    cleaned_reminders: List[int] = []
-    for item in payload.reminders:
-      try:
-        minutes = int(item)
-      except Exception:
-        continue
-      if minutes >= 0:
-        cleaned_reminders.append(minutes)
-    reminders_value = cleaned_reminders
-
-  target["title"] = title_value
-  target["start_date"] = start_date_value
-  target["time"] = payload.time
-  target["duration_minutes"] = payload.duration_minutes
-  target["location"] = location_value
-  target["description"] = description_value
-  target["attendees"] = attendees_value
-  target["reminders"] = reminders_value
-  target["visibility"] = payload.visibility
-  target["transparency"] = payload.transparency
-  target["meeting_url"] = meeting_url_value
-  target["timezone"] = timezone_value
-  target["color_id"] = color_value
-  target["recurrence"] = recurrence_spec
-
-  _save_events_to_disk()
-  return _recurring_definition_to_event(target)
+  raise HTTPException(status_code=410, detail="로컬 모드가 제거되었습니다.")
 
 
 @router.post("/api/recurring-events/{event_id}/exceptions")
 def add_recurring_exception(request: Request,
                             event_id: int,
                             payload: RecurringExceptionPayload):
-  if is_google_mode_active(request):
-    raise HTTPException(status_code=400, detail="Google 모드에서는 반복 일정을 수정할 수 없습니다.")
-
-  recurrence_id = _decode_occurrence_id(event_id) or event_id
-  target = _find_recurring_event(recurrence_id)
-  if target is None:
-    raise HTTPException(status_code=404, detail="반복 일정을 찾을 수 없습니다.")
-
-  exception_date = _normalize_exception_date(payload.date)
-  if not exception_date:
-    raise HTTPException(status_code=400, detail="제외 날짜 형식이 잘못되었습니다.")
-
-  exceptions = target.get("exceptions")
-  if not isinstance(exceptions, list):
-    exceptions = []
-  if exception_date not in exceptions:
-    exceptions.append(exception_date)
-  target["exceptions"] = exceptions
-  _save_events_to_disk()
-  return {"ok": True}
+  raise HTTPException(status_code=410, detail="로컬 모드가 제거되었습니다.")
 
 
 @router.post("/api/nlp-events", response_model=List[Event])
@@ -1050,15 +771,12 @@ async def create_events_from_natural_text(body: NaturalText,
                                           request: Request,
                                           response: Response):
   try:
-    session_id = _ensure_session_id(request, response)
+    session_id = require_google_session_id(request)
     request_id = _resolve_request_id(body.request_id)
     images = _validate_image_payload(body.images)
     effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
     model_name = _resolve_request_model(request, body.model)
-    use_google_context = is_google_mode_active(request)
-    cache_key = _context_cache_key_for_session_mode(session_id,
-                                                    use_google_context)
-    gcal_session_id = get_google_session_id(request)
+    cache_key = _context_cache_key_for_session_mode(session_id, True)
     return await _run_with_interrupt(
         session_id,
         request_id,
@@ -1067,9 +785,9 @@ async def create_events_from_natural_text(body: NaturalText,
                                              effort,
                                              model_name=model_name,
                                              context_cache_key=cache_key,
-                                             context_session_id=gcal_session_id if use_google_context else None,
-                                             session_id=gcal_session_id,
-                                             is_google=use_google_context),
+                                             context_session_id=session_id,
+                                             session_id=session_id,
+                                             is_google=True),
     )
   except HTTPException:
     raise
@@ -1083,15 +801,12 @@ async def create_event_from_natural_text_compat(body: NaturalText,
                                                 request: Request,
                                                 response: Response):
   try:
-    session_id = _ensure_session_id(request, response)
+    session_id = require_google_session_id(request)
     request_id = _resolve_request_id(body.request_id)
     images = _validate_image_payload(body.images)
     effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
     model_name = _resolve_request_model(request, body.model)
-    use_google_context = is_google_mode_active(request)
-    cache_key = _context_cache_key_for_session_mode(session_id,
-                                                    use_google_context)
-    gcal_session_id = get_google_session_id(request)
+    cache_key = _context_cache_key_for_session_mode(session_id, True)
     created = await _run_with_interrupt(
         session_id,
         request_id,
@@ -1100,9 +815,9 @@ async def create_event_from_natural_text_compat(body: NaturalText,
                                              effort,
                                              model_name=model_name,
                                              context_cache_key=cache_key,
-                                             context_session_id=gcal_session_id if use_google_context else None,
-                                             session_id=gcal_session_id,
-                                             is_google=use_google_context),
+                                             context_session_id=session_id,
+                                             session_id=session_id,
+                                             is_google=True),
     )
     return created[0]
   except HTTPException:
@@ -1117,7 +832,7 @@ async def nlp_classify(body: NlpClassifyRequest,
                        request: Request,
                        response: Response):
   try:
-    session_id = _ensure_session_id(request, response)
+    session_id = require_google_session_id(request)
     request_id = _resolve_request_id(body.request_id)
     result = await _run_with_interrupt(
         session_id,
@@ -1134,15 +849,12 @@ async def nlp_classify(body: NlpClassifyRequest,
 @router.post("/api/nlp-preview")
 async def nlp_preview(body: NaturalText, request: Request, response: Response):
   try:
-    session_id = _ensure_session_id(request, response)
+    session_id = require_google_session_id(request)
     request_id = _resolve_request_id(body.request_id)
     images = _validate_image_payload(body.images)
     effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
     model_name = _resolve_request_model(request, body.model)
-    use_google_context = is_google_mode_active(request)
-    cache_key = _context_cache_key_for_session_mode(session_id,
-                                                    use_google_context)
-    gcal_session_id = get_google_session_id(request)
+    cache_key = _context_cache_key_for_session_mode(session_id, True)
     data = await _run_with_interrupt(
         session_id,
         request_id,
@@ -1151,9 +863,9 @@ async def nlp_preview(body: NaturalText, request: Request, response: Response):
                                               effort,
                                               model_name=model_name,
                                               context_cache_key=cache_key,
-                                              context_session_id=gcal_session_id if use_google_context else None,
+                                              context_session_id=session_id,
                                               context_confirmed=bool(body.context_confirmed),
-                                              is_google=use_google_context),
+                                              is_google=True),
     )
     if isinstance(data, dict):
       data["request_id"] = request_id
@@ -1167,15 +879,12 @@ async def nlp_preview(body: NaturalText, request: Request, response: Response):
 @router.post("/api/nlp-preview-stream")
 async def nlp_preview_stream(body: NaturalText, request: Request, response: Response):
   try:
-    session_id = _ensure_session_id(request, response)
+    session_id = require_google_session_id(request)
     request_id = _resolve_request_id(body.request_id)
     images = _validate_image_payload(body.images)
     effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
     model_name = _resolve_request_model(request, body.model)
-    use_google_context = is_google_mode_active(request)
-    cache_key = _context_cache_key_for_session_mode(session_id,
-                                                    use_google_context)
-    gcal_session_id = get_google_session_id(request)
+    cache_key = _context_cache_key_for_session_mode(session_id, True)
 
     async def event_generator():
       chunk_count = 0
@@ -1187,9 +896,9 @@ async def nlp_preview_stream(body: NaturalText, request: Request, response: Resp
             reasoning_effort=effort,
             model_name=model_name,
             context_cache_key=cache_key,
-            context_session_id=gcal_session_id if use_google_context else None,
+            context_session_id=session_id,
             context_confirmed=bool(body.context_confirmed),
-            is_google=use_google_context
+            is_google=True
         ):
           if await request.is_disconnected():
             break
@@ -1228,7 +937,7 @@ def nlp_apply_add(body: ApplyItems, request: Request):
     items = body.items or []
     if not items:
       raise HTTPException(status_code=400, detail="items is empty")
-    session_id = get_google_session_id(request)
+    session_id = require_google_session_id(request)
     return apply_add_items_core(items, session_id=session_id)
   except HTTPException:
     raise
@@ -1241,13 +950,11 @@ async def nlp_delete_preview(body: NaturalTextWithScope,
                              request: Request,
                              response: Response):
   try:
-    session_id = _ensure_session_id(request, response)
+    session_id = require_google_session_id(request)
     request_id = _resolve_request_id(body.request_id)
     scope = _parse_scope_dates(body.start_date, body.end_date, require=True)
     effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
     model_name = _resolve_request_model(request, body.model)
-    use_google_context = is_google_mode_active(request)
-    gcal_session_id = get_google_session_id(request)
     data = await _run_with_interrupt(
         session_id,
         request_id,
@@ -1255,9 +962,9 @@ async def nlp_delete_preview(body: NaturalTextWithScope,
                               scope=scope,
                               reasoning_effort=effort,
                               model_name=model_name,
-                              session_id=gcal_session_id if use_google_context else None,
+                              session_id=session_id,
                               context_confirmed=bool(body.context_confirmed),
-                              is_google=use_google_context),
+                              is_google=True),
     )
     if isinstance(data, dict):
       data["request_id"] = request_id
@@ -1271,10 +978,9 @@ async def nlp_delete_preview(body: NaturalTextWithScope,
 
 @router.post("/api/nlp-context/reset")
 def nlp_context_reset(request: Request, response: Response):
-  session_id = _ensure_session_id(request, response)
+  session_id = require_google_session_id(request)
   base_key = _context_cache_key_for_session(session_id)
   if base_key:
-    _clear_context_cache(f"{base_key}:local")
     _clear_context_cache(f"{base_key}:google")
   return {"ok": True}
 
@@ -1283,15 +989,14 @@ def nlp_context_reset(request: Request, response: Response):
 async def nlp_interrupt(body: InterruptRequest,
                         request: Request,
                         response: Response):
-  session_id = _ensure_session_id(request, response)
+  session_id = require_google_session_id(request)
   cancelled = await _cancel_inflight(session_id, body.request_id)
   return {"ok": True, "cancelled": cancelled}
 
 
 @router.post("/api/delete-by-ids", response_model=DeleteResult)
 def delete_by_ids(body: IdsPayload):
-  deleted = delete_events_by_ids(body.ids or [])
-  return DeleteResult(ok=True, deleted_ids=deleted, count=len(deleted))
+  raise HTTPException(status_code=410, detail="로컬 모드가 제거되었습니다.")
 
 
 @router.post("/api/nlp-delete-events", response_model=DeleteResult)
@@ -1299,13 +1004,11 @@ async def delete_events_from_natural_text(body: NaturalTextWithScope,
                                           request: Request,
                                           response: Response):
   try:
-    session_id = _ensure_session_id(request, response)
+    session_id = require_google_session_id(request)
     request_id = _resolve_request_id(body.request_id)
     scope = _parse_scope_dates(body.start_date, body.end_date, require=True)
     effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
     model_name = _resolve_request_model(request, body.model)
-    use_google_context = is_google_mode_active(request)
-    gcal_session_id = get_google_session_id(request)
     ids_or_perm = await _run_with_interrupt(
         session_id,
         request_id,
@@ -1313,33 +1016,29 @@ async def delete_events_from_natural_text(body: NaturalTextWithScope,
                                             scope=scope,
                                             reasoning_effort=effort,
                                             model_name=model_name,
-                                            session_id=gcal_session_id if use_google_context else None,
+                                            session_id=session_id,
                                             context_confirmed=bool(body.context_confirmed),
-                                            is_google=use_google_context),
+                                            is_google=True),
     )
     if isinstance(ids_or_perm, dict) and ids_or_perm.get("permission_required"):
       return ids_or_perm
     ids = ids_or_perm if isinstance(ids_or_perm, list) else []
 
-    if use_google_context and gcal_session_id:
-      deleted: List[Union[int, str]] = []
-      for raw_id in ids:
-        event_id = str(raw_id)
-        if not event_id:
-          continue
-        try:
-          gcal_delete_event(event_id, session_id=gcal_session_id)
-          deleted.append(event_id)
-        except HTTPException:
-          raise
-        except Exception as exc:
-          raise HTTPException(status_code=502,
-                              detail=f"Google event 삭제 실패: {exc}") from exc
-      _clear_google_cache(gcal_session_id)
-      _emit_google_sse(gcal_session_id, "google_sync", {})
-      return DeleteResult(ok=True, deleted_ids=deleted, count=len(deleted))
-
-    deleted = delete_events_by_ids([int(x) for x in ids if isinstance(x, int)])
+    deleted: List[Union[int, str]] = []
+    for raw_id in ids:
+      event_id = str(raw_id)
+      if not event_id:
+        continue
+      try:
+        gcal_delete_event(event_id, session_id=session_id)
+        deleted.append(event_id)
+      except HTTPException:
+        raise
+      except Exception as exc:
+        raise HTTPException(status_code=502,
+                            detail=f"Google event 삭제 실패: {exc}") from exc
+    _clear_google_cache(session_id)
+    _emit_google_sse(session_id, "google_sync", {})
     return DeleteResult(ok=True, deleted_ids=deleted, count=len(deleted))
   except HTTPException:
     raise
@@ -1347,52 +1046,31 @@ async def delete_events_from_natural_text(body: NaturalTextWithScope,
     raise HTTPException(status_code=502, detail=f"Delete NLP error: {str(e)}")
 
 
-def build_header_actions(request: Request, has_token: bool) -> str:
-  admin = is_admin(request)
-  token = has_token
-
+def build_header_actions(has_token: bool) -> str:
   parts: List[str] = []
-
-  if admin:
-    parts.append('<a class="header-btn" href="/admin/exit">Admin 해제</a>')
-    return "\n".join(parts)
-
-  if token:
-    return "\n".join(parts)
-
-  # 토큰 없음(이 경우는 보통 /calendar 접근이 막히지만, 혹시 ENABLE_GCAL=0 등)
-  if ENABLE_GCAL:
+  if not has_token:
     parts.append(
         '<a class="header-btn" href="/auth/google/login">Google 로그인</a>')
-  parts.append('<a class="header-btn" href="/admin">Admin</a>')
   return "\n".join(parts)
 
 
 @router.get("/", response_class=HTMLResponse)
 def start_page(request: Request):
-  # Redirect to calendar only when a login token is present.
   if load_gcal_token_for_request(request) is not None:
     return RedirectResponse(_frontend_url("/calendar"))
-
-  # 그 외: 시작 페이지
-  return START_HTML
+  return RedirectResponse(_frontend_url("/login"))
 
 
 @router.get("/calendar", response_class=HTMLResponse)
 def calendar_page(request: Request):
-  # 접근 조건: admin or (gcal 비활성) or (token 있음)
-  if not is_admin(request) and ENABLE_GCAL and load_gcal_token_for_request(
-      request) is None:
-    return RedirectResponse(_frontend_url("/"))
+  if load_gcal_token_for_request(request) is None:
+    return RedirectResponse(_frontend_url("/login"))
 
   token_present = load_gcal_token_for_request(request) is not None
-  admin_mode = is_admin(request)
-  actions_html = build_header_actions(request, token_present)
+  actions_html = build_header_actions(token_present)
   context = {
-      "admin": admin_mode,
       "google_linked": token_present,
-      "mode": "admin"
-      if admin_mode else ("google" if token_present and ENABLE_GCAL else "local"),
+      "mode": "google",
   }
   html = CALENDAR_HTML_TEMPLATE.replace("__HEADER_ACTIONS__", actions_html)
   context_json = json.dumps(context, ensure_ascii=False)
@@ -1434,9 +1112,8 @@ def calendar_page(request: Request):
 
 @router.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request):
-  if not is_admin(request) and ENABLE_GCAL and load_gcal_token_for_request(
-      request) is None:
-    return RedirectResponse(_frontend_url("/"))
+  if load_gcal_token_for_request(request) is None:
+    return RedirectResponse(_frontend_url("/login"))
   return HTMLResponse(SETTINGS_HTML)
 
 

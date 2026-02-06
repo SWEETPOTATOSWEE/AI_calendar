@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   applyNlpAdd,
   classifyNlp,
-  deleteEventsByIds,
   deleteGoogleEventById,
   interruptNlp,
   previewNlp,
@@ -704,13 +703,8 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
           setErrorByMode((prev) => ({ ...prev, [mode]: "삭제할 항목을 선택해주세요." }));
           return;
         }
-        const numericIds = ids.filter((id) => typeof id === "number") as number[];
-        const stringIds = ids.filter((id) => typeof id === "string") as string[];
-        if (numericIds.length) {
-          await deleteEventsByIds(numericIds);
-        }
-        for (const id of stringIds) {
-          await deleteGoogleEventById(id);
+        for (const id of ids) {
+          await deleteGoogleEventById(String(id));
         }
         options?.onDeleteApplied?.(ids);
       }
