@@ -40,6 +40,10 @@ GCAL_WATCH_STATE_PATH = pathlib.Path(
     os.getenv("GCAL_WATCH_STATE_PATH", str(GOOGLE_TOKEN_DIR / "gcal_watch_state.json")))
 GCAL_WATCH_LEEWAY_SECONDS = int(
     os.getenv("GCAL_WATCH_LEEWAY_SECONDS", "3600"))
+GCAL_RANGE_CACHE_TTL_SECONDS = int(
+    os.getenv("GCAL_RANGE_CACHE_TTL_SECONDS", "45"))
+GCAL_TASKS_CACHE_TTL_SECONDS = int(
+    os.getenv("GCAL_TASKS_CACHE_TTL_SECONDS", "30"))
 SESSION_COOKIE_NAME = "gcal_session"
 OAUTH_STATE_COOKIE_NAME = "gcal_oauth_state"
 SESSION_COOKIE_MAX_AGE_SECONDS = int(
@@ -88,7 +92,7 @@ RECURRENCE_OCCURRENCE_SCALE = 10000
 MAX_IMAGE_ATTACHMENTS = 5
 MAX_IMAGE_DATA_URL_CHARS = 4_500_000  # 약 3.4MB base64
 IMAGE_TOO_LARGE_MESSAGE = "첨부한 이미지가 너무 큽니다. 이미지는 약 3MB 이하로 축소해 주세요."
-ALLOWED_REASONING_EFFORTS = {"low", "medium", "high"}
+ALLOWED_REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
 ALLOWED_ASSISTANT_MODELS = {"nano": "gpt-5-nano", "mini": "gpt-5-mini"}
 DEFAULT_TEXT_MODEL = "gpt-5-nano"
 DEFAULT_MULTIMODAL_MODEL = "gpt-5-mini"

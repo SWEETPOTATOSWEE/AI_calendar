@@ -14,6 +14,18 @@ from .config import (
 )
 from .utils import _normalize_exception_date
 
+_RRULE_FREQS = {"DAILY", "WEEKLY", "MONTHLY", "YEARLY"}
+_RRULE_WEEKDAY_TO_INDEX = {
+    "MO": 0,
+    "TU": 1,
+    "WE": 2,
+    "TH": 3,
+    "FR": 4,
+    "SA": 5,
+    "SU": 6,
+}
+_RRULE_INDEX_TO_WEEKDAY = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
+
 
 def _normalize_int_list(value: Any,
                         min_val: int,
@@ -43,7 +55,7 @@ def _normalize_recurrence_dict(recurrence: Dict[str, Any]) -> Optional[Dict[str,
     if not isinstance(recurrence, dict):
         return None
     freq = (recurrence.get("freq") or "").strip().upper()
-    if freq not in {"DAILY", "WEEKLY", "MONTHLY", "YEARLY"}:
+    if freq not in _RRULE_FREQS:
         return None
 
     interval_raw = recurrence.get("interval")
@@ -72,6 +84,9 @@ def _normalize_recurrence_dict(recurrence: Dict[str, Any]) -> Optional[Dict[str,
             bysetpos = None
 
     end_raw = recurrence.get("end")
+    # LLM may also use "end_date" as a shorthand for the until date
+    if end_raw is None:
+        end_raw = recurrence.get("end_date")
     end: Optional[Dict[str, Any]] = None
     if isinstance(end_raw, dict):
         until_raw = end_raw.get("until")
@@ -91,6 +106,25 @@ def _normalize_recurrence_dict(recurrence: Dict[str, Any]) -> Optional[Dict[str,
             count = None
         if until or count:
             end = {"until": until, "count": count}
+    elif isinstance(end_raw, str):
+        # LLM shorthand: "end": "2026-04-10" → treat as until date
+        stripped = end_raw.strip()
+        if stripped and ISO_DATE_RE.match(stripped):
+            end = {"until": stripped, "count": None}
+    elif isinstance(end_raw, (int, float)) and int(end_raw) > 0:
+        # LLM shorthand: "end": 10 → treat as count
+        end = {"until": None, "count": int(end_raw)}
+
+    # Also check top-level "count" if end is still unresolved
+    if end is None:
+        top_count = recurrence.get("count")
+        if top_count is not None:
+            try:
+                cv = int(top_count)
+                if cv > 0:
+                    end = {"until": None, "count": cv}
+            except Exception:
+                pass
 
     return {
         "freq": freq,
@@ -101,6 +135,242 @@ def _normalize_recurrence_dict(recurrence: Dict[str, Any]) -> Optional[Dict[str,
         "bymonth": bymonth or None,
         "end": end,
     }
+
+
+def _normalize_rrule_core(rrule: Any) -> Optional[str]:
+    if not isinstance(rrule, str):
+        return None
+    raw = rrule.strip()
+    if not raw:
+        return None
+    if raw.upper().startswith("RRULE:"):
+        raw = raw.split(":", 1)[1].strip()
+    if not raw:
+        return None
+
+    parts_raw = [part.strip() for part in raw.split(";") if part.strip()]
+    if not parts_raw:
+        return None
+
+    values: Dict[str, str] = {}
+    for part in parts_raw:
+        if "=" not in part:
+            return None
+        key, val = part.split("=", 1)
+        key = key.strip().upper()
+        val = val.strip().upper()
+        if not key or not val:
+            return None
+        values[key] = val
+
+    freq = values.get("FREQ")
+    if freq not in _RRULE_FREQS:
+        return None
+
+    interval_raw = values.get("INTERVAL")
+    if interval_raw is not None:
+        try:
+            interval = int(interval_raw)
+        except Exception:
+            return None
+        if interval <= 0:
+            return None
+        values["INTERVAL"] = str(interval)
+
+    count_raw = values.get("COUNT")
+    if count_raw is not None:
+        try:
+            count = int(count_raw)
+        except Exception:
+            return None
+        if count <= 0:
+            return None
+        values["COUNT"] = str(count)
+
+    until_raw = values.get("UNTIL")
+    if until_raw is not None:
+        until_clean = until_raw.strip().upper()
+        if not re.match(r"^\d{8}(T\d{6}Z?)?$", until_clean):
+            return None
+        values["UNTIL"] = until_clean
+
+    if "COUNT" in values and "UNTIL" in values:
+        return None
+
+    byday_raw = values.get("BYDAY")
+    if byday_raw is not None:
+        normalized_days: List[str] = []
+        for token in [tok.strip().upper() for tok in byday_raw.split(",") if tok.strip()]:
+            match = re.match(r"^([+-]?\d)?(MO|TU|WE|TH|FR|SA|SU)$", token)
+            if not match:
+                return None
+            pos_raw = match.group(1)
+            day_code = match.group(2)
+            if pos_raw is None:
+                normalized_days.append(day_code)
+                continue
+            try:
+                pos = int(pos_raw)
+            except Exception:
+                return None
+            if pos != -1 and not (1 <= pos <= 5):
+                return None
+            normalized_days.append(f"{pos}{day_code}")
+        if not normalized_days:
+            return None
+        values["BYDAY"] = ",".join(normalized_days)
+
+    bymonthday_raw = values.get("BYMONTHDAY")
+    if bymonthday_raw is not None:
+        days: List[str] = []
+        for token in [tok.strip() for tok in bymonthday_raw.split(",") if tok.strip()]:
+            try:
+                day = int(token)
+            except Exception:
+                return None
+            if day == 0 or day < -31 or day > 31:
+                return None
+            days.append(str(day))
+        if not days:
+            return None
+        values["BYMONTHDAY"] = ",".join(days)
+
+    bymonth_raw = values.get("BYMONTH")
+    if bymonth_raw is not None:
+        months: List[str] = []
+        for token in [tok.strip() for tok in bymonth_raw.split(",") if tok.strip()]:
+            try:
+                month = int(token)
+            except Exception:
+                return None
+            if not (1 <= month <= 12):
+                return None
+            months.append(str(month))
+        if not months:
+            return None
+        values["BYMONTH"] = ",".join(months)
+
+    bysetpos_raw = values.get("BYSETPOS")
+    if bysetpos_raw is not None:
+        try:
+            bysetpos = int(bysetpos_raw)
+        except Exception:
+            return None
+        if bysetpos == 0 or bysetpos < -366 or bysetpos > 366:
+            return None
+        values["BYSETPOS"] = str(bysetpos)
+
+    ordered = ["FREQ", "INTERVAL", "BYDAY", "BYMONTHDAY", "BYMONTH", "BYSETPOS",
+               "UNTIL", "COUNT", "WKST"]
+    parts: List[str] = []
+    for key in ordered:
+        if key in values:
+            parts.append(f"{key}={values[key]}")
+    for key in sorted(values.keys()):
+        if key not in ordered:
+            parts.append(f"{key}={values[key]}")
+    return ";".join(parts) if parts else None
+
+
+def _rrule_to_recurrence(rrule_core: str) -> Optional[Dict[str, Any]]:
+    normalized = _normalize_rrule_core(rrule_core)
+    if not normalized:
+        return None
+    values: Dict[str, str] = {}
+    for part in normalized.split(";"):
+        if "=" not in part:
+            continue
+        key, val = part.split("=", 1)
+        values[key] = val
+
+    freq = values.get("FREQ")
+    if freq not in _RRULE_FREQS:
+        return None
+
+    recurrence: Dict[str, Any] = {"freq": freq}
+    if "INTERVAL" in values:
+        try:
+            recurrence["interval"] = int(values["INTERVAL"])
+        except Exception:
+            recurrence["interval"] = 1
+
+    byday_raw = values.get("BYDAY")
+    if byday_raw:
+        weekdays: List[int] = []
+        seen_weekdays: set[int] = set()
+        setpos_values: set[int] = set()
+        for token in byday_raw.split(","):
+            match = re.match(r"^([+-]?\d)?(MO|TU|WE|TH|FR|SA|SU)$", token)
+            if not match:
+                continue
+            pos_raw = match.group(1)
+            day_code = match.group(2)
+            day_index = _RRULE_WEEKDAY_TO_INDEX.get(day_code)
+            if day_index is None:
+                continue
+            if day_index not in seen_weekdays:
+                weekdays.append(day_index)
+                seen_weekdays.add(day_index)
+            if pos_raw is not None:
+                try:
+                    pos = int(pos_raw)
+                except Exception:
+                    continue
+                setpos_values.add(pos)
+        if weekdays:
+            recurrence["byweekday"] = weekdays
+        if "BYSETPOS" not in values and len(setpos_values) == 1:
+            recurrence["bysetpos"] = next(iter(setpos_values))
+
+    bymonthday_raw = values.get("BYMONTHDAY")
+    if bymonthday_raw:
+        days: List[int] = []
+        for token in bymonthday_raw.split(","):
+            try:
+                days.append(int(token))
+            except Exception:
+                continue
+        if days:
+            recurrence["bymonthday"] = days
+
+    bymonth_raw = values.get("BYMONTH")
+    if bymonth_raw:
+        months: List[int] = []
+        for token in bymonth_raw.split(","):
+            try:
+                months.append(int(token))
+            except Exception:
+                continue
+        if months:
+            recurrence["bymonth"] = months
+
+    bysetpos_raw = values.get("BYSETPOS")
+    if bysetpos_raw:
+        try:
+            recurrence["bysetpos"] = int(bysetpos_raw)
+        except Exception:
+            pass
+
+    end: Dict[str, Any] = {}
+    until_raw = values.get("UNTIL")
+    if until_raw:
+        try:
+            until_date = datetime.strptime(until_raw[:8], "%Y%m%d").date()
+            end["until"] = until_date.isoformat()
+        except Exception:
+            pass
+    count_raw = values.get("COUNT")
+    if count_raw and "until" not in end:
+        try:
+            count = int(count_raw)
+            if count > 0:
+                end["count"] = count
+        except Exception:
+            pass
+    if end:
+        recurrence["end"] = end
+
+    return _normalize_recurrence_dict(recurrence)
 
 
 def _build_legacy_weekly_recurrence(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -130,6 +400,14 @@ def _resolve_recurrence(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if normalized:
             item["recurrence"] = normalized
             return normalized
+
+    rrule_core = _normalize_rrule_core(item.get("rrule"))
+    if rrule_core:
+        item["rrule"] = rrule_core
+        from_rrule = _rrule_to_recurrence(rrule_core)
+        if from_rrule:
+            item["recurrence"] = from_rrule
+            return from_rrule
 
     legacy = _build_legacy_weekly_recurrence(item)
     if legacy:
@@ -461,12 +739,18 @@ def _expand_recurring_item(item: Dict[str, Any],
 def _format_rrule_until(until_date: date,
                         time_str: Optional[str],
                         tz_name: str) -> str:
-    time_part = "T000000"
-    if isinstance(time_str, str) and re.match(r"^\d{2}:\d{2}$", time_str):
-        time_part = f"T{time_str.replace(':', '')}00"
+    """Format UNTIL value for RRULE.
+    Google Calendar requires UNTIL in UTC with Z suffix for timed events,
+    or YYYYMMDD for all-day events."""
     tzinfo = ZoneInfo(tz_name)
-    dt = datetime(until_date.year, until_date.month, until_date.day, 0, 0, tzinfo=tzinfo)
-    return dt.strftime(f"%Y%m%d{time_part}")
+    if isinstance(time_str, str) and re.match(r"^\d{2}:\d{2}$", time_str):
+        hh, mm = [int(x) for x in time_str.split(":")]
+        local_dt = datetime(until_date.year, until_date.month, until_date.day,
+                            hh, mm, 0, tzinfo=tzinfo)
+        utc_dt = local_dt.astimezone(ZoneInfo("UTC"))
+        return utc_dt.strftime("%Y%m%dT%H%M%SZ")
+    # All-day: use date-only format
+    return until_date.strftime("%Y%m%d")
 
 
 def _build_rrule_core(recurrence: Dict[str, Any],
@@ -474,7 +758,7 @@ def _build_rrule_core(recurrence: Dict[str, Any],
                       time_str: Optional[str],
                       tz_name: str) -> Optional[str]:
     freq = recurrence.get("freq")
-    if freq not in {"DAILY", "WEEKLY", "MONTHLY", "YEARLY"}:
+    if freq not in _RRULE_FREQS:
         return None
 
     parts = [f"FREQ={freq}"]
@@ -484,8 +768,7 @@ def _build_rrule_core(recurrence: Dict[str, Any],
 
     byweekday = recurrence.get("byweekday") or []
     if byweekday:
-        mapping = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
-        weekdays = [mapping[int(w)] for w in byweekday if 0 <= int(w) <= 6]
+        weekdays = [_RRULE_INDEX_TO_WEEKDAY[int(w)] for w in byweekday if 0 <= int(w) <= 6]
         if weekdays:
             parts.append("BYDAY=" + ",".join(weekdays))
 
@@ -535,6 +818,11 @@ def recurring_to_rrule(item: Dict[str, Any]) -> Optional[str]:
     """
     recurring item -> RRULE 문자열 (recurrence 기반)
     """
+    direct_rrule = _normalize_rrule_core(item.get("rrule"))
+    if direct_rrule:
+        item["rrule"] = direct_rrule
+        return direct_rrule
+
     recurrence = _resolve_recurrence(item)
     if not recurrence:
         return None

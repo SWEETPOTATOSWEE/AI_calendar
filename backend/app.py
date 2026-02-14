@@ -38,5 +38,5 @@ app.include_router(router)
 
 if FRONTEND_STATIC_DIR and FRONTEND_STATIC_DIR.exists():
     app.mount("/",
-              StaticFiles(directory=str(FRONTEND_STATIC_DIR), html=False),
+              StaticFiles(directory=str(FRONTEND_STATIC_DIR), html=True),
               name="frontend-static")

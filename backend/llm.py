@@ -929,7 +929,7 @@ async def _invoke_event_parser_stream(kind: str,
         if extracted is not None and len(extracted) > len(prev_extracted_content):
           content_delta = extracted[len(prev_extracted_content):]
           prev_extracted_content = extracted
-          print(f"[STREAM DEBUG CACHED] content_delta: {content_delta[:50]}...")
+          _log_debug(f"[STREAM DEBUG CACHED] content_delta: {content_delta[:50]}...")
           yield {"type": "content_delta", "content_delta": content_delta}
     
     latency_ms = (time.perf_counter() - started) * 1000.0
@@ -972,7 +972,7 @@ async def _invoke_event_parser_stream(kind: str,
       if extracted is not None and len(extracted) > len(prev_extracted_content):
         content_delta = extracted[len(prev_extracted_content):]
         prev_extracted_content = extracted
-        print(f"[STREAM DEBUG] content_delta: {content_delta[:50]}...")
+        _log_debug(f"[STREAM DEBUG] content_delta: {content_delta[:50]}...")
         yield {"type": "content_delta", "content_delta": content_delta}
 
   latency_ms = (time.perf_counter() - started) * 1000.0
@@ -1038,7 +1038,7 @@ async def _invoke_event_parser_stream(kind: str,
       if extracted is not None and len(extracted) > len(prev_extracted_content):
         content_delta = extracted[len(prev_extracted_content):]
         prev_extracted_content = extracted
-        print(f"[STREAM DEBUG 2ND] content_delta: {content_delta[:50]}...")
+        _log_debug(f"[STREAM DEBUG 2ND] content_delta: {content_delta[:50]}...")
         yield {"type": "content_delta", "content_delta": content_delta}
   
   latency_ms = (time.perf_counter() - started) * 1000.0

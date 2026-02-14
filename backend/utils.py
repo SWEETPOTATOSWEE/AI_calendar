@@ -95,7 +95,12 @@ def _normalize_end_datetime(raw_end: Any) -> Optional[str]:
         next_day = base_date + timedelta(days=1)
         return next_day.strftime("%Y-%m-%dT00:00")
     if ISO_DATE_RE.match(candidate):
-        return candidate + "T23:59"
+        try:
+            base_date = datetime.strptime(candidate, "%Y-%m-%d").date()
+            next_day = base_date + timedelta(days=1)
+            return next_day.strftime("%Y-%m-%dT00:00")
+        except Exception:
+            return None
     normalized = _normalize_datetime_minute(candidate)
     if normalized:
         return normalized
@@ -125,6 +130,7 @@ def is_all_day_span(start_iso: Optional[str],
     start_date, start_time = _split_iso_date_time(start_iso)
     if not start_date:
         return False
+    # All-day start must be 00:00 (or None in some contexts)
     if start_time not in (None, "00:00"):
         return False
 
@@ -138,11 +144,13 @@ def is_all_day_span(start_iso: Optional[str],
     if end_date < start_date:
         return False
 
-    if end_time in (None, "23:59"):
-        return True
-
+    # Standard "exclusive" all-day end is 00:00 of some day > start_date
     if end_time == "00:00":
-        return end_date >= start_date
+        return end_date > start_date
+
+    # Legacy inclusive end 23:59 still recognized as all-day
+    if end_time == "23:59":
+        return True
 
     return False
 
@@ -180,24 +188,20 @@ def _compute_all_day_bounds(start_iso: str,
     if not start_date:
         start_date = datetime.now(SEOUL).date()
 
-    end_exclusive: date
-    if end_iso:
-        end_date, end_time = _split_iso_date_time(end_iso)
-        if not end_date:
-            end_exclusive = start_date + timedelta(days=1)
-        else:
-            if end_time == "00:00":
-                if end_date <= start_date:
-                    end_exclusive = start_date + timedelta(days=1)
-                else:
-                    end_exclusive = end_date + timedelta(days=1)
-            else:
-                end_exclusive = end_date + timedelta(days=1)
-    else:
-        end_exclusive = start_date + timedelta(days=1)
+    if not end_iso:
+        return (start_date, start_date + timedelta(days=1))
 
-    if end_exclusive <= start_date:
-        end_exclusive = start_date + timedelta(days=1)
+    end_date, end_time = _split_iso_date_time(end_iso)
+    if not end_date:
+        return (start_date, start_date + timedelta(days=1))
+
+    # Google Calendar expects end date to be exclusive.
+    # If end_time is 00:00, it's already exclusive (common in FullCalendar).
+    # If end_time is 23:59 or something else, it's inclusive, so we add 1 day.
+    if end_time == "00:00" and end_date > start_date:
+        end_exclusive = end_date
+    else:
+        end_exclusive = end_date + timedelta(days=1)
 
     return (start_date, end_exclusive)
 
@@ -209,7 +213,7 @@ def _normalize_single_event_times(
     """
     start_raw/end_raw: raw strings from LLM or client.
     Returns (start_iso, end_iso, all_day_flag).
-    - Accepts date-only strings and upgrades them to 00:00 / 23:59.
+    - Accepts date-only strings and upgrades them to 00:00 (start) / property next day 00:00 (end).
     - Handles end at 24:00 by rolling to next day 00:00.
     """
     start_iso: Optional[str] = None
@@ -238,6 +242,8 @@ def _coerce_patch_start(value: Any) -> Optional[str]:
     candidate = value.strip()
     if not candidate:
         return None
+    if ISO_DATE_RE.match(candidate):
+        return candidate + "T00:00"
     if not ISO_DATETIME_RE.match(candidate):
         raise HTTPException(status_code=400, detail="시작 시각 형식이 잘못되었습니다.")
     return candidate

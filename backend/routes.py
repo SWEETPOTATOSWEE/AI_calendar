@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import urllib
+import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Union
+from threading import Lock
+from typing import Any, Dict, List, Optional
 
 import requests
 from fastapi import APIRouter, HTTPException, Query, Request, Response
@@ -23,6 +26,7 @@ from .config import (
     GOOGLE_REDIRECT_URI,
     GCAL_SCOPES,
     API_BASE,
+    LLM_DEBUG,
 )
 from .models import (
     Event,
@@ -30,15 +34,11 @@ from .models import (
     EventUpdate,
     RecurringEventUpdate,
     RecurringExceptionPayload,
-    NaturalText,
-    NlpClassifyRequest,
-    NaturalTextWithScope,
-    ApplyItems,
     IdsPayload,
     DeleteResult,
-    InterruptRequest,
     TaskCreate,
     TaskUpdate,
+    AgentRunRequest,
 )
 from .frontend import (
     CALENDAR_HTML_TEMPLATE,
@@ -55,12 +55,11 @@ from .utils import (
     _clean_optional_str,
     is_all_day_span,
     _normalize_color_id,
-    _validate_image_payload,
 )
 from .state import (
     store_event,
 )
-from .recurrence import _resolve_recurrence, _normalize_recurrence_dict
+from .recurrence import _normalize_recurrence_dict, _normalize_rrule_core
 from .gcal import (
     is_gcal_configured,
     load_gcal_token_for_request,
@@ -75,12 +74,20 @@ from .gcal import (
     ensure_gcal_watches,
     fetch_google_events_between,
     fetch_google_events_between_with_options,
+    fetch_google_tasks,
+    get_google_revision_state,
     fetch_recent_google_events,
     refresh_google_cache_for_calendar,
     gcal_create_single_event,
     gcal_update_event,
     gcal_delete_event,
     gcal_create_recurring_event,
+    upsert_google_task_cache,
+    remove_google_task_cache,
+    emit_google_task_delta,
+    emit_google_sync,
+    sync_google_event_after_write,
+    sync_google_event_after_delete,
     _gcal_watch_enabled,
     _load_gcal_watch_state,
     _save_gcal_watch_state,
@@ -91,8 +98,6 @@ from .gcal import (
     _register_google_sse,
     _unregister_google_sse,
     _format_sse_event,
-    _split_gcal_event_key,
-    _request_base_url,
     _resolve_google_redirect_uri,
     _get_session_id,
     _new_session_id,
@@ -102,46 +107,193 @@ from .gcal import (
     _set_cookie,
     _delete_cookie,
     _clear_google_cache,
-    _context_cache_key_for_session,
-    _context_cache_key_for_session_mode,
-    _clear_context_cache,
     _frontend_url,
 )
-from .nlp import (
-    create_events_from_natural_text_core,
-    preview_events_from_natural_text_core,
-    _post_process_nlp_preview_result,
-    apply_add_items_core,
-    create_delete_ids_from_natural_text,
-    delete_preview_groups,
-)
-from .llm import (
-    _resolve_request_id,
-    _resolve_request_reasoning_effort,
-    _resolve_request_model,
-    _run_with_interrupt,
-    _cancel_inflight,
-    _invoke_event_parser_stream,
-    classify_nlp_request,
-)
+from .agent import run_full_agent
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+_AGENT_DEBUG_STORE: Dict[str, Dict[str, Any]] = {}
+_AGENT_DEBUG_LOCK = Lock()
+_AGENT_MUTATION_INTENTS = {
+    "calendar.create_event",
+    "calendar.update_event",
+    "calendar.cancel_event",
+    "task.create_task",
+    "task.update_task",
+    "task.cancel_task",
+}
+
+
+def _prewarm_agent_context_cache(session_id: str) -> None:
+  if not session_id:
+    return
+  today = datetime.now(timezone.utc).date()
+  range_start = today - timedelta(days=7)
+  range_end = today + timedelta(days=30)
+  try:
+    fetch_google_events_between(range_start, range_end, session_id, force_refresh=True)
+  except Exception as exc:
+    _log_debug(f"[GCAL] prewarm events failed: {exc}")
+  try:
+    fetch_google_tasks(session_id, force_refresh=True)
+  except Exception as exc:
+    _log_debug(f"[GCAL] prewarm tasks failed: {exc}")
+
+
+def _wrap_read_with_revision(session_id: str,
+                             items: List[Dict[str, Any]]) -> Dict[str, Any]:
+  revisions = get_google_revision_state(session_id)
+  return {
+      "items": items,
+      "revision": revisions.get("revision", 0),
+      "events_revision": revisions.get("events_revision", 0),
+      "tasks_revision": revisions.get("tasks_revision", 0),
+  }
+
+
+def _attach_agent_revision(result: Dict[str, Any], session_id: str) -> Dict[str, Any]:
+  if not isinstance(result, dict):
+    return result
+  revisions = get_google_revision_state(session_id)
+  output = dict(result)
+  output["revision"] = revisions.get("revision", 0)
+  mutation_applied = False
+  step_results = output.get("results")
+  if isinstance(step_results, list):
+    for step in step_results:
+      if not isinstance(step, dict):
+        continue
+      if not bool(step.get("ok")):
+        continue
+      intent = str(step.get("intent") or "").strip()
+      if intent in _AGENT_MUTATION_INTENTS:
+        mutation_applied = True
+        break
+  if mutation_applied:
+    output["new_revision"] = revisions.get("revision", 0)
+  return output
+
+
+def _agent_debug_start(session_id: str, input_as_text: str) -> str:
+  if not LLM_DEBUG:
+    return ""
+  run_id = uuid.uuid4().hex
+  now = datetime.now(timezone.utc).isoformat()
+  snapshot = {
+      "enabled": bool(LLM_DEBUG),
+      "run_id": run_id,
+      "status": "running",
+      "current_node": "input_gate",
+      "branch": None,
+      "node_timeline": [{
+          "node": "input_gate",
+          "status": "running",
+          "at": now,
+      }],
+      "llm_outputs": [],
+      "node_outputs": {},
+      "error": None,
+      "started_at": now,
+      "updated_at": now,
+      "input_preview": (input_as_text or "")[:300],
+  }
+  with _AGENT_DEBUG_LOCK:
+    _AGENT_DEBUG_STORE[session_id] = snapshot
+  return run_id
+
+
+def _agent_debug_update(session_id: str, run_id: str,
+                        update: Dict[str, Any]) -> None:
+  if not LLM_DEBUG or not run_id:
+    return
+  with _AGENT_DEBUG_LOCK:
+    state = _AGENT_DEBUG_STORE.get(session_id)
+    if not isinstance(state, dict):
+      return
+    if state.get("run_id") != run_id:
+      return
+    debug_obj = update.get("debug")
+    if isinstance(debug_obj, dict):
+      if isinstance(debug_obj.get("enabled"), bool):
+        state["enabled"] = bool(debug_obj.get("enabled"))
+      current_node = debug_obj.get("current_node")
+      if isinstance(current_node, str) and current_node.strip():
+        state["current_node"] = current_node.strip()
+    node_timeline = update.get("node_timeline")
+    if isinstance(node_timeline, list):
+      state["node_timeline"] = copy.deepcopy(node_timeline)
+    llm_outputs = update.get("llm_outputs")
+    if isinstance(llm_outputs, list):
+      state["llm_outputs"] = copy.deepcopy(llm_outputs)
+    node_outputs = update.get("node_outputs")
+    if isinstance(node_outputs, dict):
+      state["node_outputs"] = copy.deepcopy(node_outputs)
+    branch = update.get("branch")
+    if isinstance(branch, str) and branch.strip():
+      state["branch"] = branch.strip()
+    state["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+
+def _agent_debug_finish(session_id: str, run_id: str, status: str,
+                        trace: Optional[Dict[str, Any]] = None,
+                        error: Optional[str] = None) -> None:
+  if not LLM_DEBUG or not run_id:
+    return
+  with _AGENT_DEBUG_LOCK:
+    state = _AGENT_DEBUG_STORE.get(session_id)
+    if not isinstance(state, dict):
+      return
+    if state.get("run_id") != run_id:
+      return
+    if isinstance(trace, dict):
+      debug_obj = trace.get("debug")
+      if isinstance(debug_obj, dict):
+        current_node = debug_obj.get("current_node")
+        if isinstance(current_node, str) and current_node.strip():
+          state["current_node"] = current_node.strip()
+      node_timeline = trace.get("node_timeline")
+      if isinstance(node_timeline, list):
+        state["node_timeline"] = copy.deepcopy(node_timeline)
+      llm_outputs = trace.get("llm_outputs")
+      if isinstance(llm_outputs, list):
+        state["llm_outputs"] = copy.deepcopy(llm_outputs)
+      node_outputs = trace.get("node_outputs")
+      if isinstance(node_outputs, dict):
+        state["node_outputs"] = copy.deepcopy(node_outputs)
+      branch = trace.get("branch")
+      if isinstance(branch, str) and branch.strip():
+        state["branch"] = branch.strip()
+    state["status"] = status
+    state["error"] = error
+    state["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+
+def _agent_debug_get(session_id: Optional[str]) -> Dict[str, Any]:
+  if not LLM_DEBUG:
+    return {"enabled": False}
+  if not session_id:
+    return {"enabled": bool(LLM_DEBUG)}
+  with _AGENT_DEBUG_LOCK:
+    state = _AGENT_DEBUG_STORE.get(session_id)
+    if not isinstance(state, dict):
+      return {"enabled": bool(LLM_DEBUG)}
+    return copy.deepcopy(state)
 
 # -------------------------
-# Google OAuth 엔드포인트
+# Google OAuth endpoints
 # -------------------------
 @router.get("/auth/google/login")
 @router.get("/auth/google/login/")
 def google_login(request: Request):
   _log_debug("[GCAL] login start")
   redirect_uri = _resolve_google_redirect_uri(request)
-  print(f"[DEBUG] Google OAuth redirect_uri: {redirect_uri}")
+  _log_debug(f"[DEBUG] Google OAuth redirect_uri: {redirect_uri}")
   if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and redirect_uri):
     raise HTTPException(
         status_code=500,
         detail=
-        "Google OAuth 환경변수(GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI)가 설정되지 않았습니다.",
+        "Google OAuth environment variables (GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI) are not configured.",
     )
 
   session_id = _get_session_id(request) or _new_session_id()
@@ -193,10 +345,10 @@ def google_callback(request: Request):
     return JSONResponse({"ok": False, "error": error})
 
   if not code:
-    raise HTTPException(status_code=400, detail="code가 없습니다.")
+    raise HTTPException(status_code=400, detail="Missing code.")
   oauth_entry = _pop_oauth_state(state)
   if not state or (expected_state and state != expected_state and not oauth_entry):
-    raise HTTPException(status_code=400, detail="state 검증에 실패했습니다.")
+    raise HTTPException(status_code=400, detail="State verification failed.")
 
   redirect_uri = (
       oauth_entry.get("redirect_uri") if isinstance(oauth_entry, dict) else None)
@@ -205,7 +357,7 @@ def google_callback(request: Request):
     raise HTTPException(
         status_code=500,
         detail=
-        "Google OAuth 환경변수(GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI)가 설정되지 않았습니다.",
+        "Google OAuth environment variables (GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI) are not configured.",
     )
 
   token_endpoint = "https://oauth2.googleapis.com/token"
@@ -221,14 +373,14 @@ def google_callback(request: Request):
   if not resp.ok:
     _log_debug(f"[GCAL] token exchange failed: {resp.status_code} {resp.text}")
     raise HTTPException(status_code=500,
-                        detail=f"토큰 교환 실패: {resp.status_code} {resp.text}")
+                        detail=f"Token exchange failed: {resp.status_code} {resp.text}")
 
   stored_session_id = (
       oauth_entry.get("session_id")
       if isinstance(oauth_entry, dict) else None)
   session_id = _get_session_id(request) or stored_session_id
   if not session_id:
-    raise HTTPException(status_code=400, detail="세션이 없습니다.")
+    raise HTTPException(status_code=400, detail="Session is missing.")
 
   token_json = resp.json()
   access_token = token_json.get("access_token")
@@ -262,8 +414,9 @@ def google_callback(request: Request):
   _log_debug("[GCAL] token exchange success")
   if _gcal_watch_enabled():
     ensure_gcal_watches(session_id)
+  _prewarm_agent_context_cache(session_id)
 
-  # ✅ 성공 시 달력으로 이동
+  # On success, redirect to calendar page
   resp = RedirectResponse(_frontend_url("/calendar"))
   _set_cookie(resp,
               SESSION_COOKIE_NAME,
@@ -333,42 +486,141 @@ def google_webhook(request: Request):
     return JSONResponse({"ok": True})
 
   refresh_google_cache_for_calendar(session_id, calendar_id)
-  _emit_google_sse(session_id, "google_sync", {"calendar_id": calendar_id})
+  emit_google_sync(session_id,
+                   resource="events",
+                   bump_revision=True,
+                   payload={"calendar_id": calendar_id})
   return JSONResponse({"ok": True})
 
 
-# 이전 webhook URL 호환성을 위한 임시 엔드포인트 (자동 만료될 때까지)
+# Temporary webhook URL compatibility endpoint (auto-expire later)
 @router.post("/webhook/google")
 def google_webhook_legacy(request: Request):
-  """이전 URL로 등록된 watch를 위한 임시 엔드포인트. 24시간 후 자동 만료됨."""
-  # 단순히 200 OK를 반환하여 Google 서버 에러 방지
+  """Temporary compatibility endpoint for old watch URL registrations."""
+  # Return 200 OK to avoid repeated webhook retries from Google
   return JSONResponse({"ok": True, "deprecated": True})
+
+
+GOOGLE_DELTA_BATCH_WINDOW_SECONDS = 3.0
+
+
+def _extract_google_delta_key(payload: Dict[str, Any]) -> Optional[str]:
+  if not isinstance(payload, dict):
+    return None
+  event_id_raw = payload.get("event_id")
+  calendar_id_raw = payload.get("calendar_id")
+  event = payload.get("event")
+  if isinstance(event, dict):
+    if event_id_raw is None:
+      event_id_raw = event.get("id") or event.get("google_event_id")
+    if calendar_id_raw is None:
+      calendar_id_raw = event.get("calendar_id")
+  event_id = str(event_id_raw or "").strip()
+  if not event_id:
+    return None
+  calendar_id = str(calendar_id_raw or "").strip()
+  return f"{calendar_id}::{event_id}" if calendar_id else event_id
+
+
+def _coalesce_google_delta_batch(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+  order: List[str] = []
+  latest_by_key: Dict[str, Dict[str, Any]] = {}
+  passthrough: List[Dict[str, Any]] = []
+  for raw in items:
+    if not isinstance(raw, dict):
+      continue
+    payload = {k: v for k, v in raw.items() if k != "type"}
+    action = str(payload.get("action") or "").strip().lower()
+    if action not in {"upsert", "delete"}:
+      passthrough.append(payload)
+      continue
+    key = _extract_google_delta_key(payload)
+    if not key:
+      passthrough.append(payload)
+      continue
+    if key not in latest_by_key:
+      order.append(key)
+    latest_by_key[key] = payload
+  coalesced = [latest_by_key[key] for key in order if key in latest_by_key]
+  coalesced.extend(passthrough)
+  return coalesced
 
 
 @router.get("/api/google/stream")
 async def google_stream(request: Request):
   session_id = get_google_session_id(request)
   if not session_id:
-    raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
+    raise HTTPException(status_code=401, detail="Google login is required.")
 
   key, queue = _register_google_sse(session_id)
 
   async def event_generator():
+    pending_payload: Optional[Dict[str, Any]] = None
     try:
       yield _format_sse_event("ready", {})
       while True:
         if await request.is_disconnected():
           break
         try:
-          payload = await asyncio.wait_for(queue.get(), timeout=20)
-          event_type = payload.get("type") if isinstance(payload, dict) else "message"
-          yield _format_sse_event(event_type or "message", payload or {})
+          if pending_payload is not None:
+            payload = pending_payload
+            pending_payload = None
+          else:
+            payload = await asyncio.wait_for(queue.get(), timeout=20)
         except asyncio.TimeoutError:
           yield _format_sse_event("ping", {})
+          continue
+        if not isinstance(payload, dict):
+          yield _format_sse_event("message", {})
+          continue
+        event_type = str(payload.get("type") or "message")
+        if event_type != "google_delta":
+          yield _format_sse_event(event_type, payload)
+          continue
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + GOOGLE_DELTA_BATCH_WINDOW_SECONDS
+        batch_items: List[Dict[str, Any]] = [payload]
+        while True:
+          remaining = deadline - loop.time()
+          if remaining <= 0:
+            break
+          try:
+            next_payload = await asyncio.wait_for(queue.get(), timeout=remaining)
+          except asyncio.TimeoutError:
+            break
+          if not isinstance(next_payload, dict):
+            continue
+          next_type = str(next_payload.get("type") or "message")
+          if next_type != "google_delta":
+            pending_payload = next_payload
+            break
+          batch_items.append(next_payload)
+
+        coalesced = _coalesce_google_delta_batch(batch_items)
+        if len(coalesced) == 1:
+          yield _format_sse_event("google_delta", {
+              "type": "google_delta",
+              **coalesced[0],
+          })
+        elif coalesced:
+          yield _format_sse_event("google_delta_batch", {
+              "type": "google_delta_batch",
+              "events": coalesced,
+              "count": len(coalesced),
+          })
     finally:
       _unregister_google_sse(key, queue)
 
-  return StreamingResponse(event_generator(), media_type="text/event-stream")
+  return StreamingResponse(
+      event_generator(),
+      media_type="text/event-stream",
+      headers={
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+          "X-Accel-Buffering": "no",
+      },
+  )
 
 
 # -------------------------
@@ -398,7 +650,7 @@ def logout(request: Request):
 
 
 # -------------------------
-# API 엔드포인트
+# API endpoints
 # -------------------------
 @router.get("/api/events")
 def list_events(request: Request,
@@ -410,7 +662,8 @@ def list_events(request: Request,
                              require=True,
                              max_days=3650,
                              label="조회")
-  return fetch_google_events_between(scope[0], scope[1], session_id)
+  items = fetch_google_events_between(scope[0], scope[1], session_id)
+  return _wrap_read_with_revision(session_id, items)
 
 
 def _format_recent_google_event(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -435,12 +688,12 @@ def list_recent_events(request: Request):
   try:
     data = fetch_recent_google_events(session_id)
     formatted = [_format_recent_google_event(item) for item in data]
-    return formatted[:200]
+    return _wrap_read_with_revision(session_id, formatted[:200])
   except HTTPException:
     raise
   except Exception as exc:
     raise HTTPException(status_code=502,
-                        detail=f"Google recent events 실패: {exc}") from exc
+                        detail=f"Google recent events fetch failed: {exc}") from exc
 
 
 @router.get("/api/google/events")
@@ -458,27 +711,28 @@ def google_events(request: Request,
                              label="조회")
   session_id = get_google_session_id(request)
   if not session_id:
-    raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
+    raise HTTPException(status_code=401, detail="Google login is required.")
   if query or calendar_id or all_day is not None or (isinstance(limit, int) and limit > 0):
-    return fetch_google_events_between_with_options(scope[0],
-                                                    scope[1],
-                                                    session_id,
-                                                    calendar_id=calendar_id,
-                                                    query=query,
-                                                    limit=limit,
-                                                    all_day=all_day)
-  return fetch_google_events_between(scope[0], scope[1], session_id)
+    items = fetch_google_events_between_with_options(scope[0],
+                                                     scope[1],
+                                                     session_id,
+                                                     calendar_id=calendar_id,
+                                                     query=query,
+                                                     limit=limit,
+                                                     all_day=all_day)
+    return _wrap_read_with_revision(session_id, items)
+  items = fetch_google_events_between(scope[0], scope[1], session_id)
+  return _wrap_read_with_revision(session_id, items)
 
 
 @router.get("/api/google/tasks")
 def google_tasks(request: Request):
   session_id = get_google_session_id(request)
   if not session_id:
-    raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
+    raise HTTPException(status_code=401, detail="Google login is required.")
   try:
-    service = get_google_tasks_service(session_id)
-    results = service.tasks().list(tasklist='@default', showCompleted=True, showHidden=True).execute()
-    return results.get('items', [])
+    items = fetch_google_tasks(session_id)
+    return _wrap_read_with_revision(session_id, items)
   except Exception as e:
     logger.exception("Google Tasks fetch error")
     raise HTTPException(status_code=500, detail=str(e))
@@ -488,7 +742,7 @@ def google_tasks(request: Request):
 def google_create_task(request: Request, task_data: TaskCreate):
   session_id = get_google_session_id(request)
   if not session_id:
-    raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
+    raise HTTPException(status_code=401, detail="Google login is required.")
   try:
     service = get_google_tasks_service(session_id)
     task = {
@@ -499,7 +753,18 @@ def google_create_task(request: Request, task_data: TaskCreate):
     if task_data.due:
       task["due"] = task_data.due
     result = service.tasks().insert(tasklist='@default', body=task).execute()
-    return result
+    mutation_meta: Dict[str, Any] = {"new_revision": get_google_revision_state(session_id).get("revision", 0)}
+    if isinstance(result, dict):
+      upsert_google_task_cache(session_id, result)
+      mutation_meta = emit_google_task_delta(session_id, "upsert", task=result)
+      return {
+          **result,
+          **mutation_meta,
+      }
+    return {
+        "task": result,
+        **mutation_meta,
+    }
   except Exception as e:
     logger.exception("Google Tasks create error")
     raise HTTPException(status_code=500, detail=str(e))
@@ -509,13 +774,13 @@ def google_create_task(request: Request, task_data: TaskCreate):
 def google_update_task(request: Request, task_id: str, task_data: TaskUpdate):
   session_id = get_google_session_id(request)
   if not session_id:
-    raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
+    raise HTTPException(status_code=401, detail="Google login is required.")
   try:
     service = get_google_tasks_service(session_id)
-    # 먼저 기존 task를 가져옵니다
+    # First load the existing task
     task = service.tasks().get(tasklist='@default', task=task_id).execute()
     
-    # 업데이트할 필드만 변경
+    # Apply only provided fields
     if task_data.title is not None:
       task["title"] = task_data.title
     if task_data.notes is not None:
@@ -531,7 +796,18 @@ def google_update_task(request: Request, task_id: str, task_data: TaskUpdate):
         del task["completed"]
     
     result = service.tasks().update(tasklist='@default', task=task_id, body=task).execute()
-    return result
+    mutation_meta: Dict[str, Any] = {"new_revision": get_google_revision_state(session_id).get("revision", 0)}
+    if isinstance(result, dict):
+      upsert_google_task_cache(session_id, result)
+      mutation_meta = emit_google_task_delta(session_id, "upsert", task=result)
+      return {
+          **result,
+          **mutation_meta,
+      }
+    return {
+        "task": result,
+        **mutation_meta,
+    }
   except Exception as e:
     logger.exception("Google Tasks update error")
     raise HTTPException(status_code=500, detail=str(e))
@@ -541,11 +817,13 @@ def google_update_task(request: Request, task_id: str, task_data: TaskUpdate):
 def google_delete_task(request: Request, task_id: str):
   session_id = get_google_session_id(request)
   if not session_id:
-    raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
+    raise HTTPException(status_code=401, detail="Google login is required.")
   try:
     service = get_google_tasks_service(session_id)
     service.tasks().delete(tasklist='@default', task=task_id).execute()
-    return {"ok": True}
+    remove_google_task_cache(session_id, task_id)
+    mutation_meta = emit_google_task_delta(session_id, "delete", task_id=task_id)
+    return {"ok": True, **mutation_meta}
   except Exception as e:
     logger.exception("Google Tasks delete error")
     raise HTTPException(status_code=500, detail=str(e))
@@ -557,24 +835,24 @@ def google_delete_event(request: Request,
                         calendar_id: Optional[str] = Query(None,
                                                            alias="calendar_id")):
   if not event_id:
-    raise HTTPException(status_code=400, detail="event_id가 없습니다.")
+    raise HTTPException(status_code=400, detail="event_id is missing.")
   session_id = get_google_session_id(request)
   if not session_id:
-    raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
+    raise HTTPException(status_code=401, detail="Google login is required.")
   try:
     gcal_delete_event(event_id,
                       session_id=session_id,
                       calendar_id=calendar_id)
-    _clear_google_cache(session_id)
-    _, parsed_calendar = _split_gcal_event_key(event_id)
-    _emit_google_sse(session_id, "google_sync",
-                     {"calendar_id": calendar_id or parsed_calendar})
-    return {"ok": True}
+    mutation_meta = sync_google_event_after_delete(session_id,
+                                                   event_id=event_id,
+                                                   calendar_id=calendar_id)
+    return {"ok": True, **mutation_meta}
   except HTTPException:
     raise
   except Exception as exc:
+    print(f"[DELETE EVENT] 502 error for event_id={event_id}, calendar_id={calendar_id}: {exc}")
     raise HTTPException(status_code=502,
-                        detail=f"Google event 삭제 실패: {exc}") from exc
+                        detail=f"Google event delete failed: {exc}") from exc
 
 
 @router.patch("/api/google/events/{event_id}")
@@ -584,25 +862,25 @@ def google_update_event_api(request: Request,
                             calendar_id: Optional[str] = Query(
                                 None, alias="calendar_id")):
   if not event_id:
-    raise HTTPException(status_code=400, detail="event_id가 없습니다.")
+    raise HTTPException(status_code=400, detail="event_id is missing.")
   if not is_gcal_configured():
     raise HTTPException(status_code=400,
-                        detail="Google Calendar 연동이 설정되지 않았습니다.")
+                        detail="Google Calendar integration is not configured.")
   session_id = get_google_session_id(request)
   if not session_id:
-    raise HTTPException(status_code=401, detail="Google 로그인이 필요합니다.")
+    raise HTTPException(status_code=401, detail="Google login is required.")
 
   start_iso = _coerce_patch_start(payload.start)
   if payload.start is None:
     start_iso = None
     if payload.end is not None:
       raise HTTPException(status_code=400,
-                          detail="종료 시각을 변경하려면 시작 시각이 필요합니다.")
+                          detail="To change end time, start time is required.")
     if payload.all_day is not None:
       raise HTTPException(status_code=400,
-                          detail="종일 일정 변경에는 시작 시각이 필요합니다.")
+                          detail="For all-day changes, start time is required.")
   elif not start_iso:
-    raise HTTPException(status_code=400, detail="시작 시각 형식이 잘못되었습니다.")
+    raise HTTPException(status_code=400, detail="Invalid start time format.")
 
   end_iso = None
   if payload.end is not None:
@@ -612,7 +890,7 @@ def google_update_event_api(request: Request,
   if payload.title is not None:
     title_value = payload.title.strip()
     if not title_value:
-      raise HTTPException(status_code=400, detail="제목을 비울 수 없습니다.")
+      raise HTTPException(status_code=400, detail="Title cannot be empty.")
 
   location_value: Optional[str] = None
   if payload.location is not None:
@@ -683,18 +961,17 @@ def google_update_event_api(request: Request,
                       timezone_value=timezone_value,
                       color_id=color_value,
                       calendar_id=calendar_id)
-    _clear_google_cache(session_id)
-    _, parsed_calendar = _split_gcal_event_key(event_id)
-    _emit_google_sse(session_id, "google_sync",
-                     {"calendar_id": calendar_id or parsed_calendar})
+    mutation_meta = sync_google_event_after_write(session_id,
+                                                  event_id=event_id,
+                                                  calendar_id=calendar_id)
   except Exception as exc:
     raise HTTPException(status_code=502,
-                        detail=f"Google event 업데이트 실패: {exc}") from exc
+                        detail=f"Google event update failed: {exc}") from exc
 
-  return {"ok": True}
+  return {"ok": True, **mutation_meta}
 
 
-@router.post("/api/events", response_model=Event)
+@router.post("/api/events")
 def create_event(request: Request, event_in: EventCreate):
   session_id = require_google_session_id(request)
   google_event_id: Optional[str] = None
@@ -714,17 +991,18 @@ def create_event(request: Request, event_in: EventCreate):
                                                meeting_url=event_in.meeting_url,
                                                timezone_value=event_in.timezone,
                                                color_id=event_in.color_id)
+  except HTTPException:
+    raise
   except Exception as exc:
     raise HTTPException(status_code=502,
-                        detail=f"Google event 생성 실패: {exc}") from exc
+                        detail=f"Google event create failed: {exc}") from exc
 
   if not google_event_id:
-    raise HTTPException(status_code=502, detail="Google event 생성 실패")
+    raise HTTPException(status_code=502, detail="Google event create failed")
 
-  _clear_google_cache(session_id)
-  _emit_google_sse(session_id, "google_sync", {})
+  mutation_meta = sync_google_event_after_write(session_id, event_id=google_event_id)
 
-  return store_event(
+  stored = store_event(
       title=event_in.title,
       start=event_in.start,
       end=event_in.end,
@@ -742,315 +1020,278 @@ def create_event(request: Request, event_in: EventCreate):
       timezone_value=event_in.timezone,
       color_id=_normalize_color_id(event_in.color_id),
   )
+  stored_payload = stored.model_dump() if hasattr(stored, "model_dump") else dict(stored)
+  return {
+      **stored_payload,
+      **mutation_meta,
+  }
+
+
+@router.post("/api/google/recurring-events")
+def create_google_recurring_event(request: Request, payload: RecurringEventUpdate):
+  session_id = require_google_session_id(request)
+
+  recurrence: Optional[Dict[str, Any]] = None
+  if payload.recurrence is not None:
+    recurrence_raw = payload.recurrence.model_dump() if hasattr(
+        payload.recurrence, "model_dump") else dict(payload.recurrence)
+    recurrence = _normalize_recurrence_dict(recurrence_raw)
+    if not recurrence:
+      raise HTTPException(status_code=400, detail="Invalid recurrence payload.")
+  rrule = _normalize_rrule_core(payload.rrule)
+  if payload.rrule is not None and not rrule:
+    raise HTTPException(status_code=400, detail="Invalid rrule payload.")
+  if not recurrence and not rrule:
+    raise HTTPException(status_code=400,
+                        detail="Either recurrence or rrule must be provided.")
+
+  item: Dict[str, Any] = {
+      "type": "recurring",
+      "title": payload.title,
+      "start_date": payload.start_date,
+      "time": payload.time,
+      "duration_minutes": payload.duration_minutes,
+      "location": payload.location,
+      "description": payload.description,
+      "attendees": payload.attendees,
+      "reminders": payload.reminders,
+      "visibility": payload.visibility,
+      "transparency": payload.transparency,
+      "meeting_url": payload.meeting_url,
+      "timezone": payload.timezone,
+      "color_id": payload.color_id,
+      "recurrence": recurrence,
+      "rrule": rrule,
+  }
+
+  try:
+    google_event_id = gcal_create_recurring_event(item, session_id=session_id)
+  except HTTPException:
+    raise
+  except Exception as exc:
+    raise HTTPException(status_code=502,
+                        detail=f"Google recurring event create failed: {exc}") from exc
+
+  if not google_event_id:
+    raise HTTPException(status_code=502, detail="Google recurring event create failed.")
+
+  mutation_meta = sync_google_event_after_write(session_id, event_id=google_event_id)
+  return {"ok": True, "google_event_id": google_event_id, **mutation_meta}
 
 
 @router.delete("/api/events/{event_id}")
 def delete_event(event_id: int):
-  raise HTTPException(status_code=410, detail="로컬 모드가 제거되었습니다.")
+  raise HTTPException(status_code=410, detail="Local mode has been removed.")
 
 
 @router.patch("/api/events/{event_id}", response_model=Event)
 def update_event(request: Request, event_id: int, payload: EventUpdate):
-  raise HTTPException(status_code=410, detail="로컬 모드가 제거되었습니다.")
+  raise HTTPException(status_code=410, detail="Local mode has been removed.")
 
 
 @router.patch("/api/recurring-events/{event_id}", response_model=Event)
 def update_recurring_event(request: Request, event_id: int, payload: RecurringEventUpdate):
-  raise HTTPException(status_code=410, detail="로컬 모드가 제거되었습니다.")
+  raise HTTPException(status_code=410, detail="Local mode has been removed.")
 
 
 @router.post("/api/recurring-events/{event_id}/exceptions")
 def add_recurring_exception(request: Request,
                             event_id: int,
                             payload: RecurringExceptionPayload):
-  raise HTTPException(status_code=410, detail="로컬 모드가 제거되었습니다.")
+  raise HTTPException(status_code=410, detail="Local mode has been removed.")
 
 
-@router.post("/api/nlp-events", response_model=List[Event])
-async def create_events_from_natural_text(body: NaturalText,
-                                          request: Request,
-                                          response: Response):
+@router.post("/api/agent/run")
+async def agent_run(body: AgentRunRequest, request: Request, response: Response):
+  _ = response
+  session_id = ""
+  run_id = ""
   try:
     session_id = require_google_session_id(request)
-    request_id = _resolve_request_id(body.request_id)
-    images = _validate_image_payload(body.images)
-    effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
-    model_name = _resolve_request_model(request, body.model)
-    cache_key = _context_cache_key_for_session_mode(session_id, True)
-    return await _run_with_interrupt(
-        session_id,
-        request_id,
-        create_events_from_natural_text_core(body.text,
-                                             images,
-                                             effort,
-                                             model_name=model_name,
-                                             context_cache_key=cache_key,
-                                             context_session_id=session_id,
-                                             session_id=session_id,
-                                             is_google=True),
+    run_id = _agent_debug_start(session_id, body.input_as_text or "")
+    result = await run_full_agent(
+        session_id=session_id,
+        input_as_text=body.input_as_text or "",
+        requested_timezone=body.timezone,
+        dry_run=bool(body.dry_run),
+        on_debug_update=lambda snapshot: _agent_debug_update(session_id, run_id, snapshot),
     )
-  except HTTPException:
+    if isinstance(result, dict):
+      result = _attach_agent_revision(result, session_id)
+    trace = result.get("trace") if isinstance(result, dict) else None
+    response_status = str(result.get("status") or "completed")
+    _agent_debug_finish(session_id,
+                        run_id,
+                        status=response_status,
+                        trace=trace if isinstance(trace, dict) else None)
+    return result
+  except HTTPException as exc:
+    import traceback
+    if exc.status_code >= 500:
+      print(f"[AGENT] HTTPException {exc.status_code}: {exc.detail}", flush=True)
+      traceback.print_exc()
+    if session_id and run_id:
+      _agent_debug_finish(session_id, run_id, status="failed", error=str(exc.detail))
     raise
   except Exception as e:
-    raise HTTPException(status_code=502,
-                        detail=f"Natural language error: {str(e)}")
+    import traceback
+    print(f"[AGENT] Unhandled exception: {e}", flush=True)
+    traceback.print_exc()
+    if session_id and run_id:
+      _agent_debug_finish(session_id, run_id, status="failed", error=str(e))
+    raise HTTPException(status_code=502, detail=f"Agent run error: {str(e)}")
 
 
-@router.post("/api/nlp-event", response_model=Event)
-async def create_event_from_natural_text_compat(body: NaturalText,
-                                                request: Request,
-                                                response: Response):
-  try:
-    session_id = require_google_session_id(request)
-    request_id = _resolve_request_id(body.request_id)
-    images = _validate_image_payload(body.images)
-    effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
-    model_name = _resolve_request_model(request, body.model)
-    cache_key = _context_cache_key_for_session_mode(session_id, True)
-    created = await _run_with_interrupt(
-        session_id,
-        request_id,
-        create_events_from_natural_text_core(body.text,
-                                             images,
-                                             effort,
-                                             model_name=model_name,
-                                             context_cache_key=cache_key,
-                                             context_session_id=session_id,
-                                             session_id=session_id,
-                                             is_google=True),
-    )
-    return created[0]
-  except HTTPException:
-    raise
-  except Exception as e:
-    raise HTTPException(status_code=502,
-                        detail=f"Natural language error: {str(e)}")
+@router.post("/api/agent/run/stream")
+async def agent_run_stream(body: AgentRunRequest, request: Request, response: Response):
+  _ = response
+  session_id = require_google_session_id(request)
 
+  async def event_generator():
+    run_id = _agent_debug_start(session_id, body.input_as_text or "")
+    stream_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
+    runner_done = asyncio.Event()
+    loop = asyncio.get_event_loop()
 
-@router.post("/api/nlp-classify")
-async def nlp_classify(body: NlpClassifyRequest,
-                       request: Request,
-                       response: Response):
-  try:
-    session_id = require_google_session_id(request)
-    request_id = _resolve_request_id(body.request_id)
-    result = await _run_with_interrupt(
-        session_id,
-        request_id,
-        classify_nlp_request(body.text, bool(body.has_images)))
-    return {"type": result}
-  except HTTPException:
-    raise
-  except Exception as e:
-    raise HTTPException(status_code=502,
-                        detail=f"Classify NLP error: {str(e)}")
-
-
-@router.post("/api/nlp-preview")
-async def nlp_preview(body: NaturalText, request: Request, response: Response):
-  try:
-    session_id = require_google_session_id(request)
-    request_id = _resolve_request_id(body.request_id)
-    images = _validate_image_payload(body.images)
-    effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
-    model_name = _resolve_request_model(request, body.model)
-    cache_key = _context_cache_key_for_session_mode(session_id, True)
-    data = await _run_with_interrupt(
-        session_id,
-        request_id,
-        preview_events_from_natural_text_core(body.text,
-                                              images,
-                                              effort,
-                                              model_name=model_name,
-                                              context_cache_key=cache_key,
-                                              context_session_id=session_id,
-                                              context_confirmed=bool(body.context_confirmed),
-                                              is_google=True),
-    )
-    if isinstance(data, dict):
-      data["request_id"] = request_id
-    return data
-  except HTTPException:
-    raise
-  except Exception as e:
-    raise HTTPException(status_code=502, detail=f"Preview NLP error: {str(e)}")
-
-
-@router.post("/api/nlp-preview-stream")
-async def nlp_preview_stream(body: NaturalText, request: Request, response: Response):
-  try:
-    session_id = require_google_session_id(request)
-    request_id = _resolve_request_id(body.request_id)
-    images = _validate_image_payload(body.images)
-    effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
-    model_name = _resolve_request_model(request, body.model)
-    cache_key = _context_cache_key_for_session_mode(session_id, True)
-
-    async def event_generator():
-      chunk_count = 0
+    def _enqueue(payload: Dict[str, Any]) -> None:
       try:
-        async for chunk in _invoke_event_parser_stream(
-            "parse",
-            body.text,
-            images,
-            reasoning_effort=effort,
-            model_name=model_name,
-            context_cache_key=cache_key,
-            context_session_id=session_id,
-            context_confirmed=bool(body.context_confirmed),
-            is_google=True
-        ):
-          if await request.is_disconnected():
+        # 스레드 안전하게 큐에 넣기 위해 loop.call_soon_threadsafe 사용
+        loop.call_soon_threadsafe(stream_queue.put_nowait, payload)
+      except Exception:
+        return
+
+    async def _runner():
+      try:
+        result = await run_full_agent(
+            session_id=session_id,
+            input_as_text=body.input_as_text or "",
+            requested_timezone=body.timezone,
+            dry_run=bool(body.dry_run),
+            on_debug_update=lambda snapshot: _agent_debug_update(session_id, run_id, snapshot),
+            on_agent_stream_event=_enqueue,
+        )
+        if isinstance(result, dict):
+          result = _attach_agent_revision(result, session_id)
+        trace = result.get("trace") if isinstance(result, dict) else None
+        response_status = str(result.get("status") or "completed")
+        _agent_debug_finish(session_id,
+                            run_id,
+                            status=response_status,
+                            trace=trace if isinstance(trace, dict) else None)
+        _enqueue({
+            "type": "agent_result",
+            "result": result,
+            "status": response_status,
+        })
+      except HTTPException as exc:
+        import traceback
+        if exc.status_code >= 500:
+          print(f"[AGENT STREAM] HTTPException {exc.status_code}: {exc.detail}", flush=True)
+          traceback.print_exc()
+        _agent_debug_finish(session_id, run_id, status="failed", error=str(exc.detail))
+        _enqueue({
+            "type": "agent_error",
+            "status_code": exc.status_code,
+            "message": str(exc.detail),
+        })
+      except asyncio.CancelledError:
+        _agent_debug_finish(session_id,
+                            run_id,
+                            status="cancelled",
+                            error="client_disconnected")
+        _enqueue({
+            "type": "agent_error",
+            "status_code": 499,
+            "message": "Client disconnected.",
+        })
+        raise
+      except Exception as exc:
+        import traceback
+        print(f"[AGENT STREAM] Unhandled exception: {exc}", flush=True)
+        traceback.print_exc()
+        _agent_debug_finish(session_id, run_id, status="failed", error=str(exc))
+        _enqueue({
+            "type": "agent_error",
+            "status_code": 502,
+            "message": f"Agent run error: {str(exc)}",
+        })
+      finally:
+        runner_done.set()
+
+    run_task = asyncio.create_task(_runner())
+    try:
+      yield _format_sse_event("ready", {"type": "ready"})
+      while True:
+        if await request.is_disconnected():
+          if not run_task.done():
+            run_task.cancel()
+          break
+        try:
+          payload = await asyncio.wait_for(stream_queue.get(), timeout=20)
+        except asyncio.TimeoutError:
+          if runner_done.is_set():
             break
+          yield _format_sse_event("ping", {"type": "ping"})
+          continue
+        if not isinstance(payload, dict):
+          continue
+        event_type = str(payload.get("type") or "message")
+        yield _format_sse_event(event_type, payload)
+        if event_type in ("agent_result", "agent_error") and runner_done.is_set(
+        ) and stream_queue.empty():
+          break
+      yield _format_sse_event("done", {"type": "done"})
+    finally:
+      if not run_task.done():
+        run_task.cancel()
+      try:
+        await run_task
+      except Exception:
+        pass
 
-          chunk_count += 1
-          event_type = chunk.get("type", "message")
-          
-          if chunk.get("type") == "data":
-            processed = _post_process_nlp_preview_result(chunk["data"])
-            processed["request_id"] = request_id
-            event_data = _format_sse_event("data", processed)
-            yield event_data
-          else:
-            event_data = _format_sse_event(event_type, chunk)
-            yield event_data
-            
-      except Exception as e:
-        yield _format_sse_event("error", {"detail": str(e)})
-
-    return StreamingResponse(
+  return StreamingResponse(
       event_generator(),
       media_type="text/event-stream",
       headers={
-        "Cache-Control": "no-cache",
-        "X-Accel-Buffering": "no",
-      }
-    )
-  except Exception as e:
-    raise HTTPException(status_code=502,
-                        detail=f"Preview NLP stream error: {str(e)}")
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+          "X-Accel-Buffering": "no",
+      },
+  )
 
 
-@router.post("/api/nlp-apply-add", response_model=List[Event])
-def nlp_apply_add(body: ApplyItems, request: Request):
-  try:
-    items = body.items or []
-    if not items:
-      raise HTTPException(status_code=400, detail="items is empty")
-    session_id = require_google_session_id(request)
-    return apply_add_items_core(items, session_id=session_id)
-  except HTTPException:
-    raise
-  except Exception as e:
-    raise HTTPException(status_code=502, detail=f"Apply Add error: {str(e)}")
+@router.get("/api/agent/debug")
+async def agent_debug_status(request: Request):
+  session_id = get_google_session_id(request) or _get_session_id(request)
+  return _agent_debug_get(session_id)
 
 
+@router.post("/api/nlp-events")
+@router.post("/api/nlp-event")
+@router.post("/api/nlp-classify")
+@router.post("/api/nlp-preview")
+@router.post("/api/nlp-preview-stream")
+@router.post("/api/nlp-apply-add")
 @router.post("/api/nlp-delete-preview")
-async def nlp_delete_preview(body: NaturalTextWithScope,
-                             request: Request,
-                             response: Response):
-  try:
-    session_id = require_google_session_id(request)
-    request_id = _resolve_request_id(body.request_id)
-    scope = _parse_scope_dates(body.start_date, body.end_date, require=True)
-    effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
-    model_name = _resolve_request_model(request, body.model)
-    data = await _run_with_interrupt(
-        session_id,
-        request_id,
-        delete_preview_groups(body.text,
-                              scope=scope,
-                              reasoning_effort=effort,
-                              model_name=model_name,
-                              session_id=session_id,
-                              context_confirmed=bool(body.context_confirmed),
-                              is_google=True),
-    )
-    if isinstance(data, dict):
-      data["request_id"] = request_id
-    return data
-  except HTTPException:
-    raise
-  except Exception as e:
-    raise HTTPException(status_code=502,
-                        detail=f"Delete Preview error: {str(e)}")
-
-
 @router.post("/api/nlp-context/reset")
-def nlp_context_reset(request: Request, response: Response):
-  session_id = require_google_session_id(request)
-  base_key = _context_cache_key_for_session(session_id)
-  if base_key:
-    _clear_context_cache(f"{base_key}:google")
-  return {"ok": True}
-
-
 @router.post("/api/nlp-interrupt")
-async def nlp_interrupt(body: InterruptRequest,
-                        request: Request,
-                        response: Response):
-  session_id = require_google_session_id(request)
-  cancelled = await _cancel_inflight(session_id, body.request_id)
-  return {"ok": True, "cancelled": cancelled}
+@router.post("/api/nlp-delete-events")
+async def legacy_nlp_removed(request: Request):
+  _ = request
+  raise HTTPException(status_code=410,
+                      detail="Legacy NLP agent was removed. Use /api/agent/run.")
 
 
 @router.post("/api/delete-by-ids", response_model=DeleteResult)
 def delete_by_ids(body: IdsPayload):
-  raise HTTPException(status_code=410, detail="로컬 모드가 제거되었습니다.")
-
-
-@router.post("/api/nlp-delete-events", response_model=DeleteResult)
-async def delete_events_from_natural_text(body: NaturalTextWithScope,
-                                          request: Request,
-                                          response: Response):
-  try:
-    session_id = require_google_session_id(request)
-    request_id = _resolve_request_id(body.request_id)
-    scope = _parse_scope_dates(body.start_date, body.end_date, require=True)
-    effort = _resolve_request_reasoning_effort(request, body.reasoning_effort)
-    model_name = _resolve_request_model(request, body.model)
-    ids_or_perm = await _run_with_interrupt(
-        session_id,
-        request_id,
-        create_delete_ids_from_natural_text(body.text,
-                                            scope=scope,
-                                            reasoning_effort=effort,
-                                            model_name=model_name,
-                                            session_id=session_id,
-                                            context_confirmed=bool(body.context_confirmed),
-                                            is_google=True),
-    )
-    if isinstance(ids_or_perm, dict) and ids_or_perm.get("permission_required"):
-      return ids_or_perm
-    ids = ids_or_perm if isinstance(ids_or_perm, list) else []
-
-    deleted: List[Union[int, str]] = []
-    for raw_id in ids:
-      event_id = str(raw_id)
-      if not event_id:
-        continue
-      try:
-        gcal_delete_event(event_id, session_id=session_id)
-        deleted.append(event_id)
-      except HTTPException:
-        raise
-      except Exception as exc:
-        raise HTTPException(status_code=502,
-                            detail=f"Google event 삭제 실패: {exc}") from exc
-    _clear_google_cache(session_id)
-    _emit_google_sse(session_id, "google_sync", {})
-    return DeleteResult(ok=True, deleted_ids=deleted, count=len(deleted))
-  except HTTPException:
-    raise
-  except Exception as e:
-    raise HTTPException(status_code=502, detail=f"Delete NLP error: {str(e)}")
+  _ = body
+  raise HTTPException(status_code=410, detail="Local mode has been removed.")
 
 
 def build_header_actions(has_token: bool) -> str:
   parts: List[str] = []
   if not has_token:
-    parts.append(
-        '<a class="header-btn" href="/auth/google/login">Google 로그인</a>')
+    parts = ['<a class="header-btn" href="/auth/google/login">Google Login</a>']
   return "\n".join(parts)
 
 

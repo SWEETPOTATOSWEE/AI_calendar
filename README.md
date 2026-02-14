@@ -29,6 +29,15 @@ Set these values in your local `.env` file (or shell environment):
 - `GOOGLE_CLIENT_SECRET`: Google OAuth client secret
 
 #### Optional (if needed)
+- `GEMINI_API_KEY`: Gemini API key (Gemini 모델 사용 시 필수)
+- `AGENT_LLM_PROVIDER`: `auto` | `openai` | `gemini` (기본값: `auto`)
+- `AGENT_INTENT_ROUTER_MODEL`: Agent intent router 모델명 (예: `gpt-5-mini`, `gemini-2.5-flash`)
+- `AGENT_SLOT_EXTRACTOR_MODEL`: Agent slot extractor 모델명
+- `AGENT_EVENT_TARGET_RESOLVER_MODEL`: Event target resolver 모델명
+- `AGENT_QUESTION_MODEL`: Clarification question 모델명
+- `AGENT_RESPONSE_MODEL`: Response generation 모델명
+- `OPENAI_REASONING_EFFORT`: OpenAI reasoning effort level (`low` | `medium` | `high`, 기본값: `low`)
+- `OPENAI_VERBOSITY`: OpenAI verbosity level (`low` | `medium` | `high`, 기본값: `low`)
 - `SESSION_SECRET`: Session encryption key (auto-generated if not set)
 - `GOOGLE_WEBHOOK_TOKEN`: Google Webhook authentication token
 - `NOTION_API_KEY`: Notion API key
@@ -47,7 +56,7 @@ You usually **don't need to set** these variables. The `dev-run.sh` script sets 
 - `NEXT_PUBLIC_API_BASE` - API base path (/api)
 - `NEXT_PUBLIC_BACKEND_DIRECT` - Backend direct URL
 - `ENABLE_GCAL` - Google Calendar enabled (default: 1)
-- `LLM_DEBUG` - LLM debug mode (default: 0)
+- `LLM_DEBUG` - LLM debug mode (default: 0). When `1`, agent LLM raw outputs are printed to the backend terminal.
 - `GOOGLE_TOKEN_FILE` - Google token file path
 - `GOOGLE_CALENDAR_ID` - Default calendar ID (default: primary)
 

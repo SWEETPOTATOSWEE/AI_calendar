@@ -7,7 +7,6 @@ import {
   useRef,
   useState,
   type AnimationEvent,
-  type CSSProperties,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
@@ -62,13 +61,6 @@ const REMINDER_OPTIONS = [
   { label: "1시간 전", value: 60 },
   { label: "1일 전", value: 1440 },
 ];
-
-const COMPOSE_TABS = ["event", "task"] as const;
-type ComposeMode = typeof COMPOSE_TABS[number];
-const COMPOSE_LABELS: Record<ComposeMode, string> = {
-  event: "일정",
-  task: "할 일",
-};
 
 const COLOR_OPTIONS = [
   { id: "default", label: "블루", chip: "bg-token-primary" },
@@ -169,12 +161,26 @@ const buildInitialState = (event?: CalendarEvent | null, defaultDate?: Date | nu
       ? "00:00"
       : recurringStartTime || startTimeSeed
     : startTimeSeed;
-  const endSeed = parseISODateTime(event?.end || "") || seed;
+  
+  let endSeed = parseISODateTime(event?.end || "") || seed;
+  if (event?.all_day && event?.end) {
+    // If internal format is exclusive (T00:00), subtract 1 day for UI display
+    const rawEnd = parseISODateTime(event.end);
+    if (rawEnd && rawEnd.getHours() === 0 && rawEnd.getMinutes() === 0) {
+      endSeed = addDays(rawEnd, -1);
+    }
+  }
+
   let endDate = isRecurring ? startDate : toISODate(endSeed);
   let endTime = formatTime(event?.end) || "10:00";
   if (isRecurring) {
     if (event?.all_day) {
-      endTime = "23:59";
+      endTime = "00:00";
+      // Ensure the UI shows the same day if it's a 1-day all-day event
+      const rawEnd = event.end ? parseISODateTime(event.end) : null;
+      if (rawEnd && rawEnd.getHours() === 0 && rawEnd.getMinutes() === 0) {
+        endDate = toISODate(addDays(rawEnd, -1));
+      }
     } else if (typeof event?.duration_minutes === "number") {
       const { endTime: computedEnd, dayOffset } = calcEndTimeFromDuration(
         startTime,
@@ -264,8 +270,6 @@ export type EventModalProps = {
   variant?: "modal" | "drawer";
   showCloseButton?: boolean;
   resetKey?: number;
-  composeMode?: ComposeMode;
-  onComposeModeChange?: (mode: ComposeMode) => void;
   onClose: () => void;
   onCancel?: () => void;
   onCreate: (payload: EventPayload) => Promise<CalendarEvent | void | null>;
@@ -681,8 +685,6 @@ export default function EventModal({
   variant = "modal",
   showCloseButton = true,
   resetKey = 0,
-  composeMode = "event",
-  onComposeModeChange,
   onClose,
   onCancel = onClose,
   onCreate,
@@ -700,15 +702,6 @@ export default function EventModal({
   const [showAllColors, setShowAllColors] = useState(false);
   const [descriptionMultiline, setDescriptionMultiline] = useState(false);
   const [deleteMenuOpen, setDeleteMenuOpen] = useState(false);
-  const composeTabIndex = COMPOSE_TABS.indexOf(composeMode);
-  const composeToggleStyle = useMemo(
-    () =>
-      ({
-        "--seg-count": String(COMPOSE_TABS.length),
-        "--seg-index": String(composeTabIndex),
-      }) as CSSProperties,
-    [composeTabIndex]
-  );
   const isEdit = Boolean(stableEvent) && !forceCreate;
   const isRecurring = !forceCreate && stableEvent?.recur === "recurring";
   const descriptionRef = useRef<HTMLTextAreaElement | null>(null);
@@ -900,9 +893,18 @@ export default function EventModal({
 
   const payload = useMemo<EventPayload>(() => {
     const startClock = form.allDay ? "00:00" : to24Hour(form.startTime);
-    const endClock = form.allDay ? "23:59" : to24Hour(form.endTime);
+    let endClock = form.allDay ? "00:00" : to24Hour(form.endTime);
     const start = `${form.startDate}T${startClock}`;
-    const end = form.endDate && endClock ? `${form.endDate}T${endClock}` : null;
+    
+    let adjustedEndDate = form.endDate;
+    if (form.allDay && form.endDate) {
+      // If all-day, the internal format is exclusive end (next day 00:00)
+      const endDt = new Date(form.endDate);
+      const nextDay = addDays(endDt, 1);
+      adjustedEndDate = toISODate(nextDay);
+    }
+    
+    const end = adjustedEndDate && endClock ? `${adjustedEndDate}T${endClock}` : null;
     return {
       title: form.title.trim() || "제목 없음",
       start,
@@ -961,38 +963,14 @@ export default function EventModal({
       >
         <div
           className={
-            isDrawer
-              ? "flex items-center justify-between px-3 py-3 border-b border-border-subtle"
-              : "flex items-center justify-between px-6 py-4 border-b border-border-subtle shrink-0"
+            !showCloseButton
+              ? "hidden"
+              : isDrawer
+                ? "flex items-center justify-between px-3 py-3 border-b border-border-subtle"
+                : "flex items-center justify-between px-6 py-4 border-b border-border-subtle shrink-0"
           }
         >
-          <div className="flex items-center gap-3">
-            <div
-              className="relative flex items-center rounded-full bg-bg-subtle p-1 text-xs segmented-toggle"
-              style={composeToggleStyle}
-            >
-              <span className="segmented-indicator">
-                <span
-                  key={composeMode}
-                  className="view-indicator-pulse block h-full w-full rounded-full bg-bg-surface shadow-sm"
-                />
-              </span>
-              {COMPOSE_TABS.map((tab) => (
-                <button
-                  key={tab}
-                  type="button"
-                  className={`relative z-10 flex-1 px-3 py-1 text-[14px] transition-all ${
-                    composeMode === tab
-                      ? "text-text-brand !font-bold"
-                      : "text-text-secondary font-medium hover:text-text-brand"
-                  }`}
-                  onClick={() => onComposeModeChange?.(tab)}
-                >
-                  {COMPOSE_LABELS[tab]}
-                </button>
-              ))}
-            </div>
-          </div>
+          <div className="flex items-center gap-3" />
           {showCloseButton && (
             <button
               className="text-text-disabled hover:text-text-primary"

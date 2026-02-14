@@ -7,13 +7,14 @@ type RouteContext = {
 };
 
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
+export const dynamic = "force-static";
 
-const handle = async (req: NextRequest, context: RouteContext) => {
-  const params = await context.params;
-  const segments = params?.path ?? [];
-  const backendPath = `/auth/${segments.join("/")}`;
-  return proxyToBackend(req, backendPath);
+export const generateStaticParams = () => {
+  return [{ path: ['_'] }];
+};
+
+const handle = async () => {
+  return new Response("This route is handled by the backend.", { status: 200 });
 };
 
 export const GET = handle;

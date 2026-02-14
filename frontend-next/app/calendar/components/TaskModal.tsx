@@ -1,27 +1,17 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Calendar, FileText, X } from "lucide-react";
-import { createTask, updateTask } from "../lib/api";
-import type { GoogleTask } from "../lib/types";
+import type { GoogleTask, TaskPayload } from "../lib/types";
 import { DatePopover } from "./DatePopover";
-
-const COMPOSE_TABS = ["event", "task"] as const;
-type ComposeMode = typeof COMPOSE_TABS[number];
-const COMPOSE_LABELS: Record<ComposeMode, string> = {
-  event: "일정",
-  task: "할 일",
-};
 
 type TaskModalProps = {
   open: boolean;
   onClose: () => void;
-  onSubmit: (task: GoogleTask) => void;
+  onSubmit: (payload: TaskPayload, initialTask?: GoogleTask | null) => Promise<void>;
   initialTask?: GoogleTask | null;
   variant?: "modal" | "drawer";
   showCloseButton?: boolean;
-  composeMode?: ComposeMode;
-  onComposeModeChange?: (mode: ComposeMode) => void;
 };
 
 export default function TaskModal({
@@ -31,8 +21,6 @@ export default function TaskModal({
   initialTask,
   variant = "modal",
   showCloseButton,
-  composeMode = "task",
-  onComposeModeChange,
 }: TaskModalProps) {
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
@@ -42,15 +30,6 @@ export default function TaskModal({
   const shouldShowClose = showCloseButton ?? !isDrawer;
   const [descriptionMultiline, setDescriptionMultiline] = useState(false);
   const descriptionRef = useRef<HTMLTextAreaElement | null>(null);
-  const composeTabIndex = COMPOSE_TABS.indexOf(composeMode);
-  const composeToggleStyle = useMemo(
-    () =>
-      ({
-        "--seg-count": String(COMPOSE_TABS.length),
-        "--seg-index": String(composeTabIndex),
-      }) as CSSProperties,
-    [composeTabIndex]
-  );
 
   useEffect(() => {
     if (open) {
@@ -92,21 +71,14 @@ export default function TaskModal({
 
     setLoading(true);
     try {
-      let result: GoogleTask;
-      if (initialTask) {
-        result = await updateTask(initialTask.id, {
+      await onSubmit(
+        {
           title: title.trim(),
           notes: notes.trim() || null,
           due: due || null,
-        });
-      } else {
-        result = await createTask({
-          title: title.trim(),
-          notes: notes.trim() || null,
-          due: due || null,
-        });
-      }
-      onSubmit(result);
+        },
+        initialTask ?? null
+      );
       onClose();
     } catch (error) {
       console.error("Task submit error:", error);
@@ -135,36 +107,14 @@ export default function TaskModal({
       >
         <div
           className={
-            isDrawer
-              ? "flex items-center justify-between px-3 py-3 border-b border-border-subtle"
-              : "flex items-center justify-between px-6 py-4 border-b border-border-subtle shrink-0"
+            !shouldShowClose
+              ? "hidden"
+              : isDrawer
+                ? "flex items-center justify-between px-3 py-3 border-b border-border-subtle"
+                : "flex items-center justify-between px-6 py-4 border-b border-border-subtle shrink-0"
           }
         >
-          <div
-            className="relative flex items-center rounded-full bg-bg-subtle p-1 text-xs segmented-toggle"
-            style={composeToggleStyle}
-          >
-            <span className="segmented-indicator">
-              <span
-                key={composeMode}
-                className="view-indicator-pulse block h-full w-full rounded-full bg-bg-surface shadow-sm"
-              />
-            </span>
-            {COMPOSE_TABS.map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                className={`relative z-10 flex-1 px-3 py-1 text-[14px] transition-all ${
-                  composeMode === tab
-                    ? "text-text-brand !font-bold"
-                    : "text-text-secondary font-medium hover:text-text-brand"
-                }`}
-                onClick={() => onComposeModeChange?.(tab)}
-              >
-                {COMPOSE_LABELS[tab]}
-              </button>
-            ))}
-          </div>
+          <div />
           {shouldShowClose && (
             <button
               type="button"

@@ -8,6 +8,8 @@ export type GoogleTask = {
   status: "needsAction" | "completed";
   completed?: string | null;
   updated?: string | null;
+  new_revision?: number;
+  op_id?: string | null;
 };
 
 export type TaskPayload = {
@@ -40,12 +42,19 @@ export type CalendarEvent = {
   calendar_id?: string | null;
   recur?: string | null;
   recurrence?: EventRecurrence | null;
+  recurring_event_id?: string | null;
   all_day?: boolean;
   start_date?: string | null;
   time?: string | null;
   duration_minutes?: number | null;
   source: CalendarEventSource;
   google_event_id?: string | null;
+  task_id?: string | null;
+  task_status?: "needsAction" | "completed";
+  task_notes?: string | null;
+  task_due?: string | null;
+  task_completed?: string | null;
+  task_updated?: string | null;
 };
 
 export type AuthStatus = {

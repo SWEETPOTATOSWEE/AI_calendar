@@ -7,27 +7,22 @@ import {
   type ChangeEvent,
   type CSSProperties,
   type PointerEvent,
-  type ReactNode,
 } from "react";
 import {
   ArrowUp,
   Calendar,
   Check,
-  Clock,
   Image as ImageIcon,
-  RefreshCcw,
   MapPin,
   Pencil,
   Plus,
-  Rabbit,
   RotateCcw,
   Sparkles,
   Square,
-  Trash2,
-  Turtle,
   X,
 } from "lucide-react";
 import { formatShortDate, formatTime, formatTimeRange, parseISODateTime } from "../lib/date";
+import ReactMarkdown, { type Components } from "react-markdown";
 import {
   formatRecurrenceDateLabel,
   formatRecurrencePattern,
@@ -35,7 +30,6 @@ import {
   formatRecurrenceTimeLabel,
 } from "../lib/recurrence-summary";
 import { useAiAssistant, type AddPreviewItem } from "../lib/use-ai-assistant";
-import { DatePopover } from "./DatePopover";
 
 export type AiAssistantModalProps = {
   assistant: ReturnType<typeof useAiAssistant>;
@@ -46,220 +40,208 @@ export type AiAssistantModalProps = {
 
 const safeArray = <T,>(value?: T[] | null) => (Array.isArray(value) ? value : []);
 
-const pad2 = (value: number) => String(value).padStart(2, "0");
-const toLocalISODate = (date: Date) =>
-  `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
-const parseLocalISODate = (value?: string) => {
-  if (!value) return null;
-  const parts = value.split("-").map((item) => Number(item));
-  if (parts.length !== 3) return null;
-  const [year, month, day] = parts;
-  if (!year || !month || !day) return null;
-  return new Date(year, month - 1, day);
-};
-const addDays = (date: Date, days: number) => {
-  const next = new Date(date);
-  next.setDate(next.getDate() + days);
-  return next;
-};
-const PLACEHOLDER_TEXT = {
-  add: "추가/삭제할 일정을 입력하세요.",
-  delete: "추가/삭제할 일정을 입력하세요.",
-} as const;
-const INPUT_ACTIONS = [{ type: "image", label: "이미지 추가" }] as const;
+const PLACEHOLDER_TEXT = "일정/할 일 또는 질문을 입력하세요";
 
-type MarkdownBlock =
-  | { type: "heading"; level: number; text: string }
-  | { type: "paragraph"; text: string }
-  | { type: "list"; ordered: boolean; items: string[] }
-  | { type: "quote"; text: string }
-  | { type: "code"; text: string }
-  | { type: "hr" };
-
-const parseInlineMarkdown = (text: string) => {
-  const parts = text.split(/(\*\*[^*]+\*\*|__[^_]+__|\*[^*]+\*|_[^_]+_|~~[^~]+~~|`[^`]+`)/g);
-  return parts.map((part, index) => {
-    if (
-      (part.startsWith("**") && part.endsWith("**")) ||
-      (part.startsWith("__") && part.endsWith("__"))
-    ) {
-      return <strong key={`strong-${index}`}>{part.slice(2, -2)}</strong>;
+const markdownComponents: Components = {
+  h1: ({ children }) => <h1 className="text-[20px] leading-7 font-semibold text-text-primary">{children}</h1>,
+  h2: ({ children }) => <h2 className="text-[18px] leading-7 font-semibold text-text-primary">{children}</h2>,
+  h3: ({ children }) => <h3 className="text-[16px] leading-6 font-semibold text-text-primary">{children}</h3>,
+  h4: ({ children }) => <h4 className="text-[14px] leading-6 font-semibold text-text-primary">{children}</h4>,
+  p: ({ children }) => <p className="whitespace-pre-line leading-6 text-text-primary">{children}</p>,
+  ul: ({ children }) => <ul className="list-disc space-y-1 pl-5">{children}</ul>,
+  ol: ({ children }) => <ol className="list-decimal space-y-1 pl-5">{children}</ol>,
+  li: ({ children }) => <li className="leading-6 text-text-primary">{children}</li>,
+  blockquote: ({ children }) => (
+    <blockquote className="border-l-2 border-border-subtle pl-3 text-text-primary">{children}</blockquote>
+  ),
+  pre: ({ children }) => (
+    <pre className="overflow-auto rounded-md bg-subtle p-3 text-[12px] text-text-primary">{children}</pre>
+  ),
+  code: ({ children, className }) => {
+    const isBlockCode = (className ?? "").includes("language-") || String(children).includes("\n");
+    if (isBlockCode) {
+      return <code className={className}>{children}</code>;
     }
-    if (
-      (part.startsWith("*") && part.endsWith("*")) ||
-      (part.startsWith("_") && part.endsWith("_"))
-    ) {
-      return <em key={`em-${index}`}>{part.slice(1, -1)}</em>;
-    }
-    if (part.startsWith("~~") && part.endsWith("~~")) {
-      return <del key={`del-${index}`}>{part.slice(2, -2)}</del>;
-    }
-    if (part.startsWith("`") && part.endsWith("`")) {
-      return (
-        <code key={`code-${index}`} className="rounded bg-subtle px-1 py-0.5 text-[12px] text-text-primary">
-          {part.slice(1, -1)}
-        </code>
-      );
-    }
-    return <span key={`text-${index}`}>{part}</span>;
-  });
+    return <code className="rounded bg-subtle px-1 py-0.5 text-[12px] text-text-primary">{children}</code>;
+  },
+  hr: () => <hr className="border-0 border-t border-border-subtle" />,
 };
 
-const parseMarkdownBlocks = (text: string): MarkdownBlock[] => {
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
-  const blocks: MarkdownBlock[] = [];
-  let paragraph: string[] = [];
-  let code: string[] | null = null;
-
-  const flushParagraph = () => {
-    if (paragraph.length === 0) return;
-    blocks.push({ type: "paragraph", text: paragraph.join("\n") });
-    paragraph = [];
-  };
-
-  let index = 0;
-  while (index < lines.length) {
-    const line = lines[index];
-    if (line.trim().startsWith("```")) {
-      if (code) {
-        blocks.push({ type: "code", text: code.join("\n") });
-        code = null;
-      } else {
-        flushParagraph();
-        code = [];
-      }
-      index += 1;
-      continue;
-    }
-    if (code) {
-      code.push(line);
-      index += 1;
-      continue;
-    }
-    const headingMatch = line.match(/^(#{1,4})\s+(.*)$/);
-    if (headingMatch) {
-      flushParagraph();
-      blocks.push({ type: "heading", level: headingMatch[1].length, text: headingMatch[2] });
-      index += 1;
-      continue;
-    }
-    const hrMatch = line.match(/^\s*(\*{3,}|-{3,}|_{3,})\s*$/);
-    if (hrMatch) {
-      flushParagraph();
-      blocks.push({ type: "hr" });
-      index += 1;
-      continue;
-    }
-    const ulMatch = line.match(/^\s*[-*+]\s+(.*)$/);
-    if (ulMatch) {
-      flushParagraph();
-      const items: string[] = [];
-      while (index < lines.length) {
-        const listLine = lines[index];
-        const match = listLine.match(/^\s*[-*+]\s+(.*)$/);
-        if (!match) break;
-        items.push(match[1]);
-        index += 1;
-      }
-      blocks.push({ type: "list", ordered: false, items });
-      continue;
-    }
-    const olMatch = line.match(/^\s*\d+\.\s+(.*)$/);
-    if (olMatch) {
-      flushParagraph();
-      const items: string[] = [];
-      while (index < lines.length) {
-        const listLine = lines[index];
-        const match = listLine.match(/^\s*\d+\.\s+(.*)$/);
-        if (!match) break;
-        items.push(match[1]);
-        index += 1;
-      }
-      blocks.push({ type: "list", ordered: true, items });
-      continue;
-    }
-    const quoteMatch = line.match(/^\s*>\s?(.*)$/);
-    if (quoteMatch) {
-      flushParagraph();
-      const quoteLines: string[] = [];
-      while (index < lines.length) {
-        const quoteLine = lines[index];
-        const match = quoteLine.match(/^\s*>\s?(.*)$/);
-        if (!match) break;
-        quoteLines.push(match[1]);
-        index += 1;
-      }
-      blocks.push({ type: "quote", text: quoteLines.join("\n") });
-      continue;
-    }
-    if (line.trim() === "") {
-      flushParagraph();
-      index += 1;
-      continue;
-    }
-    paragraph.push(line);
-    index += 1;
-  }
-  flushParagraph();
-  return blocks;
+type ConversationUiMessage = {
+  role: "user" | "assistant";
+  text: string;
+  attachments?: Array<{ id: string; name: string; dataUrl: string }>;
 };
 
-const renderMarkdown = (text: string, keyPrefix: string): ReactNode[] => {
-  const blocks = parseMarkdownBlocks(text);
-  return blocks.map((block, blockIndex) => {
-    const key = `${keyPrefix}-${blockIndex}`;
-    switch (block.type) {
-      case "heading": {
-        return (
-          <div key={key} className="text-[14px] font-semibold text-text-primary">
-            {parseInlineMarkdown(block.text)}
-          </div>
-        );
-      }
-      case "list": {
-        const listClass = block.ordered ? "list-decimal" : "list-disc";
-        return (
-          <ul key={key} className={`${listClass} space-y-1 pl-5`}>
-            {block.items.map((item, itemIndex) => (
-              <li key={`${key}-item-${itemIndex}`} className="leading-6 text-text-primary">
-                {parseInlineMarkdown(item)}
-              </li>
+type ConversationMessageRowProps = {
+  message: ConversationUiMessage;
+  index: number;
+  onOpenImage: (src: string, alt: string) => void;
+};
+
+function ConversationMessageRow({ message, index, onOpenImage }: ConversationMessageRowProps) {
+  const attachments = safeArray(message.attachments);
+  const isUser = message.role === "user";
+
+  return (
+    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+      <div className={`flex flex-col ${isUser ? "items-end max-w-[85%]" : "items-start w-full"}`}>
+        {attachments.length > 0 && (
+          <div className={`inline-grid ${attachments.length > 1 ? "grid-cols-2" : "grid-cols-1"} gap-2 mb-2`}>
+            {attachments.map((item) => (
+              <button
+                key={item.id}
+                className="h-24 w-24 overflow-hidden rounded-lg border border-border-subtle cursor-zoom-in"
+                onClick={() => onOpenImage(item.dataUrl, item.name)}
+              >
+                <img src={item.dataUrl} alt={item.name} className="h-full w-full object-cover" />
+              </button>
             ))}
-          </ul>
-        );
-      }
-      case "quote":
-        return (
-          <blockquote key={key} className="border-l-2 border-border-subtle pl-3 text-text-primary">
-            {parseInlineMarkdown(block.text)}
-          </blockquote>
-        );
-      case "code":
-        return (
-          <pre key={key} className="overflow-auto rounded-md bg-subtle p-3 text-[12px] text-text-primary">
-            <code>{block.text}</code>
-          </pre>
-        );
-      case "hr":
-        return <hr key={key} className="border-0 border-t border-border-subtle" />;
-      case "paragraph":
-      default:
-        return (
-          <p key={key} className="whitespace-pre-line leading-6 text-text-primary">
-            {parseInlineMarkdown(block.text)}
-          </p>
-        );
-    }
-  });
+          </div>
+        )}
+        {isUser ? (
+          <div className="rounded-xl bg-subtle px-4 py-2.5 text-sm text-text-primary">
+            <p className="whitespace-pre-wrap break-words">{message.text}</p>
+          </div>
+        ) : message.text.trim() ? (
+          <div className="py-2 text-sm text-text-primary">
+            <div className="space-y-2">
+              <ReactMarkdown components={markdownComponents}>{message.text}</ReactMarkdown>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Syntax-highlight a JSON string for display.
+ * Keys ??blue, strings ??green, numbers ??orange, booleans/null ??purple.
+ */
+function highlightJson(json: string): string {
+  return json
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(
+      /("(?:\\.|[^"\\])*")\s*:/g,
+      '<span style="color:#6ab0f3">$1</span>:',
+    )
+    .replace(
+      /:\s*("(?:\\.|[^"\\])*")/g,
+      ': <span style="color:#98c379">$1</span>',
+    )
+    .replace(
+      /:\s*(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g,
+      ': <span style="color:#d19a66">$1</span>',
+    )
+    .replace(
+      /:\s*(true|false|null)/g,
+      ': <span style="color:#c678dd">$1</span>',
+    );
+}
+
+/** Check if a string looks like valid JSON */
+const isJsonLike = (text: string): boolean => {
+  const t = text.trim();
+  if ((!t.startsWith("{") && !t.startsWith("[")) || (!t.endsWith("}") && !t.endsWith("]"))) return false;
+  try { JSON.parse(t); return true; } catch { return false; }
 };
+
+type LlmOutputBubbleProps = {
+  item: { 
+    node: string; 
+    model?: string | null; 
+    reasoning_effort?: string | null;
+    thinking_level?: string | null;
+    input?: string | null;
+    output: string 
+  };
+  index: number;
+};
+
+function LlmOutputBubble({ item, index }: LlmOutputBubbleProps) {
+  const effortLabel = item.reasoning_effort ? ` [${item.reasoning_effort}]` : "";
+  const thinkingLabel = item.thinking_level ? ` [T:${item.thinking_level}]` : "";
+  const modelLabel = item.model ? ` · ${item.model}${effortLabel}${thinkingLabel}` : "";
+  const outputText = item.output || "(empty output)";
+  const jsonFormatted = isJsonLike(outputText);
+  const inputText = (item.input || "").trim();
+  const inputJsonFormatted = inputText ? isJsonLike(inputText) : false;
+
+  return (
+    <div className="flex justify-start">
+      <div className="w-full items-start">
+        <div className="mb-0.5 flex items-center gap-1.5">
+          <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+            LLM #{index + 1}
+          </span>
+          <span className="text-[10px] text-text-secondary truncate">
+            {item.node}{modelLabel}
+          </span>
+        </div>
+        <div className="mb-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">Output</div>
+        <pre
+          className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-amber-500/20 bg-amber-50/50 p-2.5 text-[11px] leading-5 text-text-primary dark:bg-amber-950/20"
+          {...(jsonFormatted
+            ? { dangerouslySetInnerHTML: { __html: highlightJson(outputText) } }
+            : { children: outputText }
+          )}
+        />
+        {inputText && (
+          <>
+            <div className="mt-1.5 mb-0.5 text-[10px] font-semibold text-sky-700 dark:text-sky-300">Input</div>
+            <pre
+              className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-sky-500/20 bg-sky-50/50 p-2.5 text-[11px] leading-5 text-text-primary dark:bg-sky-950/20"
+              {...(inputJsonFormatted
+                ? { dangerouslySetInnerHTML: { __html: highlightJson(inputText) } }
+                : { children: inputText }
+              )}
+            />
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+type PermissionRequestCardProps = {
+  onDeny: () => void;
+  onConfirm: () => void;
+};
+
+function PermissionRequestCard({ onDeny, onConfirm }: PermissionRequestCardProps) {
+  return (
+    <div className="space-y-4 rounded-xl border border-border-subtle bg-subtle/50 p-4">
+      <div className="flex gap-3 text-text-primary">
+        <Calendar className="size-4 mt-0.5" />
+        <div className="flex-1 space-y-1">
+          <p className="text-sm font-semibold">일정 정보를 읽어올까요?</p>
+          <p className="text-sm text-text-secondary leading-relaxed">맞춤형 제안을 위해 캘린더 정보를 읽어올까요? 거부하시겠습니까?</p>
+        </div>
+      </div>
+      <div className="flex gap-2 justify-end">
+        <button
+          onClick={onDeny}
+          className="px-4 py-2 rounded-lg text-sm font-medium text-text-secondary hover:bg-subtle transition-colors"
+        >
+          거부
+        </button>
+        <button
+          onClick={onConfirm}
+          className="px-4 py-2 rounded-lg text-sm font-medium bg-token-primary text-white hover:opacity-90 transition-colors"
+        >
+          허용
+        </button>
+      </div>
+    </div>
+  );
+}
 
 const buildSnapshot = (assistant: ReturnType<typeof useAiAssistant>) => ({
-  mode: assistant.mode,
   text: assistant.text,
-  reasoningEffort: assistant.reasoningEffort,
   model: assistant.model,
-  startDate: assistant.startDate,
-  endDate: assistant.endDate,
   attachments: assistant.attachments,
   conversation: assistant.conversation,
   loading: assistant.loading,
@@ -268,6 +250,8 @@ const buildSnapshot = (assistant: ReturnType<typeof useAiAssistant>) => ({
   deletePreview: assistant.deletePreview,
   selectedAddItems: assistant.selectedAddItems,
   selectedDeleteGroups: assistant.selectedDeleteGroups,
+  debug: assistant.debug,
+  progressLabels: assistant.progressLabels,
 });
 
 export default function AiAssistantModal({
@@ -284,7 +268,7 @@ export default function AiAssistantModal({
   useEffect(() => {
     if (!assistant.open) return;
     setSnapshot(buildSnapshot(assistant));
-  }, [assistant.open, assistant.mode, assistant.reasoningEffort, assistant.model, assistant.startDate, assistant.endDate, assistant.attachments, assistant.conversation, assistant.loading, assistant.error, assistant.addPreview, assistant.deletePreview, assistant.selectedAddItems, assistant.selectedDeleteGroups]);
+  }, [assistant.open, assistant.model, assistant.attachments, assistant.conversation, assistant.loading, assistant.error, assistant.addPreview, assistant.deletePreview, assistant.selectedAddItems, assistant.selectedDeleteGroups, assistant.debug, assistant.progressLabels]);
 
   const view = snapshot;
   const conversation = safeArray(view.conversation);
@@ -292,41 +276,27 @@ export default function AiAssistantModal({
   const deleteGroups = safeArray(view.deletePreview?.groups);
   const selectedAddCount = addItems.filter((_, index) => view.selectedAddItems[index]).length;
   const selectedDeleteCount = deleteGroups.filter((group) => view.selectedDeleteGroups[group.group_key]).length;
+  const selectedPreviewCount = selectedAddCount + selectedDeleteCount;
+  const debugState = view.debug;
+  const debugLlmOutputs = safeArray(debugState?.llmOutputs);
+  const debugTimeline = safeArray(debugState?.timeline);
+  const debugTotalMs = debugState?.totalMs ?? null;
+  const showDebugOutputs = Boolean(debugState?.enabled) && debugLlmOutputs.length > 0;
+  const showDebugTimeline = Boolean(debugState?.enabled) && debugTimeline.length > 0;
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [rangeOpen, setRangeOpen] = useState(false);
   const [imagePreview, setImagePreview] = useState<{ src: string; alt: string } | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
   const dragOriginRef = useRef({ x: 0, y: 0 });
-  const rangeButtonRef = useRef<HTMLButtonElement | null>(null);
-  const rangePopoverRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const isComposingRef = useRef(false);
 
   const hasPreview = addItems.length > 0 || deleteGroups.length > 0;
-  const showConversation = conversation.length > 0 || hasPreview || assistant.progressLabel || view.error;
-
-  const handleStartDateChange = (nextStart: string) => {
-    assistant.setStartDate(nextStart);
-    const start = parseLocalISODate(nextStart);
-    const end = parseLocalISODate(view.endDate);
-    if (start && end && end.getTime() <= start.getTime()) {
-      assistant.setEndDate(toLocalISODate(addDays(start, 1)));
-    }
-  };
-
-  const handleEndDateChange = (nextEnd: string) => {
-    assistant.setEndDate(nextEnd);
-    const end = parseLocalISODate(nextEnd);
-    const start = parseLocalISODate(view.startDate);
-    if (start && end && end.getTime() <= start.getTime()) {
-      assistant.setStartDate(toLocalISODate(addDays(end, -1)));
-    }
-  };
+  const showConversation = conversation.length > 0 || hasPreview || (Array.isArray(view.progressLabels) && view.progressLabels.length > 0) || view.error || showDebugOutputs || showDebugTimeline;
 
   useEffect(() => {
     if (showConversation) {
@@ -335,18 +305,7 @@ export default function AiAssistantModal({
         behavior: "smooth",
       });
     }
-  }, [conversation, hasPreview, assistant.progressLabel, view.error, showConversation]);
-
-  useEffect(() => {
-    if (!rangeOpen) return;
-    const handleClick = (e: MouseEvent) => {
-      if (!rangeButtonRef.current?.contains(e.target as Node) && !rangePopoverRef.current?.contains(e.target as Node)) {
-        setRangeOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [rangeOpen]);
+  }, [conversation, hasPreview, view.progressLabels, view.error, showConversation, showDebugOutputs, debugLlmOutputs.length, showDebugTimeline]);
 
   useEffect(() => {
     if (!inputRef.current) return;
@@ -424,51 +383,20 @@ export default function AiAssistantModal({
             >
               {showConversation ? (
                 <>
-                  {conversation.map((msg, index) => {
-                    const attachments = safeArray(msg.attachments);
-                    const isUser = msg.role === "user";
-                    return (
-                      <div key={`${msg.role}-${index}`} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
-                        <div className={`flex flex-col ${isUser ? "items-end max-w-[85%]" : "items-start w-full"}`}>
-                          {attachments.length > 0 && (
-                            <div className={`inline-grid ${attachments.length > 1 ? "grid-cols-2" : "grid-cols-1"} gap-2 mb-2`}>
-                              {attachments.map((item) => (
-                                <button key={item.id} className="h-24 w-24 overflow-hidden rounded-lg border border-border-subtle cursor-zoom-in" onClick={() => setImagePreview({ src: item.dataUrl, alt: item.name })}>
-                                  <img src={item.dataUrl} alt={item.name} className="h-full w-full object-cover" />
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                          {isUser ? (
-                            <div className="rounded-xl bg-subtle px-4 py-2.5 text-sm text-text-primary">
-                              <p className="whitespace-pre-wrap break-words">{msg.text}</p>
-                            </div>
-                          ) : msg.text.trim() ? (
-                            <div className="py-2 text-sm text-text-primary">
-                              <div className="space-y-2">
-                                {renderMarkdown(msg.text, `${msg.role}-${index}`)}
-                              </div>
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    );
-                  })}
+                  {conversation.map((msg, index) => (
+                    <ConversationMessageRow
+                      key={`${msg.role}-${index}`}
+                      message={msg as ConversationUiMessage}
+                      index={index}
+                      onOpenImage={(src, alt) => setImagePreview({ src, alt })}
+                    />
+                  ))}
 
                   {assistant.permissionRequired && (
-                    <div className="space-y-4 rounded-xl border border-border-subtle bg-subtle/50 p-4">
-                      <div className="flex gap-3 text-text-primary">
-                        <Calendar className="size-4 mt-0.5" />
-                        <div className="flex-1 space-y-1">
-                          <p className="text-sm font-semibold">일정 정보를 읽어야 합니다</p>
-                          <p className="text-sm text-text-secondary leading-relaxed">자세한 제안을 위해 캘린더 정보를 읽어야 합니다. 허락하시겠습니까?</p>
-                        </div>
-                      </div>
-                      <div className="flex gap-2 justify-end">
-                        <button onClick={assistant.denyPermission} className="px-4 py-2 rounded-lg text-sm font-medium text-text-secondary hover:bg-subtle transition-colors">거절</button>
-                        <button onClick={assistant.confirmPermission} className="px-4 py-2 rounded-lg text-sm font-medium bg-token-primary text-white hover:opacity-90 transition-colors">허락</button>
-                      </div>
-                    </div>
+                    <PermissionRequestCard
+                      onDeny={assistant.denyPermission}
+                      onConfirm={assistant.confirmPermission}
+                    />
                   )}
 
                   {(hasPreview || view.error) && (
@@ -515,19 +443,80 @@ export default function AiAssistantModal({
                       ))}
                       {(hasPreview) && (
                         <div className="flex justify-end pt-1">
-                          <button onClick={assistant.apply} className={`px-5 py-2 rounded-full text-sm font-semibold transition-opacity ${view.mode === "delete" ? "bg-token-error" : "bg-token-primary"} text-white ${(view.mode === "add" && selectedAddCount === 0) || (view.mode === "delete" && selectedDeleteCount === 0) ? "opacity-30 pointer-events-none" : "hover:opacity-90"}`}>
-                            {view.mode === "delete" ? `${selectedDeleteCount}건 삭제` : `${selectedAddCount}건 추가`}
+                          <button onClick={assistant.apply} className={`px-5 py-2 rounded-full text-sm font-semibold transition-opacity bg-token-primary text-white ${selectedPreviewCount === 0 ? "opacity-30 pointer-events-none" : "hover:opacity-90"}`}>
+                            {`${selectedPreviewCount}건 적용`}
                           </button>
                         </div>
                       )}
                     </div>
                   )}
 
-                  {assistant.progressLabel && (
-                    <div className="flex items-center py-1">
-                      <div className="text-sm text-text-primary opacity-70 italic">{assistant.progressLabel}...</div>
+                  {Array.isArray(view.progressLabels) && view.progressLabels.length > 0 && (
+                    <div className="py-1">
+                      <div className="space-y-1 text-sm">
+                        {view.progressLabels.map((line, idx) => {
+                          const isInProgress = line.trim().endsWith("중");
+                          return (
+                            isInProgress ? (
+                              <div key={`progress-${idx}`} className="text-mask-wrap">
+                                <span className="text-mask-base">{line}</span>
+                                <span aria-hidden className="text-sweep-overlay">{line}</span>
+                              </div>
+                            ) : (
+                              <div key={`progress-${idx}`} className="text-text-secondary">
+                                {line}
+                              </div>
+                            )
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
+
+                  {showDebugTimeline && (
+                    <div className="rounded-lg border border-sky-500/20 bg-sky-50/50 dark:bg-sky-950/20 p-2.5">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold text-sky-600 dark:text-sky-400">
+                          Pipeline
+                        </span>
+                        {debugTotalMs !== null && (
+                          <span className="text-[10px] font-medium text-text-secondary">
+                            total {debugTotalMs >= 1000 ? `${(debugTotalMs / 1000).toFixed(1)}s` : `${debugTotalMs}ms`}
+                          </span>
+                        )}
+                      </div>
+                      <div className="space-y-0.5">
+                        {debugTimeline.map((entry, idx) => {
+                          const icon = entry.status === "done" ? "OK" : entry.status === "running" ? ".." : "!!";
+                          const statusColor =
+                            entry.status === "done"
+                              ? "text-green-600 dark:text-green-400"
+                              : entry.status === "failed"
+                              ? "text-red-500 dark:text-red-400"
+                              : "text-amber-500 dark:text-amber-400";
+                          const dur = entry.durationMs;
+                          const durLabel = dur !== null
+                            ? dur >= 1000
+                              ? `${(dur / 1000).toFixed(1)}s`
+                              : `${dur}ms`
+                            : null;
+                          return (
+                            <div key={`tl-${idx}`} className="flex items-center gap-1.5 text-[11px] leading-5 font-mono">
+                              <span className={statusColor}>{icon}</span>
+                              <span className="text-text-primary">{entry.node}</span>
+                              {durLabel && (
+                                <span className="text-text-secondary ml-auto tabular-nums">{durLabel}</span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {showDebugOutputs && debugLlmOutputs.map((item, idx) => (
+                    <LlmOutputBubble key={`llm-out-${idx}`} item={item} index={idx} />
+                  ))}
                 </>
               ) : (
                 <div className="text-center space-y-4 opacity-40">
@@ -543,7 +532,7 @@ export default function AiAssistantModal({
                   ref={inputRef}
                   rows={1}
                   value={assistant.text}
-                  placeholder={PLACEHOLDER_TEXT[assistant.mode]}
+                  placeholder={PLACEHOLDER_TEXT}
                   onChange={(e) => assistant.setText(e.target.value)}
                   onCompositionStart={() => {
                     isComposingRef.current = true;
@@ -576,31 +565,6 @@ export default function AiAssistantModal({
                       <input ref={fileInputRef} className="hidden" type="file" accept="image/*" multiple onChange={(e) => (assistant.handleAttach(e.target.files), e.target.value = "")} />
                     </div>
 
-                    <div className="flex items-center bg-subtle rounded-full p-1 border border-border-subtle/50">
-                      {[{ v: "low", i: Rabbit, t: "빠름" }, { v: "medium", i: Turtle, t: "지능" }].map(opt => (
-                        <button key={opt.v} onClick={() => assistant.setReasoningEffort(opt.v as any)} className={`size-7 flex items-center justify-center rounded-full transition-all ${view.reasoningEffort === opt.v ? "bg-canvas text-text-primary shadow-sm" : "text-text-disabled hover:text-text-secondary"}`}>
-                          <opt.i className="size-3.5" />
-                        </button>
-                      ))}
-                    </div>
-
-                    {view.mode === "delete" && (
-                      <div className="relative">
-                        <button ref={rangeButtonRef} className="size-8 flex items-center justify-center rounded-full border border-border-subtle bg-subtle text-text-secondary hover:text-text-primary transition-colors" onClick={() => setRangeOpen(!rangeOpen)}>
-                          <Calendar className="size-4" />
-                        </button>
-                        {rangeOpen && (
-                          <div ref={rangePopoverRef} className="absolute left-0 bottom-full mb-2 w-max rounded-2xl border border-border-subtle bg-canvas p-4 shadow-xl z-[100] space-y-3">
-                            <p className="text-[11px] font-bold text-text-secondary uppercase tracking-wider">삭제 범위 설정</p>
-                            <div className="flex items-center gap-2">
-                              <DatePopover label="시작일" value={view.startDate} onChange={handleStartDateChange} />
-                              <span className="text-text-disabled">~</span>
-                              <DatePopover label="종료일" value={view.endDate} onChange={handleEndDateChange} />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
                   </div>
 
                   <button
@@ -620,14 +584,54 @@ export default function AiAssistantModal({
       <style jsx>{`
         .scrollbar-hidden { -ms-overflow-style: none; scrollbar-width: none; }
         .scrollbar-hidden::-webkit-scrollbar { display: none; }
-        .m4s {
-          background: linear-gradient(90deg, var(--text-primary) 0%, var(--text-secondary) 50%, var(--text-primary) 100%);
-          background-size: 200% auto;
-          -webkit-background-clip: text;
-          -webkit-text-fill-color: transparent;
-          animation: shim 2s linear infinite;
+        .text-mask-wrap {
+          position: relative;
+          display: block;
+          width: fit-content;
         }
-        @keyframes shim { to { background-position: 200% center; } }
+        .text-mask-base {
+          color: oklch(var(--text-disabled));
+        }
+        .text-sweep-overlay {
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          color: oklch(97% 0.01 250);
+          -webkit-mask-image: radial-gradient(
+            circle at center,
+            rgba(0, 0, 0, 1) 0%,
+            rgba(0, 0, 0, 0.98) 20%,
+            rgba(0, 0, 0, 0) 42%
+          );
+          mask-image: radial-gradient(
+            circle at center,
+            rgba(0, 0, 0, 1) 0%,
+            rgba(0, 0, 0, 0.98) 20%,
+            rgba(0, 0, 0, 0) 42%
+          );
+          -webkit-mask-size: 132% 136%;
+          mask-size: 132% 136%;
+          -webkit-mask-repeat: no-repeat;
+          mask-repeat: no-repeat;
+          -webkit-mask-position-y: 50%;
+          mask-position-y: 50%;
+          animation: textMaskSweep 1.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+        }
+        @keyframes textMaskSweep {
+          0% {
+            -webkit-mask-position: 300% 50%;
+            mask-position: 300% 50%;
+          }
+          100% {
+            -webkit-mask-position: -300% 50%;
+            mask-position: -300% 50%;
+          }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .text-sweep-overlay {
+            animation: none;
+          }
+        }
       `}</style>
 
       {imagePreview && (

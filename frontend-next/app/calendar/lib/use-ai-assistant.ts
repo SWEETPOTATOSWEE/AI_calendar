@@ -2,20 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  applyNlpAdd,
-  classifyNlp,
-  deleteGoogleEventById,
-  interruptNlp,
-  previewNlp,
-  previewNlpDelete,
-  previewNlpStream,
-  resetNlpContext,
+  fetchAgentDebugStatus,
+  runAgentStream,
+  type AgentStreamDeltaEvent,
+  type AgentStreamStatusEvent,
+  type AgentRunResponse,
 } from "./api";
 import type { CalendarEvent, EventRecurrence } from "./types";
 
-type AiMode = "add" | "delete";
+type AiMode = "agent";
 type AiModel = "nano" | "mini";
-type NlpClassification = "add" | "delete" | "complex" | "garbage";
 
 export type AddPreviewItem = {
   type: "single" | "recurring";
@@ -45,11 +41,7 @@ export type AddPreviewItem = {
 };
 
 type AddPreviewResponse = {
-  need_more_information?: boolean;
-  content?: string;
   items?: AddPreviewItem[];
-  context_used?: boolean;
-  permission_required?: boolean;
 };
 
 type DeletePreviewGroup = {
@@ -59,12 +51,10 @@ type DeletePreviewGroup = {
   location?: string | null;
   ids: Array<number | string>;
   count?: number;
-  samples?: string[];
 };
 
 type DeletePreviewResponse = {
   groups?: DeletePreviewGroup[];
-  permission_required?: boolean;
 };
 
 type Attachment = {
@@ -73,49 +63,52 @@ type Attachment = {
   dataUrl: string;
 };
 
-const MAX_ATTACHMENTS = 5;
-const MAX_FILE_SIZE = 2.5 * 1024 * 1024;
-const MAX_CONVERSATION_MESSAGES = 8;
-const MAX_CONVERSATION_CHARS = 900;
-
 type ConversationMessage = {
   role: "user" | "assistant";
   text: string;
   attachments?: Attachment[];
   includeInPrompt?: boolean;
+  streaming?: boolean;
 };
 
-const normalizeClassification = (value: unknown): NlpClassification => {
-  if (value === "add" || value === "delete" || value === "complex" || value === "garbage") {
-    return value;
-  }
-  if (typeof value === "string") {
-    const lowered = value.trim().toLowerCase();
-    if (lowered === "add" || lowered === "delete" || lowered === "complex" || lowered === "garbage") {
-      return lowered as NlpClassification;
-    }
-  }
-  return "garbage";
+type DebugLlmItem = {
+  node: string;
+  model?: string | null;
+  reasoning_effort?: string | null;
+  thinking_level?: string | null;
+  input?: string | null;
+  output: string;
 };
 
-const pad2 = (value: number) => String(value).padStart(2, "0");
-const toLocalISODate = (date: Date) =>
-  `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
-const addDays = (date: Date, days: number) => {
-  const next = new Date(date);
-  next.setDate(next.getDate() + days);
-  return next;
+type DebugTimelineEntry = {
+  node: string;
+  status: "running" | "done" | "failed";
+  durationMs: number | null;
 };
-const addMonths = (date: Date, months: number) => {
-  const next = new Date(date);
-  next.setMonth(next.getMonth() + months);
-  return next;
+
+type DebugPanelState = {
+  enabled: boolean;
+  llmOutputs: DebugLlmItem[];
+  timeline: DebugTimelineEntry[];
+  totalMs: number | null;
 };
+
+const EMPTY_DEBUG_STATE: DebugPanelState = {
+  enabled: false,
+  llmOutputs: [],
+  timeline: [],
+  totalMs: null,
+};
+
+const MAX_ATTACHMENTS = 5;
+const MAX_FILE_SIZE = 2.5 * 1024 * 1024;
+const MAX_CONVERSATION_MESSAGES = 24;
+const MAX_CONVERSATION_CHARS = 2700;
 
 const buildConversationText = (messages: ConversationMessage[]) =>
   messages
     .filter((msg) => msg.includeInPrompt !== false)
-    .map((msg) => `${msg.role === "assistant" ? "assistant" : "사용자"}: ${msg.text}`)
+    .map((msg) => `${msg.role === "assistant" ? "assistant" : "user"}: ${msg.text}`)
     .join("\n");
 
 const trimConversation = (messages: ConversationMessage[]) => {
@@ -132,513 +125,951 @@ const trimConversation = (messages: ConversationMessage[]) => {
 };
 
 type AiAssistantOptions = {
-  onApplied?: () => void;
+  onApplied?: (response?: AgentRunResponse) => void;
   onAddApplied?: (events: CalendarEvent[]) => void;
   onDeleteApplied?: (ids: Array<number | string>) => void;
 };
 
+const asRecord = (value: unknown): Record<string, unknown> | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+};
+
+const asString = (value: unknown): string | null => {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+};
+
+/**
+ * Try to parse a raw LLM output string into pretty-printed JSON.
+ * Handles:
+ *   - Pure JSON strings
+ *   - JSON wrapped in markdown code fences (```json ... ```)
+ *   - Mixed text + JSON (extracts and formats JSON blocks inline)
+ * Falls back to the original string if nothing looks like JSON.
+ */
+const normalizeOutputToJson = (raw: string): string => {
+  if (!raw || !raw.trim()) return raw;
+
+  const trimmed = raw.trim();
+
+  // 1) Try parsing the entire string as JSON directly
+  try {
+    const parsed = JSON.parse(trimmed);
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    // not pure JSON ??continue
+  }
+
+  // 2) Strip markdown code fences and try again
+  const fenceRegex = /^```(?:json)?\s*\n?([\s\S]*?)\n?```$/;
+  const fenceMatch = trimmed.match(fenceRegex);
+  if (fenceMatch) {
+    try {
+      const parsed = JSON.parse(fenceMatch[1].trim());
+      return JSON.stringify(parsed, null, 2);
+    } catch {
+      // fenced content isn't valid JSON
+    }
+  }
+
+  // 3) Find and format inline JSON blocks (```json ... ```) within larger text
+  const inlineFenceRegex = /```(?:json)?\s*\n?([\s\S]*?)\n?```/g;
+  let result = trimmed;
+  let didReplace = false;
+  result = result.replace(inlineFenceRegex, (_match, content: string) => {
+    try {
+      const parsed = JSON.parse(content.trim());
+      didReplace = true;
+      return JSON.stringify(parsed, null, 2);
+    } catch {
+      return _match;
+    }
+  });
+  if (didReplace) return result;
+
+  // 4) Try to find a top-level JSON object or array in the string
+  const jsonStartIdx = trimmed.search(/[{\[]/);
+  if (jsonStartIdx >= 0) {
+    const candidate = trimmed.slice(jsonStartIdx);
+    try {
+      const parsed = JSON.parse(candidate);
+      const prefix = trimmed.slice(0, jsonStartIdx).trim();
+      const formatted = JSON.stringify(parsed, null, 2);
+      return prefix ? `${prefix}\n${formatted}` : formatted;
+    } catch {
+      // not valid JSON from that point
+    }
+  }
+
+  // 5) Fallback: return original
+  return raw;
+};
+
+const buildFailureLogs = (response: AgentRunResponse) => {
+  const logs: string[] = [];
+  const trace = response.trace;
+  if (!trace) return logs;
+  if (!trace.debug?.enabled) return logs;
+
+  const branch = asString(trace.branch);
+  if (branch) logs.push(`- **branch**: ${branch}`);
+
+  const currentNode = asString(trace.debug?.current_node ?? null);
+  if (currentNode) logs.push(`- **current_node**: ${currentNode}`);
+
+  const nodeOutputs = asRecord(trace.node_outputs);
+  const executorOutput = nodeOutputs ? asRecord(nodeOutputs.executor) : null;
+  const stoppedAtStepId = asString(executorOutput?.stopped_at_step_id);
+  if (stoppedAtStepId) logs.push(`- **stopped_at_step_id**: ${stoppedAtStepId}`);
+
+  // Show step results from executor output
+  const stepResults = executorOutput?.step_results;
+  if (Array.isArray(stepResults) && stepResults.length > 0) {
+    for (const sr of stepResults) {
+      const rec = asRecord(sr);
+      if (!rec) continue;
+      const sid = asString(rec.step_id) ?? "?";
+      const int = asString(rec.intent) ?? "?";
+      const ok = !!rec.ok;
+      const err = asString(rec.error);
+      if (!ok && err) {
+        logs.push(`- **${sid}** (${int}): \`${err}\``);
+      }
+    }
+  }
+
+  // Extract node output details per stage
+  if (nodeOutputs) {
+    // Intent router output
+    const routerOut = asRecord(nodeOutputs.intent_router);
+    if (routerOut) {
+      const model = asString(routerOut.model);
+      const effort = asString(routerOut.reasoning_effort);
+      const thinking = asString(routerOut.thinking_level);
+      let label = `- **intent_router model**: ${model}`;
+      if (effort) label += ` [${effort}]`;
+      if (thinking) label += ` [T:${thinking}]`;
+      if (model) logs.push(label);
+    }
+
+    // Slot extractor output
+    const slotExtractorOut = asRecord(nodeOutputs.slot_extractor);
+    if (slotExtractorOut) {
+      const model = asString(slotExtractorOut.model);
+      const effort = asString(slotExtractorOut.reasoning_effort);
+      const thinking = asString(slotExtractorOut.thinking_level);
+      let label = `- **slot_extractor model**: ${model}`;
+      if (effort) label += ` [${effort}]`;
+      if (thinking) label += ` [T:${thinking}]`;
+      if (model) logs.push(label);
+    }
+
+    // Pre-validation issues
+    const preOut = asRecord(nodeOutputs.slot_validator_pre);
+    if (preOut) {
+      const issuesCount = typeof preOut.issues_count === "number" ? preOut.issues_count : 0;
+      if (issuesCount > 0) {
+        logs.push(`- **slot_validator_pre**: ${issuesCount} issue(s)`);
+        const issues = Array.isArray(preOut.issues) ? preOut.issues : [];
+        for (const iss of issues.slice(0, 8)) {
+          const rec = asRecord(iss);
+          if (!rec) continue;
+          const detail = asString(rec.detail) ?? "";
+          const slot = asString(rec.slot) ?? "";
+          const code = asString(rec.code) ?? "";
+          logs.push(`  - \`${code}\` ${slot ? `[${slot}]` : ""}: ${detail}`);
+        }
+      }
+      const missingSlots = Array.isArray(preOut.missing_slots) ? preOut.missing_slots : [];
+      if (missingSlots.length > 0 && issuesCount === 0) {
+        logs.push(`- **missing_slots (pre)**: ${missingSlots.length}`);
+        for (const ms of missingSlots.slice(0, 8)) {
+          const rec = asRecord(ms);
+          if (!rec) continue;
+          logs.push(`  - ${asString(rec.step_id) ?? "?"}: ${asString(rec.detail) ?? ""}`);
+        }
+      }
+    }
+
+    // Context validation issues
+    const ctxOut = asRecord(nodeOutputs.slot_validator);
+    if (ctxOut) {
+      const issuesCount = typeof ctxOut.issues_count === "number" ? ctxOut.issues_count : 0;
+      if (issuesCount > 0) {
+        logs.push(`- **slot_validator**: ${issuesCount} issue(s)`);
+        const issues = Array.isArray(ctxOut.issues) ? ctxOut.issues : [];
+        for (const iss of issues.slice(0, 8)) {
+          const rec = asRecord(iss);
+          if (!rec) continue;
+          const detail = asString(rec.detail) ?? "";
+          const slot = asString(rec.slot) ?? "";
+          const code = asString(rec.code) ?? "";
+          logs.push(`  - \`${code}\` ${slot ? `[${slot}]` : ""}: ${detail}`);
+        }
+      }
+    }
+
+    // Question agent output
+    const qaOut = asRecord(nodeOutputs.question_agent);
+    if (qaOut) {
+      const question = asString(qaOut.question);
+      if (question) logs.push(`- **question_agent**: ${question}`);
+    }
+
+    // Title clarify output
+    const titleOut = asRecord(nodeOutputs.title_clarify);
+    if (titleOut && titleOut.triggered) {
+      const missing = Array.isArray(titleOut.missing_titles) ? titleOut.missing_titles : [];
+      if (missing.length > 0) {
+        logs.push(`- **title_clarify**: ${missing.length} title(s) missing`);
+        for (const mt of missing.slice(0, 8)) {
+          const rec = asRecord(mt);
+          if (!rec) continue;
+          logs.push(`  - ${asString(rec.step_id) ?? "?"}: ${asString(rec.detail) ?? ""}`);
+        }
+      }
+    }
+  }
+
+  const timeline = Array.isArray(trace.node_timeline) ? trace.node_timeline : [];
+  const failedNodes = timeline
+    .map((item) => {
+      const parsed = asRecord(item);
+      const node = asString(parsed?.node);
+      const status = asString(parsed?.status)?.toLowerCase();
+      if (!node || !status) return null;
+      if (status !== "failed" && status !== "error") return null;
+      return `\`${node}\``;
+    })
+    .filter((item): item is string => Boolean(item));
+  if (failedNodes.length > 0) {
+    logs.push(`- **failed_nodes**: ${failedNodes.join(", ")}`);
+  }
+
+  return logs;
+};
+
+const formatAgentReply = (response: AgentRunResponse) => {
+  const status = response.status || "unknown";
+  if (status === "needs_clarification") {
+    return response.question || "I need one more detail to continue.";
+  }
+  const responseText = asString(response.response_text);
+  if (responseText) {
+    return responseText;
+  }
+
+  const lines: string[] = [];
+  if (status === "completed") lines.push("Done.");
+  if (status === "planned") lines.push("Plan generated (dry run).");
+  if (status === "failed") lines.push("**Execution failed.**");
+
+  const results = Array.isArray(response.results) ? response.results : [];
+  const failedResults = results.filter((item) => !item.ok);
+
+  if (results.length > 0) {
+    lines.push("");
+    lines.push("**Steps:**");
+    for (const item of results) {
+      if (item.ok) {
+        const data = item.data as Record<string, unknown> | undefined;
+        const eventId = data ? asString(data.event_id) : null;
+        const count = typeof data?.count === "number" ? data.count : null;
+        const extra = [
+          eventId ? `id=${eventId}` : null,
+          count && count > 1 ? `${count} items` : null,
+        ].filter(Boolean).join(", ");
+        lines.push(`- ??**${item.intent}** (${item.step_id})${extra ? `: ${extra}` : ""}`);
+      } else {
+        lines.push(`- ??**${item.intent}** (${item.step_id}): \`${item.error || "failed"}\``);
+      }
+    }
+  } else if (status === "completed") {
+    lines.push("- No step result returned.");
+  }
+
+  // Show plan summary for failed/planned status
+  const plan = Array.isArray(response.plan) ? response.plan : [];
+  if (plan.length > 0 && (status === "failed" || status === "planned")) {
+    lines.push("");
+    lines.push("**Plan:**");
+    for (const step of plan) {
+      const rec = asRecord(step);
+      if (!rec) continue;
+      const sid = asString(rec.step_id) ?? "?";
+      const intent = asString(rec.intent) ?? "?";
+      const args = asRecord(rec.args);
+      const items = args ? (Array.isArray(args.items) ? args.items : []) : [];
+      const title = asString(args?.title);
+      const argsDetails: string[] = [];
+      if (title) argsDetails.push(`title="${title}"`);
+      if (items.length > 0) {
+        for (const it of items) {
+          const itRec = asRecord(it);
+          if (!itRec) continue;
+          const itTitle = asString(itRec.title) ?? "";
+          const itType = asString(itRec.type) ?? "";
+          const itStart = asString(itRec.start) ?? asString(itRec.start_date) ?? "";
+          argsDetails.push(`[${itType}] ${itTitle} ${itStart}`);
+        }
+      }
+      const argsStr = argsDetails.length > 0 ? ` ??${argsDetails.join(", ")}` : "";
+      lines.push(`- ${sid}: \`${intent}\`${argsStr}`);
+    }
+  }
+
+  // Show validation issues from response
+  const issues = Array.isArray(response.issues) ? response.issues : [];
+  if (issues.length > 0) {
+    lines.push("");
+    lines.push("**Validation Issues:**");
+    for (const iss of issues) {
+      const rec = asRecord(iss);
+      if (!rec) continue;
+      const sid = asString(rec.step_id) ?? "?";
+      const code = asString(rec.code) ?? "?";
+      const slot = asString(rec.slot);
+      const detail = asString(rec.detail) ?? "";
+      lines.push(`- ${sid}: \`${code}\`${slot ? ` [${slot}]` : ""} ??${detail}`);
+    }
+  }
+
+  if (failedResults.length > 0 || status === "failed") {
+    const failureLogs = buildFailureLogs(response);
+    if (failureLogs.length > 0) {
+      lines.push("");
+      lines.push("**Failure Details:**");
+      lines.push(...failureLogs);
+    }
+  }
+
+  // Show confidence
+  if (typeof response.confidence === "number" && status !== "completed") {
+    lines.push("");
+    lines.push(`*confidence: ${response.confidence}*`);
+  }
+
+  return lines.join("\n").trim() || "Request processed.";
+};
+
+const buildLlmInputQueues = (
+  nodeOutputsRaw: unknown,
+): Record<string, string[]> => {
+  const queues: Record<string, string[]> = {};
+  const push = (node: string, payload: Record<string, unknown>) => {
+    if (!node) return;
+    const normalized = normalizeOutputToJson(JSON.stringify(payload, null, 2));
+    if (!queues[node]) queues[node] = [];
+    queues[node].push(normalized);
+  };
+
+  const nodeOutputs = asRecord(nodeOutputsRaw);
+  if (!nodeOutputs) return queues;
+
+  const intentRouter = asRecord(nodeOutputs.intent_router);
+  const intentRouterDebug = asRecord(intentRouter?.debug);
+  if (intentRouterDebug) {
+    push("intent_router", {
+      payload: intentRouterDebug.payload ?? null,
+      system_prompt: intentRouterDebug.system_prompt ?? null,
+      developer_prompt: intentRouterDebug.developer_prompt ?? null,
+    });
+  }
+
+  const questionAgent = asRecord(nodeOutputs.question_agent);
+  const questionDebug = asRecord(questionAgent?.debug);
+  if (questionDebug) {
+    push("question_agent", {
+      payload: questionDebug.payload ?? null,
+      system_prompt: questionDebug.system_prompt ?? null,
+      developer_prompt: questionDebug.developer_prompt ?? null,
+    });
+  }
+
+  const responseAgent = asRecord(nodeOutputs.response_agent);
+  const responseDebug = asRecord(responseAgent?.debug);
+  if (responseDebug) {
+    const attempts = Array.isArray(responseDebug.attempts) ? responseDebug.attempts : [];
+    if (attempts.length > 0) {
+      for (const rawAttempt of attempts) {
+        const attempt = asRecord(rawAttempt);
+        if (!attempt) continue;
+        push("response_agent", {
+          payload: attempt.payload ?? null,
+          system_prompt: attempt.system_prompt ?? null,
+          developer_prompt: attempt.developer_prompt ?? null,
+        });
+      }
+    } else {
+      push("response_agent", {
+        payload: responseDebug.payload ?? null,
+        system_prompt: responseDebug.system_prompt ?? null,
+        developer_prompt: responseDebug.developer_prompt ?? null,
+      });
+    }
+  }
+
+  const slotExtractor = asRecord(nodeOutputs.slot_extractor);
+  const extractions = Array.isArray(slotExtractor?.extractions) ? slotExtractor.extractions : [];
+  for (const rawExtraction of extractions) {
+    const extraction = asRecord(rawExtraction);
+    if (!extraction) continue;
+    const node = asString(extraction.node) ?? "";
+    if (!node.startsWith("slot_extractor")) continue;
+    push(node, {
+      payload: extraction.payload ?? null,
+      system_prompt: extraction.system_prompt ?? null,
+      developer_prompt: extraction.developer_prompt ?? null,
+    });
+  }
+  return queues;
+};
+
+const parseLlmOutputs = (rawList: unknown[], nodeOutputsRaw: unknown): DebugLlmItem[] => {
+  const outputs: DebugLlmItem[] = [];
+  const inputQueues = buildLlmInputQueues(nodeOutputsRaw);
+  for (const raw of rawList) {
+    const item = asRecord(raw);
+    const node = typeof item?.node === "string" ? item.node : "";
+    if (!node) continue;
+    const output = typeof item?.output === "string" ? item.output : "";
+    const model = typeof item?.model === "string" ? item.model : null;
+    const reasoning_effort = typeof item?.reasoning_effort === "string" ? item.reasoning_effort : null;
+    const thinking_level = typeof item?.thinking_level === "string" ? item.thinking_level : null;
+    const queue = inputQueues[node];
+    const input = Array.isArray(queue) && queue.length > 0 ? queue.shift() ?? null : null;
+    outputs.push({ 
+      node, 
+      model, 
+      reasoning_effort, 
+      thinking_level, 
+      input,
+      output: normalizeOutputToJson(output) 
+    });
+  }
+  return outputs;
+};
+
+const buildNodeTimeline = (rawTimeline: unknown[]): { entries: DebugTimelineEntry[]; totalMs: number | null } => {
+  const running = new Map<string, number>(); // node -> running timestamp ms
+  const seen = new Map<string, DebugTimelineEntry>(); // node -> latest entry (deduped, keeps order)
+
+  let firstAt: number | null = null;
+  let lastAt: number | null = null;
+
+  for (const item of rawTimeline) {
+    const rec = asRecord(item);
+    if (!rec) continue;
+    const node = asString(rec.node);
+    const status = asString(rec.status)?.toLowerCase();
+    const atStr = asString(rec.at);
+    if (!node || !status) continue;
+    const at = atStr ? new Date(atStr).getTime() : NaN;
+    if (isNaN(at)) continue;
+
+    if (firstAt === null || at < firstAt) firstAt = at;
+    if (lastAt === null || at > lastAt) lastAt = at;
+
+    if (status === "running") {
+      running.set(node, at);
+      if (!seen.has(node)) {
+        seen.set(node, { node, status: "running", durationMs: null });
+      }
+    } else if (status === "done" || status === "failed") {
+      const startAt = running.get(node);
+      const durationMs = startAt != null ? at - startAt : null;
+      seen.set(node, {
+        node,
+        status: status as "done" | "failed",
+        durationMs,
+      });
+    }
+  }
+
+  const totalMs = firstAt != null && lastAt != null ? lastAt - firstAt : null;
+  return { entries: Array.from(seen.values()), totalMs };
+};
+
+const parseDebugPanelState = (response: AgentRunResponse | null): DebugPanelState => {
+  const trace = response?.trace;
+  const debugObj = trace?.debug;
+  const enabled = Boolean(debugObj?.enabled);
+  if (!enabled) return { ...EMPTY_DEBUG_STATE };
+  const llmRaw = Array.isArray(trace?.llm_outputs) ? trace.llm_outputs : [];
+  const nodeOutputsRaw = trace?.node_outputs;
+  const timelineRaw = Array.isArray(trace?.node_timeline) ? trace.node_timeline : [];
+  const { entries, totalMs } = buildNodeTimeline(timelineRaw);
+  return { enabled, llmOutputs: parseLlmOutputs(llmRaw, nodeOutputsRaw), timeline: entries, totalMs };
+};
+
+type SlotProgressItem = {
+  key: string;
+  label: string;
+  status: "running" | "done" | "failed";
+  finishedAt?: number;
+};
+
+type ProgressState = {
+  thinking: boolean;
+  context: "idle" | "running" | "done";
+  slots: SlotProgressItem[];
+  executorStatus: "idle" | "running" | "done" | "failed";
+};
+
+const EMPTY_PROGRESS_STATE: ProgressState = {
+  thinking: false,
+  context: "idle",
+  slots: [],
+  executorStatus: "idle",
+};
+
+const SLOT_INTENT_LABELS: Record<string, string> = {
+  "calendar.create_event": "일정 생성",
+  "calendar.update_event": "일정 업데이트",
+  "calendar.cancel_event": "일정 삭제",
+  "task.create_task": "할 일 생성",
+  "task.update_task": "할 일 업데이트",
+  "task.cancel_task": "할 일 삭제",
+};
+
+const slotLabelFromIntent = (intent: string | null) => {
+  if (!intent) return null;
+  return SLOT_INTENT_LABELS[intent] ?? null;
+};
+
+const applyStatusToProgress = (
+  previous: ProgressState,
+  event: AgentStreamStatusEvent,
+): ProgressState => {
+  const node = asString(event.node);
+  const status = asString(event.status)?.toLowerCase();
+  const detail = asRecord(event.detail);
+  if (!node || !status) return previous;
+
+  const next: ProgressState = {
+    thinking: previous.thinking,
+    context: previous.context,
+    slots: [...previous.slots],
+    executorStatus: previous.executorStatus,
+  };
+
+  if (node === "context_provider") {
+    next.thinking = false;
+    if (status === "running") next.context = "running";
+    if (status === "done") next.context = "done";
+    return next;
+  }
+
+  if (node === "slot_extractor") {
+    next.thinking = false;
+    const intent = asString(detail?.intent);
+    const stepId = asString(detail?.step_id);
+    const label = slotLabelFromIntent(intent);
+    if (!label) return next;
+    const key = stepId || intent || `slot-${next.slots.length + 1}`;
+    const index = next.slots.findIndex((item) => item.key === key);
+    if (status === "running") {
+      const item: SlotProgressItem = { key, label, status: "running" };
+      if (index >= 0) next.slots[index] = item;
+      else next.slots.push(item);
+    } else if (status === "done") {
+      const prevStatus = index >= 0 ? next.slots[index].status : null;
+      const prevFinishedAt = index >= 0 ? next.slots[index].finishedAt : undefined;
+      const item: SlotProgressItem = {
+        key,
+        label,
+        status: prevStatus === "failed" ? "failed" : "done",
+        finishedAt:
+          prevStatus === "failed"
+            ? prevFinishedAt
+            : prevFinishedAt ?? Date.now(),
+      };
+      if (index >= 0) next.slots[index] = item;
+      else next.slots.push(item);
+    } else if (status === "failed") {
+      const prevFinishedAt = index >= 0 ? next.slots[index].finishedAt : undefined;
+      const item: SlotProgressItem = {
+        key,
+        label,
+        status: "failed",
+        finishedAt: prevFinishedAt ?? Date.now(),
+      };
+      if (index >= 0) next.slots[index] = item;
+      else next.slots.push(item);
+    }
+    return next;
+  }
+
+  if (node === "slot_validator" && status === "done") {
+    const missingStepIdsRaw = Array.isArray(detail?.missing_step_ids)
+      ? detail?.missing_step_ids
+      : [];
+    const missingStepIds = new Set(
+      missingStepIdsRaw
+        .map((value) => (typeof value === "string" ? value.trim() : ""))
+        .filter((value) => value.length > 0),
+    );
+    if (missingStepIds.size === 0) return next;
+    next.slots = next.slots.map((item) =>
+      missingStepIds.has(item.key)
+        ? { ...item, status: "failed", finishedAt: item.finishedAt ?? Date.now() }
+        : item,
+    );
+    return next;
+  }
+
+  if (node === "executor") {
+    next.thinking = false;
+    if (status === "running") next.executorStatus = "running";
+    if (status === "done") next.executorStatus = "done";
+    if (status === "failed") next.executorStatus = "failed";
+    return next;
+  }
+
+  if (status === "running") next.thinking = true;
+  if (status === "done" || status === "failed") next.thinking = false;
+  return next;
+};
+
 export const useAiAssistant = (options?: AiAssistantOptions) => {
   const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState<AiMode>("add");
-  const [textByMode, setTextByMode] = useState<Record<AiMode, string>>({ add: "", delete: "" });
-  const [reasoningEffort, setReasoningEffort] = useState("low");
+  const mode: AiMode = "agent";
+  const [text, setText] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [attachmentsByMode, setAttachmentsByMode] = useState<Record<AiMode, Attachment[]>>({
-    add: [],
-    delete: [],
-  });
-  const [conversationByMode, setConversationByMode] = useState<Record<AiMode, ConversationMessage[]>>({
-    add: [],
-    delete: [],
-  });
-  const text = textByMode[mode] ?? "";
-  const attachments = attachmentsByMode[mode] ?? [];
-  const conversation = conversationByMode[mode] ?? [];
-  const model: AiModel = "mini";
-  const [loadingByMode, setLoadingByMode] = useState<Record<AiMode, boolean>>({
-    add: false,
-    delete: false,
-  });
-  const [errorByMode, setErrorByMode] = useState<Record<AiMode, string | null>>({
-    add: null,
-    delete: null,
-  });
-  const [progressByMode, setProgressByMode] = useState<Record<AiMode, null | "thinking" | "context">>({
-    add: null,
-    delete: null,
-  });
-  const [permissionRequiredByMode, setPermissionRequiredByMode] = useState<Record<AiMode, boolean>>({
-    add: false,
-    delete: false,
-  });
-  const loading = loadingByMode[mode] ?? false;
-  const error = errorByMode[mode] ?? null;
-  const progress = progressByMode[mode] ?? null;
-  const permissionRequired = permissionRequiredByMode[mode] ?? false;
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [conversation, setConversation] = useState<ConversationMessage[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<ProgressState>({ ...EMPTY_PROGRESS_STATE });
+  const [debug, setDebug] = useState<DebugPanelState>({ ...EMPTY_DEBUG_STATE });
+  const [debugModeHint, setDebugModeHint] = useState<boolean>(false);
   const [addPreview, setAddPreview] = useState<AddPreviewResponse | null>(null);
   const [deletePreview, setDeletePreview] = useState<DeletePreviewResponse | null>(null);
   const [selectedAddItems, setSelectedAddItems] = useState<Record<number, boolean>>({});
   const [selectedDeleteGroups, setSelectedDeleteGroups] = useState<Record<string, boolean>>({});
-  const requestIdRef = useRef<string | null>(null);
-  const pendingUserTextRef = useRef<string | null>(null);
-  const pendingModeRef = useRef<AiMode | null>(null);
-  const lastRequestParamsRef = useRef<{
-    payloadText: string;
-    attachmentSnapshot: { id: string; name: string; dataUrl: string }[];
-  } | null>(null);
+  const model: AiModel = "nano";
+  const progressLabels = useMemo(() => {
+    const inProgressLines: string[] = [];
+    const completedLines: string[] = [];
+    if (progress.thinking) {
+      inProgressLines.push("생각 중");
+    }
+    if (progress.context === "running") {
+      inProgressLines.push("캘린더를 읽는 중");
+    } else if (progress.context === "done") {
+      completedLines.push("캘린더 읽음");
+    }
+    const runningSlots = progress.slots.filter((item) => item.status === "running");
+    const finishedSlots = progress.slots
+      .filter((item) => item.status !== "running")
+      .sort((a, b) => (a.finishedAt ?? 0) - (b.finishedAt ?? 0));
 
-  const makeRequestId = () =>
-    `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    for (const item of runningSlots) {
+      inProgressLines.push(`${item.label} 중`);
+    }
+    for (const item of finishedSlots) {
+      completedLines.push(
+        item.status === "failed"
+          ? `${item.label} 실패`
+          : `${item.label} 완료`,
+      );
+    }
+    return [...inProgressLines, ...completedLines];
+  }, [progress]);
 
-  const ensureDefaultDeleteRange = useCallback(() => {
-    const today = new Date();
-    setStartDate(toLocalISODate(today));
-    setEndDate(toLocalISODate(addMonths(today, 3)));
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const progressClearedOnResponseDeltaRef = useRef(false);
+
+  useEffect(() => {
+    let active = true;
+    fetchAgentDebugStatus()
+      .then((data) => {
+        if (!active) return;
+        setDebugModeHint(Boolean(data?.enabled));
+      })
+      .catch(() => {
+        if (!active) return;
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
-  const openWithText = useCallback((value: string) => {
-    const trimmed = value.trim();
-    if (trimmed) {
-      setTextByMode((prev) => ({ ...prev, [mode]: trimmed }));
-    }
-    setOpen(true);
-  }, [mode]);
+  const openWithText = useCallback(
+    (value: string) => {
+      const trimmed = value.trim();
+      if (trimmed) {
+        setText(trimmed);
+      }
+      setOpen(true);
+    },
+    [],
+  );
 
   const close = useCallback(() => {
     setOpen(false);
   }, []);
 
-  useEffect(() => {
-    if (mode !== "delete") return;
-    if (startDate && endDate) return;
-    ensureDefaultDeleteRange();
-  }, [mode, startDate, endDate, ensureDefaultDeleteRange]);
+  const resetConversation = useCallback(() => {
+    setConversation([]);
+    setText("");
+    setAttachments([]);
+    setAddPreview(null);
+    setDeletePreview(null);
+    setSelectedAddItems({});
+    setSelectedDeleteGroups({});
+    setError(null);
+    setProgress({ ...EMPTY_PROGRESS_STATE });
+    setDebug({ ...EMPTY_DEBUG_STATE });
+  }, []);
 
-  const appendConversationForMode = useCallback(
+  const handleAttach = useCallback(
+    async (files: FileList | null) => {
+      if (!files) return;
+      const fileArray = Array.from(files);
+      const remaining = Math.max(0, MAX_ATTACHMENTS - attachments.length);
+      const slice = fileArray.slice(0, remaining);
+      const next: Attachment[] = [];
+
+      for (const file of slice) {
+        if (file.size > MAX_FILE_SIZE) {
+          setError("Image is too large. Use files <= 2.5MB.");
+          continue;
+        }
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ""));
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(file);
+        });
+        next.push({
+          id: `${file.name}-${file.lastModified}`,
+          name: file.name,
+          dataUrl,
+        });
+      }
+
+      setAttachments((prev) => [...prev, ...next]);
+    },
+    [attachments.length],
+  );
+
+  const removeAttachment = useCallback(
+    (id: string) => {
+      setAttachments((prev) => prev.filter((item) => item.id !== id));
+    },
+    [],
+  );
+
+  const appendConversation = useCallback(
     (
-      targetMode: AiMode,
       role: ConversationMessage["role"],
       value: string,
-      options?: { includeInPrompt?: boolean }
+      options?: { includeInPrompt?: boolean; attachments?: Attachment[] },
     ) => {
       const trimmed = value.trim();
       if (!trimmed) return;
-      setConversationByMode((prev) => ({
-        ...prev,
-        [targetMode]: trimConversation([
-          ...(prev[targetMode] ?? []),
-          { role, text: trimmed, includeInPrompt: options?.includeInPrompt },
+      setConversation((prev) =>
+        trimConversation([
+          ...prev,
+          {
+            role,
+            text: trimmed,
+            includeInPrompt: options?.includeInPrompt,
+            attachments: options?.attachments,
+          },
         ]),
-      }));
+      );
     },
-    []
+    [],
   );
 
-  const resetConversation = useCallback(() => {
-    setConversationByMode((prev) => ({ ...prev, [mode]: [] }));
-    setTextByMode((prev) => ({ ...prev, [mode]: "" }));
-    setAttachmentsByMode((prev) => ({ ...prev, [mode]: [] }));
-    if (mode === "add") {
-      setAddPreview(null);
-      setSelectedAddItems({});
-    } else {
-      setDeletePreview(null);
-      setSelectedDeleteGroups({});
-    }
-    setErrorByMode((prev) => ({ ...prev, [mode]: null }));
-    setProgressByMode((prev) => ({ ...prev, [mode]: null }));
-    setLoadingByMode((prev) => ({ ...prev, [mode]: false }));
-    resetNlpContext().catch(() => {});
-  }, [mode]);
-
-  const handleAttach = useCallback(async (files: FileList | null) => {
-    if (!files) return;
-    const fileArray = Array.from(files);
-    const remaining = Math.max(0, MAX_ATTACHMENTS - attachments.length);
-    const slice = fileArray.slice(0, remaining);
-    const next: Attachment[] = [];
-
-    for (const file of slice) {
-      if (file.size > MAX_FILE_SIZE) {
-        setErrorByMode((prev) => ({ ...prev, [mode]: "이미지가 너무 큽니다. 2.5MB 이하로 올려주세요." }));
-        continue;
+  const appendStreamingAssistantDelta = useCallback((delta: string) => {
+    const piece = typeof delta === "string" ? delta : "";
+    if (!piece) return;
+    setConversation((prev) => {
+      const next = [...prev];
+      for (let i = next.length - 1; i >= 0; i -= 1) {
+        const item = next[i];
+        if (item.role === "assistant" && item.streaming) {
+          next[i] = { ...item, text: `${item.text}${piece}` };
+          return next;
+        }
       }
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ""));
-        reader.onerror = () => reject(reader.error);
-        reader.readAsDataURL(file);
-      });
-      next.push({
-        id: `${file.name}-${file.lastModified}`,
-        name: file.name,
-        dataUrl,
-      });
-    }
-
-    setAttachmentsByMode((prev) => ({ ...prev, [mode]: [...(prev[mode] ?? []), ...next] }));
-  }, [attachments.length, mode]);
-
-  const removeAttachment = useCallback((id: string) => {
-    setAttachmentsByMode((prev) => ({
-      ...prev,
-      [mode]: (prev[mode] ?? []).filter((item) => item.id !== id),
-    }));
-  }, [mode]);
-
-  const preview = useCallback(async (contextConfirmed?: boolean) => {
-    const trimmedText = text.trim();
-    if (!trimmedText && attachments.length === 0 && !contextConfirmed) {
-      setErrorByMode((prev) => ({ ...prev, [mode]: "문장을 입력해주세요." }));
-      return;
-    }
-    const requestId = makeRequestId();
-    let requestMode: AiMode = mode;
-    requestIdRef.current = requestId;
-    pendingModeRef.current = requestMode;
-    setLoadingByMode((prev) => ({ ...prev, [requestMode]: true }));
-    setProgressByMode((prev) => ({ ...prev, [requestMode]: "thinking" }));
-    setErrorByMode((prev) => ({ ...prev, [requestMode]: null }));
-    setPermissionRequiredByMode((prev) => ({ ...prev, [requestMode]: false }));
-
-    if (requestMode === "add") {
-      setAddPreview(null);
-    } else {
-      setDeletePreview(null);
-    }
-    const attachmentSnapshot = attachments.map((item) => ({ ...item }));
-    const userMessage = trimmedText || (attachmentSnapshot.length > 0 ? "이미지 첨부" : "");
-    const pendingMessage = !contextConfirmed && userMessage
-      ? {
-          role: "user" as const,
-          text: userMessage,
+      return trimConversation([
+        ...next,
+        {
+          role: "assistant",
+          text: piece,
           includeInPrompt: true,
-          attachments: attachmentSnapshot.length > 0 ? attachmentSnapshot : undefined,
-        }
-      : null;
-    let nextConversation = conversation;
-    if (pendingMessage) {
-      nextConversation = trimConversation([...conversation, pendingMessage]);
-      setConversationByMode((prev) => ({ ...prev, [requestMode]: nextConversation }));
-      pendingUserTextRef.current = userMessage;
-    }
+          streaming: true,
+        },
+      ]);
+    });
+  }, []);
 
-    if (!contextConfirmed) {
-      setTextByMode((prev) => ({ ...prev, [requestMode]: "" }));
-      setAttachmentsByMode((prev) => ({ ...prev, [requestMode]: [] }));
-    }
-
-    const payloadText = contextConfirmed && lastRequestParamsRef.current
-      ? lastRequestParamsRef.current.payloadText
-      : (buildConversationText(nextConversation) || trimmedText);
-
-    const attachmentsToUse = contextConfirmed && lastRequestParamsRef.current
-      ? lastRequestParamsRef.current.attachmentSnapshot
-      : attachmentSnapshot;
-
-    lastRequestParamsRef.current = { payloadText, attachmentSnapshot: attachmentsToUse };
-
-    const resolveDeleteRange = () => {
-      if (startDate && endDate) return { start: startDate, end: endDate };
-      const today = new Date();
-      const fallbackStart = toLocalISODate(today);
-      const fallbackEnd = toLocalISODate(addMonths(today, 3));
-      setStartDate(fallbackStart);
-      setEndDate(fallbackEnd);
-      return { start: fallbackStart, end: fallbackEnd };
-    };
-    try {
-      let classification: NlpClassification = "add";
-      if (!contextConfirmed) {
-        const classifyResponse = await classifyNlp(payloadText, attachmentsToUse.length > 0, requestId);
-        if (requestIdRef.current !== requestId) return;
-        classification = normalizeClassification(classifyResponse?.type);
-        const excludePendingMessage = () => {
-          if (!userMessage) return;
-          setConversationByMode((prev) => {
-            const current = prev[requestMode] ?? [];
-            const next = [...current];
-            for (let i = next.length - 1; i >= 0; i -= 1) {
-              const msg = next[i];
-              if (msg.role === "user" && msg.text === userMessage) {
-                next[i] = { ...msg, includeInPrompt: false };
-                break;
-              }
+  const finalizeStreamingAssistant = useCallback(
+    (text: string, includeInPrompt: boolean) => {
+      const finalText = typeof text === "string" ? text.trim() : "";
+      setConversation((prev) => {
+        const next = [...prev];
+        for (let i = next.length - 1; i >= 0; i -= 1) {
+          const item = next[i];
+          if (item.role !== "assistant" || !item.streaming) continue;
+          if (!finalText) {
+            if (!item.text.trim()) {
+              next.splice(i, 1);
+              return next;
             }
-            return { ...prev, [requestMode]: trimConversation(next) };
-          });
-        };
-
-        if (classification === "complex") {
-          setAddPreview(null);
-          setDeletePreview(null);
-          setSelectedAddItems({});
-          setSelectedDeleteGroups({});
-          excludePendingMessage();
-          setErrorByMode((prev) => ({ ...prev, [requestMode]: "일정 추가와 일정 삭제는 동시에 할 수 없습니다." }));
-          return;
-        }
-        if (classification === "garbage") {
-          setAddPreview(null);
-          setDeletePreview(null);
-          setSelectedAddItems({});
-          setSelectedDeleteGroups({});
-          excludePendingMessage();
-          setErrorByMode((prev) => ({ ...prev, [requestMode]: "일정 추가, 삭제와 관련된 것만 작성해주세요." }));
-          return;
-        }
-        requestMode = classification === "delete" ? "delete" : "add";
-        if (requestMode !== mode) {
-          setMode(requestMode);
-          pendingModeRef.current = requestMode;
-          if (pendingMessage) {
-            setConversationByMode((prev) => {
-              const fromList = prev[mode] ?? [];
-              const toList = prev[requestMode] ?? [];
-              const nextFrom = [...fromList];
-              for (let i = nextFrom.length - 1; i >= 0; i -= 1) {
-                const msg = nextFrom[i];
-                if (msg.role === "user" && msg.text === userMessage) {
-                  nextFrom.splice(i, 1);
-                  break;
-                }
-              }
-              return {
-                ...prev,
-                [mode]: nextFrom,
-                [requestMode]: trimConversation([...toList, pendingMessage]),
-              };
-            });
+            next[i] = { ...item, streaming: false, includeInPrompt };
+            return trimConversation(next);
           }
-          setLoadingByMode((prev) => ({ ...prev, [mode]: false, [requestMode]: true }));
-          setProgressByMode((prev) => ({ ...prev, [mode]: null, [requestMode]: "thinking" }));
-          setErrorByMode((prev) => ({ ...prev, [requestMode]: null }));
+          next[i] = {
+            ...item,
+            text: finalText,
+            includeInPrompt,
+            streaming: false,
+          };
+          return trimConversation(next);
         }
+        if (!finalText) return next;
+        return trimConversation([
+          ...next,
+          {
+            role: "assistant",
+            text: finalText,
+            includeInPrompt,
+            streaming: false,
+          },
+        ]);
+      });
+    },
+    [],
+  );
+
+  const preview = useCallback(
+    async () => {
+      const trimmedText = text.trim();
+      const attachmentSnapshot = attachments.map((item) => ({ ...item }));
+      const debugWasEnabled = debug.enabled;
+      const shouldShowLoadingDebug = debugWasEnabled || debugModeHint;
+
+      if (!trimmedText && attachmentSnapshot.length === 0) {
+        setError("Please enter a message.");
+        return;
       }
 
-      if (requestMode === "add") {
-        let finalData: AddPreviewResponse | null = null;
+      const userMessage = trimmedText || `Sent ${attachmentSnapshot.length} image(s).`;
+      appendConversation("user", userMessage, {
+        includeInPrompt: true,
+        attachments: attachmentSnapshot.length > 0 ? attachmentSnapshot : undefined,
+      });
 
-        const updateAssistantText = (delta: string) => {
-          console.log("[UPDATE] delta:", delta.substring(0, 30));
-          setConversationByMode((prev) => {
-            const current = (prev[requestMode] ?? []);
-            const lastIndex = current.length - 1;
-            
-            // 마지막 메시지가 어시스턴트 메시지인지 확인
-            const hasAssistantMessage = lastIndex >= 0 && current[lastIndex].role === "assistant";
-            
-            if (!hasAssistantMessage) {
-              // 새 어시스턴트 메시지 생성
-              const newConversation = [...current, { role: "assistant", text: delta, includeInPrompt: true }];
-              console.log("[UPDATE] Creating new assistant message, initial text length:", delta.length);
-              return {
-                ...prev,
-                [requestMode]: newConversation,
-              };
-            } else {
-              // 기존 메시지에 추가
-              const next = [...current];
-              const oldLength = next[lastIndex].text.length;
-              next[lastIndex] = { ...next[lastIndex], text: next[lastIndex].text + delta };
-              console.log("[UPDATE] Appending delta, old length:", oldLength, "new length:", next[lastIndex].text.length, "delta length:", delta.length);
-              return { ...prev, [requestMode]: next };
-            }
-          });
-        };
-
-        const resetAssistantText = () => {
-          setConversationByMode((prev) => {
-            const current = (prev[requestMode] ?? []);
-            const next = [...current];
-            const lastIndex = next.length - 1;
-            if (lastIndex >= 0 && next[lastIndex].role === "assistant") {
-              next[lastIndex] = { ...next[lastIndex], text: "" };
-            }
-            return { ...prev, [requestMode]: next };
-          });
-        };
-
-        try {
-          await previewNlpStream(
-            {
-              text: payloadText,
-              images: attachmentsToUse.map((item) => item.dataUrl),
-              reasoning_effort: reasoningEffort,
-              model: model,
-              request_id: requestId,
-              context_confirmed: contextConfirmed,
-            },
-            (event, data) => {
-              if (requestIdRef.current !== requestId) return;
-
-              console.log("[SSE Event]", event, data);
-
-              if (event === "content_delta") {
-                if (data.content_delta) {
-                  setProgressByMode((prev) => {
-                    if (prev[requestMode] === null) return prev;
-                    return { ...prev, [requestMode]: null };
-                  });
-                  updateAssistantText(data.content_delta);
-                }
-              } else if (event === "status") {
-                if (data.context_used) {
-                  setProgressByMode((prev) => ({ ...prev, [requestMode]: "context" }));
-                }
-              } else if (event === "reset_buffer") {
-                resetAssistantText();
-              } else if (event === "data") {
-                finalData = data as AddPreviewResponse;
-              }
-            }
-          );
-        } catch (err: any) {
-          if (requestIdRef.current === requestId) {
-            setErrorByMode((prev) => ({ ...prev, [requestMode]: err.message }));
-            setLoadingByMode((prev) => ({ ...prev, [requestMode]: false }));
-            setProgressByMode((prev) => ({ ...prev, [requestMode]: null }));
-          }
-          return;
-        }
-
-        if (requestIdRef.current !== requestId) return;
-
-        if (!finalData) {
-          setLoadingByMode((prev) => ({ ...prev, [requestMode]: false }));
-          setProgressByMode((prev) => ({ ...prev, [requestMode]: null }));
-          return;
-        }
-
-        setProgressByMode((prev) => ({ ...prev, [requestMode]: null }));
-
-        const responseData = finalData as AddPreviewResponse | null;
-        
-        if (responseData?.content) {
-          const content = responseData.content;
-          setConversationByMode((prev) => {
-            const current = prev[requestMode] ?? [];
-            const next = [...current];
-            const lastIndex = next.length - 1;
-            if (lastIndex >= 0 && next[lastIndex].role === "assistant") {
-              // 스트리밍된 내용과 최종 내용이 다를 수 있으므로(마지막 조각 등) 최종 내용으로 덮어씀
-              next[lastIndex] = { ...next[lastIndex], text: content };
-            } else {
-              // 만약 비서 메시지가 아예 없었다면 추가
-              next.push({ role: "assistant", text: content, includeInPrompt: true });
-            }
-            return { ...prev, [requestMode]: next };
-          });
-        }
-
-        if (responseData && responseData.permission_required) {
-          setPermissionRequiredByMode((prev) => ({ ...prev, [requestMode]: true }));
-          setLoadingByMode((prev) => ({ ...prev, [requestMode]: false }));
-          return;
-        }
-        setPermissionRequiredByMode((prev) => ({ ...prev, [requestMode]: false }));
-
-        setAddPreview(responseData);
-        const items = responseData?.items || [];
-        const selection: Record<number, boolean> = {};
-        items.forEach((_, idx) => {
-          selection[idx] = true;
-        });
-        setSelectedAddItems(selection);
-        setLoadingByMode((prev) => ({ ...prev, [requestMode]: false }));
-      } else {
-        const range = resolveDeleteRange();
-        if (!range.start || !range.end) {
-          setErrorByMode((prev) => ({ ...prev, [requestMode]: "삭제 범위를 선택해주세요." }));
-          setLoadingByMode((prev) => ({ ...prev, [requestMode]: false }));
-          setProgressByMode((prev) => ({ ...prev, [requestMode]: null }));
-          return;
-        }
-        const response = await previewNlpDelete(
-          payloadText,
-          range.start,
-          range.end,
-          reasoningEffort,
-          model,
-          requestId,
-          contextConfirmed
-        );
-        if (requestIdRef.current !== requestId) return;
-        const data = response as DeletePreviewResponse;
-        if (data.permission_required) {
-          setPermissionRequiredByMode((prev) => ({ ...prev, [requestMode]: true }));
-          return;
-        }
-        setPermissionRequiredByMode((prev) => ({ ...prev, [requestMode]: false }));
-
-        setDeletePreview(data);
-        const groups = data.groups || [];
-        const selection: Record<string, boolean> = {};
-        groups.forEach((group) => {
-          selection[group.group_key] = true;
-        });
-        setSelectedDeleteGroups(selection);
-        if (groups.length > 0) {
-          appendConversationForMode(
-            requestMode,
-            "assistant",
-            "삭제 후보를 찾았습니다. 확인 후 적용하세요.",
-            {
-              includeInPrompt: false,
-            }
-          );
-        } else {
-          appendConversationForMode(
-            requestMode,
-            "assistant",
-            "삭제할 수 있는 일정을 찾지 못했습니다. 삭제 범위를 확인하거나 다른 문장으로 요청해주세요.",
-            {
-              includeInPrompt: false,
-            }
-          );
-        }
-      }
-    } catch (err) {
-      if (requestIdRef.current !== requestId) return;
+      setText("");
+      setAttachments([]);
+      setLoading(true);
+      setProgress({ ...EMPTY_PROGRESS_STATE, thinking: true });
+      setError(null);
       setAddPreview(null);
       setDeletePreview(null);
       setSelectedAddItems({});
       setSelectedDeleteGroups({});
-      const message = err instanceof Error ? err.message : "AI 요청에 실패했습니다.";
-      setErrorByMode((prev) => ({ ...prev, [requestMode]: message }));
-    } finally {
-      if (requestIdRef.current === requestId) {
-        requestIdRef.current = null;
-        pendingUserTextRef.current = null;
-        pendingModeRef.current = null;
-        setLoadingByMode((prev) => ({ ...prev, [requestMode]: false }));
-        setProgressByMode((prev) => ({ ...prev, [requestMode]: null }));
+      if (shouldShowLoadingDebug) {
+        setDebug({ enabled: true, llmOutputs: [], timeline: [], totalMs: null });
+      } else {
+        setDebug({ ...EMPTY_DEBUG_STATE });
       }
-      if (!contextConfirmed) {
-        setTextByMode((prev) => ({ ...prev, [requestMode]: "" }));
+
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+      progressClearedOnResponseDeltaRef.current = false;
+
+      try {
+        const currentConversation = [
+          ...conversation,
+          {
+            role: "user" as const,
+            text: userMessage,
+            includeInPrompt: true,
+          },
+        ];
+        const payloadText = buildConversationText(trimConversation(currentConversation));
+        const response = await runAgentStream(payloadText, {
+          signal: controller.signal,
+          handlers: {
+            onDelta: (event: AgentStreamDeltaEvent) => {
+              if (event.node !== "question_agent" && event.node !== "response_agent") return;
+              if (
+                event.node === "response_agent" &&
+                !progressClearedOnResponseDeltaRef.current
+              ) {
+                progressClearedOnResponseDeltaRef.current = true;
+                setProgress({ ...EMPTY_PROGRESS_STATE });
+              }
+              appendStreamingAssistantDelta(event.delta || "");
+            },
+            onStatus: (event: AgentStreamStatusEvent) => {
+              setProgress((prev) => applyStatusToProgress(prev, event));
+            },
+          },
+        });
+        const parsedDebug = parseDebugPanelState(response);
+        setDebug(parsedDebug);
+
+        const reply = formatAgentReply(response);
+        finalizeStreamingAssistant(reply, true);
+
+        if (response.status === "completed") {
+          options?.onApplied?.(response);
+        }
+      } catch (err) {
+        const isAbortError = err instanceof Error && err.name === "AbortError";
+        if (isAbortError) {
+          finalizeStreamingAssistant("Request cancelled.", true);
+        } else {
+          const message = err instanceof Error ? err.message : "Agent request failed.";
+          setError(message);
+          finalizeStreamingAssistant(message, true);
+        }
+      } finally {
+        if (abortControllerRef.current === controller) {
+          abortControllerRef.current = null;
+        }
+        setLoading(false);
       }
-    }
-  }, [
-    mode,
-    text,
-    attachments,
-    reasoningEffort,
-    model,
-    startDate,
-    endDate,
-    conversation,
-    appendConversationForMode,
-  ]);
+    },
+    [
+      text,
+      attachments,
+      conversation,
+      appendConversation,
+      appendStreamingAssistantDelta,
+      finalizeStreamingAssistant,
+      options,
+      debug.enabled,
+      debugModeHint,
+    ],
+  );
 
   const confirmPermission = useCallback(() => {
-    preview(true);
+    preview();
   }, [preview]);
 
   const denyPermission = useCallback(() => {
-    setPermissionRequiredByMode((prev) => ({ ...prev, [mode]: false }));
-    setErrorByMode((prev) => ({ ...prev, [mode]: "일정 정보를 읽지 않으면 정확한 결과를 제공하기 어렵습니다." }));
-  }, [mode]);
+    setError("Permission was denied.");
+  }, []);
+
+  const interrupt = useCallback(async () => {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    setLoading(false);
+    setProgress({ ...EMPTY_PROGRESS_STATE });
+  }, []);
+
+  const apply = useCallback(async () => {
+    setError("Manual apply is not needed. Actions are executed directly.");
+  }, []);
 
   const updateAddPreviewItem = useCallback((index: number, patch: Partial<AddPreviewItem>) => {
     setAddPreview((prev) => {
@@ -650,115 +1081,27 @@ export const useAiAssistant = (options?: AiAssistantOptions) => {
     });
   }, []);
 
-  const interrupt = useCallback(async () => {
-    const activeRequestId = requestIdRef.current;
-    if (!activeRequestId) return;
-    requestIdRef.current = null;
-    const pendingText = pendingUserTextRef.current;
-    const targetMode = pendingModeRef.current ?? mode;
-    setLoadingByMode((prev) => ({ ...prev, [targetMode]: false }));
-    setProgressByMode((prev) => ({ ...prev, [targetMode]: null }));
-    setConversationByMode((prev) => {
-      const next = [...(prev[targetMode] ?? [])];
-      if (pendingText) {
-        for (let i = next.length - 1; i >= 0; i -= 1) {
-          const msg = next[i];
-          if (msg.role === "user" && msg.includeInPrompt !== false && msg.text === pendingText) {
-            next[i] = { ...msg, includeInPrompt: false };
-            break;
-          }
-        }
-      }
-      return { ...prev, [targetMode]: trimConversation(next) };
-    });
-    pendingUserTextRef.current = null;
-    pendingModeRef.current = null;
-    try {
-      await interruptNlp(activeRequestId);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "중단 요청에 실패했습니다.";
-      setErrorByMode((prev) => ({ ...prev, [targetMode]: message }));
-    }
-  }, [mode]);
-
-  const apply = useCallback(async () => {
-    setLoadingByMode((prev) => ({ ...prev, [mode]: true }));
-    setErrorByMode((prev) => ({ ...prev, [mode]: null }));
-    try {
-      if (mode === "add") {
-        const items = (addPreview?.items || []).filter((_, idx) => selectedAddItems[idx]);
-        if (!items.length) {
-          setErrorByMode((prev) => ({ ...prev, [mode]: "추가할 항목을 선택해주세요." }));
-          return;
-        }
-        const created = await applyNlpAdd(items as unknown as Record<string, unknown>[]);
-        options?.onAddApplied?.(created);
-      } else {
-        const groups = deletePreview?.groups || [];
-        const ids = groups
-          .filter((group) => selectedDeleteGroups[group.group_key])
-          .flatMap((group) => group.ids || [])
-          .filter((id) => (typeof id === "number" ? Number.isFinite(id) : Boolean(id)));
-        if (!ids.length) {
-          setErrorByMode((prev) => ({ ...prev, [mode]: "삭제할 항목을 선택해주세요." }));
-          return;
-        }
-        for (const id of ids) {
-          await deleteGoogleEventById(String(id));
-        }
-        options?.onDeleteApplied?.(ids);
-      }
-      setOpen(false);
-      if (mode === "add") {
-        setAddPreview(null);
-      } else {
-        setDeletePreview(null);
-      }
-      setConversationByMode((prev) => ({ ...prev, [mode]: [] }));
-      setTextByMode((prev) => ({ ...prev, [mode]: "" }));
-      setAttachmentsByMode((prev) => ({ ...prev, [mode]: [] }));
-      resetNlpContext().catch(() => {});
-      options?.onApplied?.();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "적용에 실패했습니다.";
-      setErrorByMode((prev) => ({ ...prev, [mode]: message }));
-    } finally {
-      setLoadingByMode((prev) => ({ ...prev, [mode]: false }));
-    }
-  }, [mode, addPreview, deletePreview, selectedAddItems, selectedDeleteGroups, options]);
-
-  const attachmentList = useMemo(() => attachments, [attachments]);
-  const activeAddPreview = mode === "add" ? addPreview : null;
-  const activeDeletePreview = mode === "delete" ? deletePreview : null;
-  const progressLabel = useMemo(() => {
-    if (progress === "thinking") return "생각 중";
-    if (progress === "context") return "일정을 살펴보는 중";
-    return null;
-  }, [progress]);
-
   return {
     open,
     mode,
     text,
-    reasoningEffort,
     startDate,
     endDate,
-    attachments: attachmentList,
+    attachments,
     conversation,
+    debug,
     model,
     loading,
-    progressLabel,
+    progressLabels,
     error,
-    permissionRequired,
+    permissionRequired: false,
     confirmPermission,
     denyPermission,
-    addPreview: activeAddPreview,
-    deletePreview: activeDeletePreview,
+    addPreview,
+    deletePreview,
     selectedAddItems,
     selectedDeleteGroups,
-    setMode,
-    setText: (value: string) => setTextByMode((prev) => ({ ...prev, [mode]: value })),
-    setReasoningEffort,
+    setText,
     setStartDate,
     setEndDate,
     setOpen,

@@ -92,37 +92,12 @@ class RecurringEventUpdate(BaseModel):
     meeting_url: Optional[str] = None
     timezone: Optional[str] = None
     color_id: Optional[str] = None
-    recurrence: RecurrencePayload
+    recurrence: Optional[RecurrencePayload] = None
+    rrule: Optional[str] = None
 
 
 class RecurringExceptionPayload(BaseModel):
     date: str
-
-
-class NaturalText(BaseModel):
-    text: str
-    images: Optional[List[str]] = None
-    request_id: Optional[str] = None
-    reasoning_effort: Optional[str] = None
-    model: Optional[str] = None
-    context_confirmed: Optional[bool] = None
-
-
-class NlpClassifyRequest(BaseModel):
-    text: str
-    has_images: Optional[bool] = None
-    request_id: Optional[str] = None
-
-
-class NaturalTextWithScope(BaseModel):
-    text: str
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
-    images: Optional[List[str]] = None
-    request_id: Optional[str] = None
-    reasoning_effort: Optional[str] = None
-    model: Optional[str] = None
-    context_confirmed: Optional[bool] = None
 
 
 class DeleteResult(BaseModel):
@@ -131,16 +106,8 @@ class DeleteResult(BaseModel):
     count: int
 
 
-class ApplyItems(BaseModel):
-    items: List[Dict[str, Any]]
-
-
 class IdsPayload(BaseModel):
     ids: List[int]
-
-
-class InterruptRequest(BaseModel):
-    request_id: Optional[str] = None
 
 
 class Task(BaseModel):
@@ -163,3 +130,9 @@ class TaskUpdate(BaseModel):
     notes: Optional[str] = None
     due: Optional[str] = None
     status: Optional[str] = None
+
+
+class AgentRunRequest(BaseModel):
+    input_as_text: Optional[str] = None
+    timezone: Optional[str] = None
+    dry_run: Optional[bool] = False

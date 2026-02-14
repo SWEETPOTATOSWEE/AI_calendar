@@ -10,10 +10,6 @@ const apiBase = window.__API_BASE__ || "/api";
   const APP_MODE = APP_CONTEXT.mode || "local";
   const IS_GOOGLE_MODE = APP_MODE === "google";
   const IS_ADMIN = !!APP_CONTEXT.admin;
-  const REASONING_EFFORT_KEY = "calendar_reasoning_effort";
-  const ALLOWED_REASONING_EFFORTS = ["low","medium","high"];
-  const DEFAULT_REASONING_EFFORT = "low";
-  let reasoningEffortValue = DEFAULT_REASONING_EFFORT;
   const undoStack = [];
   const MAX_IMAGE_ATTACHMENTS = 5;
   const MAX_IMAGE_DIMENSION = 1600;
@@ -1962,56 +1958,6 @@ const apiBase = window.__API_BASE__ || "/api";
     return box;
   }
 
-  function loadReasoningEffortFromStorage(){
-    if(!IS_ADMIN) return;
-    try{
-      const stored = localStorage.getItem(REASONING_EFFORT_KEY);
-      if(stored && ALLOWED_REASONING_EFFORTS.includes(stored)){
-        reasoningEffortValue = stored;
-      }
-    }catch(_err){
-      reasoningEffortValue = DEFAULT_REASONING_EFFORT;
-    }
-  }
-
-  function saveReasoningEffortToStorage(value){
-    if(!IS_ADMIN) return;
-    try{
-      localStorage.setItem(REASONING_EFFORT_KEY, value);
-    }catch(_err){
-      /* ignore */
-    }
-  }
-
-  function initReasoningEffortControl(){
-    const wrap = document.getElementById("reasoning-effort-control");
-    const select = document.getElementById("reasoning-effort-select");
-    if(!wrap || !select) return;
-    if(!IS_ADMIN){
-      wrap.style.display = "none";
-      return;
-    }
-    loadReasoningEffortFromStorage();
-    wrap.style.display = "flex";
-    select.value = reasoningEffortValue;
-    select.addEventListener("change", () => {
-      const val = select.value;
-      if(ALLOWED_REASONING_EFFORTS.includes(val)){
-        reasoningEffortValue = val;
-        saveReasoningEffortToStorage(val);
-      }else{
-        select.value = reasoningEffortValue;
-      }
-    });
-  }
-
-  function getReasoningEffortSetting(){
-    if(!IS_ADMIN) return null;
-    const select = document.getElementById("reasoning-effort-select");
-    const candidate = select ? select.value : reasoningEffortValue;
-    return ALLOWED_REASONING_EFFORTS.includes(candidate) ? candidate : null;
-  }
-
   function openImageEditor(attachmentId){
     const target = nlpImageAttachments.find(att => att.id === attachmentId);
     if(!target || !imageEditorOverlay || !imageEditorCanvas || !imageEditorCtx){
@@ -2252,10 +2198,6 @@ const apiBase = window.__API_BASE__ || "/api";
     const payload = { text: payloadText };
     if(Array.isArray(imagePayload) && imagePayload.length){
       payload.images = imagePayload;
-    }
-    const effort = getReasoningEffortSetting();
-    if(effort){
-      payload.reasoning_effort = effort;
     }
     const res = await fetch(apiBase + "/nlp-preview", {
       method:"POST",
@@ -2544,10 +2486,6 @@ const apiBase = window.__API_BASE__ || "/api";
   async function openDeleteConfirm(text, scope){
     if(!scope) return;
     const payload = { text, start_date: scope.start, end_date: scope.end };
-    const effort = getReasoningEffortSetting();
-    if(effort){
-      payload.reasoning_effort = effort;
-    }
     const res = await fetch(apiBase + "/nlp-delete-preview", {
       method:"POST",
       headers:{ "Content-Type":"application/json" },
@@ -3161,7 +3099,6 @@ const apiBase = window.__API_BASE__ || "/api";
       });
     }
     setupImageComposer();
-    initReasoningEffortControl();
     setupEventModalControls();
 
     const toggle = document.getElementById("nlp-mode-toggle");

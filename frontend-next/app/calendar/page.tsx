@@ -234,6 +234,34 @@ const addMinutesToIso = (value: string, minutes: number) => {
   return toISODateTime(next);
 };
 
+const toAllDayStartIso = (value: string, fallbackDate: Date) => {
+  const datePart = value.split("T")[0] || toISODate(fallbackDate);
+  return `${datePart}T00:00`;
+};
+
+const toAllDayExclusiveEndIso = (
+  startIso: string,
+  rawEnd: string | null | undefined,
+  fallbackDate: Date,
+) => {
+  const startDate = parseISODateTime(toAllDayStartIso(startIso, fallbackDate));
+  if (!startDate) return null;
+  const fallbackExclusive = `${toISODate(addDays(startDate, 1))}T00:00`;
+  if (!rawEnd) return fallbackExclusive;
+  const parsedEnd = parseISODateTime(rawEnd);
+  const endDatePart = rawEnd.split("T")[0];
+  const endDate =
+    parsedEnd || (endDatePart ? parseISODate(endDatePart) : null);
+  if (!endDate) return fallbackExclusive;
+  const isMidnightExclusive = parsedEnd
+    ? parsedEnd.getHours() === 0 && parsedEnd.getMinutes() === 0
+    : true;
+  if (isMidnightExclusive && endDate > startDate) {
+    return `${toISODate(endDate)}T00:00`;
+  }
+  return `${toISODate(addDays(endDate, 1))}T00:00`;
+};
+
 const buildAiRecurrence = (item: AddPreviewItem): EventRecurrence | null => {
   if (item.recurrence) {
     if (item.recurrence.end || (!item.end_date && !item.count)) return item.recurrence;
@@ -262,18 +290,20 @@ const buildAiRecurrence = (item: AddPreviewItem): EventRecurrence | null => {
 
 const resolveAiStartEnd = (item: AddPreviewItem, fallbackDate: Date) => {
   if (item.start) {
-    const start = item.start;
+    const isAllDay = Boolean(item.all_day);
+    const start = isAllDay ? toAllDayStartIso(item.start, fallbackDate) : item.start;
     let end = item.end ?? null;
     if (!end) {
-      if (item.all_day) {
-        const datePart = start.split("T")[0] || toISODate(fallbackDate);
-        end = `${datePart}T23:59`;
+      if (isAllDay) {
+        end = toAllDayExclusiveEndIso(start, null, fallbackDate);
       } else {
         const duration = typeof item.duration_minutes === "number" && item.duration_minutes > 0
           ? item.duration_minutes
           : 60;
         end = addMinutesToIso(start, duration);
       }
+    } else if (isAllDay) {
+      end = toAllDayExclusiveEndIso(start, end, fallbackDate);
     }
     return { start, end };
   }
@@ -290,7 +320,7 @@ const resolveAiStartEnd = (item: AddPreviewItem, fallbackDate: Date) => {
   const start = `${datePart}T${timePart}`;
   let end: string | null = null;
   if (isAllDay) {
-    end = `${datePart}T23:59`;
+    end = toAllDayExclusiveEndIso(start, null, fallbackDate);
   } else {
     const duration = typeof item.duration_minutes === "number" && item.duration_minutes > 0
       ? item.duration_minutes
@@ -447,7 +477,7 @@ function CalendarPageInner() {
       try {
         const { listTasks } = await import("./lib/api");
         const data = await listTasks();
-        setTasks((data || []) as GoogleTask[]);
+        setTasks(Array.isArray(data?.items) ? data.items : []);
       } catch (error) {
         console.error("Failed to load tasks:", error);
         setTasks([]);
@@ -464,7 +494,7 @@ function CalendarPageInner() {
         status: isCompleted ? "needsAction" : "completed",
       });
       const data = await listTasks();
-      setTasks((data || []) as GoogleTask[]);
+      setTasks(Array.isArray(data?.items) ? data.items : []);
     } catch (error) {
       console.error("Failed to toggle task:", error);
     }
@@ -675,15 +705,13 @@ function CalendarPageInner() {
       const colors = getMonthEventColor(event);
       const endForCalendar = (() => {
         if (!event.all_day) return event.end || undefined;
-        const base = parseEventDate(event.end) || parseEventDate(event.start);
-        if (!base) return event.end || undefined;
-        const baseDate = new Date(base.getFullYear(), base.getMonth(), base.getDate());
-        return toISODate(addDays(baseDate, 1));
+        const normalized = toAllDayExclusiveEndIso(event.start, event.end, new Date());
+        return normalized ? normalized.split("T")[0] : undefined;
       })();
       return {
         id: String(event.id),
         title: event.title,
-        start: event.start,
+        start: event.all_day ? event.start.split("T")[0] : event.start,
         end: endForCalendar,
         allDay: !!event.all_day,
         backgroundColor: colors.bg,
@@ -697,11 +725,13 @@ function CalendarPageInner() {
     const taskEvents = tasks.map((task) => {
       const dueDate = task.due ? new Date(task.due) : null;
       const dateStr = dueDate ? toISODate(dueDate) : toISODate(new Date());
+      const dueDateOnly = parseISODate(dateStr);
+      const nextDateStr = dueDateOnly ? toISODate(addDays(dueDateOnly, 1)) : dateStr;
       return {
         id: `task-${task.id}`,
         title: task.title,
         start: dateStr,
-        end: dateStr,
+        end: nextDateStr,
         allDay: true,
         backgroundColor: "transparent",
         borderColor: "transparent",
@@ -2418,7 +2448,7 @@ function CalendarPageInner() {
                   try {
                     const { listTasks } = await import("./lib/api");
                     const data = await listTasks();
-                    setTasks((data || []) as GoogleTask[]);
+                    setTasks(Array.isArray(data?.items) ? data.items : []);
                   } catch (error) {
                     console.error("Failed to reload tasks:", error);
                   }
@@ -2544,7 +2574,7 @@ function CalendarPageInner() {
             try {
               const { listTasks } = await import("./lib/api");
               const data = await listTasks();
-              setTasks((data || []) as GoogleTask[]);
+              setTasks(Array.isArray(data?.items) ? data.items : []);
             } catch (error) {
               console.error("Failed to reload tasks:", error);
             }

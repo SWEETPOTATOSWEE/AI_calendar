@@ -25,7 +25,7 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body className="min-h-screen font-sans antialiased">
+      <body suppressHydrationWarning className="min-h-screen font-sans antialiased">
         <ThemeTokenProvider />
         {children}
       </body>
